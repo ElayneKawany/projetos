@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+.npm
+
+# Next.js
+.next/
+out/
+
+# Database (dados locais)
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# Environment
+.env.local
+.env.*.local
+.env
+
+# Uploads
+public/uploads/
+
+# Misc
+.DS_Store
+*.log

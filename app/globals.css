@@ -1,0 +1,189 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Montserrat:wght@500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --megag-azul: #003087;
+  --megag-azul-medio: #1a4fa0;
+  --megag-dourado: #C8A84B;
+  --megag-branco: #FFFFFF;
+  --megag-cinza-claro: #F4F6FA;
+  --sidebar-width: 256px;
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    @apply bg-megag-cinza-claro text-megag-preto font-sans antialiased;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-display;
+  }
+}
+
+@layer components {
+  /* ── Botões ───────────────────────────────── */
+  .btn-primary {
+    @apply inline-flex items-center gap-2 px-4 py-2 bg-megag-azul text-white rounded-lg
+           font-medium text-sm transition-all duration-150
+           hover:bg-megag-azul-hover active:scale-95
+           focus:outline-none focus:ring-2 focus:ring-megag-azul focus:ring-offset-2
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center gap-2 px-4 py-2 bg-white text-megag-azul border border-megag-azul
+           rounded-lg font-medium text-sm transition-all duration-150
+           hover:bg-megag-cinza-claro active:scale-95
+           focus:outline-none focus:ring-2 focus:ring-megag-azul focus:ring-offset-2;
+  }
+  .btn-dourado {
+    @apply inline-flex items-center gap-2 px-4 py-2 bg-megag-dourado text-white
+           rounded-lg font-medium text-sm transition-all duration-150
+           hover:bg-megag-dourado-escuro active:scale-95;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center gap-2 px-3 py-2 text-megag-cinza-escuro
+           rounded-lg font-medium text-sm transition-all duration-150
+           hover:bg-megag-cinza-medio;
+  }
+  .btn-danger {
+    @apply inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white
+           rounded-lg font-medium text-sm transition-all duration-150
+           hover:bg-red-700 active:scale-95;
+  }
+
+  /* ── Cards ───────────────────────────────── */
+  .card {
+    @apply bg-white rounded-xl shadow-card border border-megag-cinza-medio p-6;
+  }
+  .card-header {
+    @apply flex items-center justify-between mb-5 pb-4 border-b border-megag-cinza-medio;
+  }
+  .card-title {
+    @apply text-base font-semibold text-megag-preto font-display;
+  }
+
+  /* ── Inputs ──────────────────────────────── */
+  .input {
+    @apply w-full px-3 py-2.5 border border-megag-cinza-borda rounded-lg text-sm
+           text-megag-preto bg-white placeholder-megag-cinza-texto
+           transition-colors duration-150
+           focus:outline-none focus:border-megag-azul focus:ring-2 focus:ring-megag-azul/20
+           disabled:bg-megag-cinza-claro disabled:text-megag-cinza-texto;
+  }
+  .input-label {
+    @apply block text-xs font-semibold text-megag-cinza-escuro mb-1.5 uppercase tracking-wide;
+  }
+  .input-error {
+    @apply text-xs text-red-500 mt-1;
+  }
+
+  /* ── Badges de status ────────────────────── */
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold;
+  }
+  .badge-proposta   { @apply bg-slate-100 text-slate-600; }
+  .badge-triagem    { @apply bg-blue-100 text-blue-700; }
+  .badge-comite     { @apply bg-purple-100 text-purple-700; }
+  .badge-viabilidade { @apply bg-amber-100 text-amber-700; }
+  .badge-aprovacao  { @apply bg-red-100 text-red-700; }
+  .badge-estruturacao { @apply bg-violet-100 text-violet-700; }
+  .badge-cronograma { @apply bg-blue-100 text-blue-800; }
+  .badge-execucao   { @apply bg-emerald-100 text-emerald-700; }
+  .badge-golive     { @apply bg-green-100 text-green-800; }
+  .badge-roi        { @apply bg-sky-100 text-sky-700; }
+  .badge-encerramento { @apply bg-gray-100 text-gray-600; }
+  .badge-cancelado  { @apply bg-red-50 text-red-500; }
+
+  .badge-alta  { @apply bg-red-100 text-red-700; }
+  .badge-media { @apply bg-amber-100 text-amber-700; }
+  .badge-baixa { @apply bg-green-100 text-green-700; }
+
+  /* ── Tabelas ─────────────────────────────── */
+  .table-megag {
+    @apply w-full text-sm;
+  }
+  .table-megag thead tr {
+    @apply bg-megag-cinza-claro border-b border-megag-cinza-medio;
+  }
+  .table-megag thead th {
+    @apply px-4 py-3 text-left text-xs font-semibold text-megag-cinza-texto uppercase tracking-wide;
+  }
+  .table-megag tbody tr {
+    @apply border-b border-megag-cinza-medio hover:bg-megag-cinza-claro/50 transition-colors;
+  }
+  .table-megag tbody td {
+    @apply px-4 py-3 text-megag-cinza-escuro;
+  }
+
+  /* ── Sidebar ─────────────────────────────── */
+  .sidebar-item {
+    @apply flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium
+           text-blue-200 transition-all duration-150 cursor-pointer
+           hover:bg-white/10 hover:text-white;
+  }
+  .sidebar-item.active {
+    @apply bg-white/15 text-white;
+  }
+
+  /* ── Page header ─────────────────────────── */
+  .page-header {
+    @apply flex items-center justify-between mb-6;
+  }
+  .page-title {
+    @apply text-2xl font-bold text-megag-preto font-display;
+  }
+  .page-subtitle {
+    @apply text-sm text-megag-cinza-texto mt-0.5;
+  }
+
+  /* ── KPI Card ────────────────────────────── */
+  .kpi-card {
+    @apply card relative overflow-hidden;
+  }
+  .kpi-value {
+    @apply text-3xl font-bold font-display text-megag-preto;
+  }
+  .kpi-label {
+    @apply text-xs font-semibold text-megag-cinza-texto uppercase tracking-wide mt-1;
+  }
+  .kpi-delta-up   { @apply text-xs text-emerald-600 font-medium; }
+  .kpi-delta-down { @apply text-xs text-red-500 font-medium; }
+
+  /* ── Tabs ────────────────────────────────── */
+  .tab-list {
+    @apply flex border-b border-megag-cinza-medio mb-6;
+  }
+  .tab-item {
+    @apply px-4 py-2.5 text-sm font-medium text-megag-cinza-texto border-b-2 border-transparent
+           -mb-px transition-colors cursor-pointer
+           hover:text-megag-azul hover:border-megag-azul/40;
+  }
+  .tab-item.active {
+    @apply text-megag-azul border-megag-azul;
+  }
+
+  /* ── Timeline ────────────────────────────── */
+  .timeline-item {
+    @apply relative pl-8 pb-6 border-l-2 border-megag-cinza-medio last:border-transparent;
+  }
+  .timeline-dot {
+    @apply absolute left-[-9px] top-1 w-4 h-4 rounded-full bg-megag-azul border-2 border-white;
+  }
+
+  /* ── Scrollbar ───────────────────────────── */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+
+  /* ── Print ───────────────────────────────── */
+  @media print {
+    .no-print { display: none !important; }
+    .card { box-shadow: none; border: 1px solid #e2e8f0; }
+  }
+}
