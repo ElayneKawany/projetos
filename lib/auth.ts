@@ -1,11 +1,11 @@
 import { SignJWT, jwtVerify } from 'jose'
 import { cookies } from 'next/headers'
+import { type NextRequest } from 'next/server'
 import bcrypt from 'bcryptjs'
-import getDb from './db'
+import { UsuariosRepository } from '@/lib/repositories'
+import { env } from '@/lib/config/env'
 
-const JWT_SECRET = new TextEncoder().encode(
-  process.env.JWT_SECRET || 'megag-pmo-secret-change-in-production-2026'
-)
+const JWT_SECRET = new TextEncoder().encode(env.JWT_SECRET)
 const COOKIE_NAME = 'megag_pmo_session'
 const SESSION_DURATION = 60 * 60 * 8 // 8 horas
 
@@ -39,9 +39,15 @@ export async function verificarToken(token: string): Promise<SessionUser | null>
   }
 }
 
-export async function getSession(): Promise<SessionUser | null> {
-  const cookieStore = await cookies()
-  const token = cookieStore.get(COOKIE_NAME)?.value
+export async function getSession(request?: NextRequest): Promise<SessionUser | null> {
+  let token: string | undefined
+  if (request) {
+    // Lê direto do objeto request (mesmo padrão do middleware) — mais confiável em POST handlers
+    token = request.cookies.get(COOKIE_NAME)?.value
+  } else {
+    const cookieStore = await cookies()
+    token = cookieStore.get(COOKIE_NAME)?.value
+  }
   if (!token) return null
   return verificarToken(token)
 }
@@ -52,17 +58,9 @@ export async function login(cpf: string, senha: string): Promise<{
   token?: string
   error?: string
 }> {
-  const db = getDb()
-
   const cpfLimpo = cpf.replace(/\D/g, '')
 
-  const usuario = db.prepare(`
-    SELECT u.*, p.codigo as perfil_codigo, d.nome as diretoria_nome
-    FROM usuarios u
-    JOIN perfis p ON u.perfil_id = p.id
-    LEFT JOIN diretorias d ON u.diretoria_id = d.id
-    WHERE u.cpf = ? AND u.ativo = 1
-  `).get(cpfLimpo) as Record<string, unknown> | undefined
+  const usuario = UsuariosRepository.findByCpfForLogin(cpfLimpo)
 
   if (!usuario) {
     return { success: false, error: 'CPF ou senha inválidos.' }
@@ -74,8 +72,7 @@ export async function login(cpf: string, senha: string): Promise<{
   }
 
   // Atualizar último login
-  db.prepare('UPDATE usuarios SET ultimo_login = CURRENT_TIMESTAMP WHERE id = ?')
-    .run(usuario.id)
+  UsuariosRepository.updateUltimoLogin(usuario.id as number)
 
   const user: SessionUser = {
     id: usuario.id as number,
