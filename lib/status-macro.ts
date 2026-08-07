@@ -56,6 +56,17 @@ export function getStatusOperacionais(macro: StatusMacro): StatusProjeto[] {
     .map(([s]) => s)
 }
 
+export const STATUS_MACRO_BADGES: Record<StatusMacro, string> = {
+  MACRO_PROPOSTA:      'badge-proposta',
+  MACRO_VIABILIDADE:   'badge-viabilidade',
+  MACRO_ESTRUTURACAO:  'badge-estruturacao',
+  MACRO_EXECUCAO:      'badge-execucao',
+  MACRO_PAUSADO:       'badge-suspenso',
+  MACRO_CANCELADO:     'badge-cancelado',
+  MACRO_CONCLUIDO:     'badge-concluido',
+  MACRO_PAYBACK:       'badge-payback',
+}
+
 /** Ordem de exibição dos status macro no select. */
 export const STATUS_MACRO_ORDER: StatusMacro[] = [
   'MACRO_PROPOSTA',

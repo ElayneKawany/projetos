@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Plus, Search, FolderKanban, TrendingUp, AlertTriangle, Clock } from 'lucide-react'
 import type { Projeto, StatusProjeto, Prioridade, StatusCronograma } from '@/types'
 import { STATUS_LABELS, PRIORIDADE_LABELS } from '@/types'
-import { STATUS_MACRO_ORDER, STATUS_MACRO_LABELS, getStatusOperacionais } from '@/lib/status-macro'
+import { STATUS_MACRO_ORDER, STATUS_MACRO_LABELS, STATUS_MACRO_BADGES, getStatusOperacionais, getStatusMacro } from '@/lib/status-macro'
 import type { SessionUser } from '@/lib/auth'
 import NovoprojetoModal from './NovoProjetoModal'
 import { formatDistanceToNow } from 'date-fns'
@@ -226,7 +226,6 @@ export default function ProjetosClient({ projetos: initial, diretorias, areas, u
                 <th>Projeto</th>
                 <th>Diretoria</th>
                 <th>Status</th>
-                <th>Status do Projeto</th>
                 <th>Prioridade</th>
                 <th>Gerente</th>
                 <th>Previsão Entrega</th>
@@ -236,14 +235,13 @@ export default function ProjetosClient({ projetos: initial, diretorias, areas, u
             <tbody>
               {filtrados.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="text-center py-12 text-megag-cinza-texto">
+                  <td colSpan={8} className="text-center py-12 text-megag-cinza-texto">
                     <FolderKanban size={32} className="mx-auto mb-2 opacity-30" />
                     <p className="font-medium">Nenhum projeto encontrado.</p>
                   </td>
                 </tr>
               ) : filtrados.map(p => {
-                const sc = calcularStatusCronograma(p)
-                const scCfg = STATUS_CRON_CONFIG[sc]
+                const macro = getStatusMacro(p.status as StatusProjeto)
                 return (
                   <tr
                     key={p.id}
@@ -265,19 +263,14 @@ export default function ProjetosClient({ projetos: initial, diretorias, areas, u
                     </td>
                     <td className="text-sm">{p.diretoria_nome || '—'}</td>
                     <td>
-                      <span className={`badge ${STATUS_BADGE[p.status] || 'badge-proposta'}`}>
-                        {STATUS_LABELS[p.status as StatusProjeto] || p.status}
+                      <span className={`badge ${STATUS_MACRO_BADGES[macro]}`}>
+                        {STATUS_MACRO_LABELS[macro]}
                       </span>
                       {!!p.tem_revisao_pendente && (
                         <span className="ml-1 badge" style={{ backgroundColor: '#FEF3C7', color: '#92400E', borderColor: '#FDE68A' }}>
                           ↩ Em revisão
                         </span>
                       )}
-                    </td>
-                    <td>
-                      <span className={`badge text-xs ${scCfg.cls}`}>
-                        {scCfg.emoji} {scCfg.label}
-                      </span>
                     </td>
                     <td>
                       <span className={`badge badge-${p.prioridade.toLowerCase()}`}>
