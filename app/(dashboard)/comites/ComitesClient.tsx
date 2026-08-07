@@ -124,7 +124,7 @@ export default function ComitesClient({ comites, projetos, usuarios, session }: 
                 <div>
                   <label className="input-label">Tipo</label>
                   <select value={form.tipo} onChange={e => setForm(f => ({...f, tipo: e.target.value}))} className="input">
-                    <option value="IDEIAS">Comitê de Ideias</option>
+                    <option value="IDEIAS">Comitê de Projetos</option>
                     <option value="APROVACAO">Aprovação</option>
                     <option value="REVISAO">Revisão</option>
                   </select>

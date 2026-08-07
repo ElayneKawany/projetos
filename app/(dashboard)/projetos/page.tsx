@@ -3,9 +3,15 @@ import { buscarProjetos } from '@/lib/projetos'
 import getDb from '@/lib/db'
 import ProjetosClient from './ProjetosClient'
 
-export default async function ProjetosPage() {
+export default async function ProjetosPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ diretoria?: string; status?: string }>
+}) {
   const session = await getSession()
   if (!session) return null
+
+  const { diretoria, status } = await searchParams
 
   const projetos = buscarProjetos({ usuario_id: session.id, perfil: session.perfil })
 
@@ -21,6 +27,8 @@ export default async function ProjetosPage() {
       areas={areas as never[]}
       usuarios={usuarios as never[]}
       session={session}
+      initialDiretoria={diretoria ?? ''}
+      initialStatus={status ?? ''}
     />
   )
 }

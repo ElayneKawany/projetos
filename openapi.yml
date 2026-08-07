@@ -1,0 +1,4146 @@
+﻿openapi: 3.1.0
+info:
+  title: MegaG PMO API
+  description: >
+    API REST da Plataforma de GovernanÃ§a de Projetos MegaG.
+
+    **AutenticaÃ§Ã£o:** todos os endpoints (exceto `/api/auth/login`) exigem uma
+    sessÃ£o ativa. A sessÃ£o Ã© estabelecida via cookie `megag_pmo_session` (JWT
+    HttpOnly, duraÃ§Ã£o 8 h) retornado pelo endpoint de login.
+
+    **Hierarquia de perfis:**
+    `ADMIN (100) > PMO (80) > CEO (70) > DIRETOR (60) > GESTOR (40) > SOLICITANTE (20)`
+  version: 1.0.0
+  contact:
+    name: PMO MegaG
+    email: pmo@megag.com.br
+
+servers:
+  - url: http://localhost:3000
+    description: Desenvolvimento local
+  - url: https://pmo.megag.com.br
+    description: ProduÃ§Ã£o
+
+security:
+  - cookieAuth: []
+
+# ===========================================================================
+# COMPONENTS
+# ===========================================================================
+components:
+
+  # â”€â”€ Security Schemes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: megag_pmo_session
+      description: JWT HttpOnly (8 h) definido pelo endpoint POST /api/auth/login
+
+  # â”€â”€ Parameters reutilizÃ¡veis â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  parameters:
+    projetoId:
+      name: id
+      in: path
+      required: true
+      description: ID numÃ©rico do projeto
+      schema:
+        type: integer
+        example: 42
+
+    tapId:
+      name: tapId
+      in: path
+      required: true
+      description: ID numÃ©rico da versÃ£o do TAP
+      schema:
+        type: integer
+        example: 7
+
+    viabilidadeId:
+      name: vid
+      in: path
+      required: true
+      description: ID numÃ©rico da versÃ£o do Estudo de Viabilidade
+      schema:
+        type: integer
+        example: 3
+
+    cronogramaId:
+      name: cronogramaId
+      in: path
+      required: true
+      description: ID numÃ©rico da versÃ£o do cronograma
+      schema:
+        type: integer
+        example: 5
+
+    tarefaId:
+      name: tarefaId
+      in: path
+      required: true
+      description: ID numÃ©rico da tarefa/fase/subtarefa
+      schema:
+        type: integer
+        example: 88
+
+    tipoTarefaId:
+      name: id
+      in: path
+      required: true
+      description: ID numÃ©rico do tipo de tarefa
+      schema:
+        type: integer
+        example: 3
+
+    aprovacaoId:
+      name: aprovacaoId
+      in: path
+      required: true
+      description: ID numÃ©rico da aprovaÃ§Ã£o
+      schema:
+        type: integer
+        example: 20
+
+    usuarioId:
+      name: usuarioId
+      in: path
+      required: true
+      description: ID numÃ©rico do usuÃ¡rio
+      schema:
+        type: integer
+        example: 8
+
+    modeloId:
+      name: modeloId
+      in: path
+      required: true
+      description: ID numÃ©rico do modelo de workflow
+      schema:
+        type: integer
+        example: 4
+
+    contId:
+      name: contId
+      in: path
+      required: true
+      description: ID numÃ©rico do contrato financeiro
+      schema:
+        type: integer
+        example: 7
+
+    pagId:
+      name: pagId
+      in: path
+      required: true
+      description: ID numÃ©rico do pagamento
+      schema:
+        type: integer
+        example: 23
+
+    grupoId:
+      name: grupoId
+      in: path
+      required: true
+      description: ID numÃ©rico do grupo de orÃ§amento
+      schema:
+        type: integer
+        example: 5
+
+  # â”€â”€ Responses reutilizÃ¡veis â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  responses:
+    NaoAutenticado:
+      description: SessÃ£o ausente ou expirada
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Erro' }
+          example: { error: 'NÃ£o autenticado.' }
+
+    SemPermissao:
+      description: Perfil do usuÃ¡rio nÃ£o tem acesso a esta operaÃ§Ã£o
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Erro' }
+          example: { error: 'Sem permissÃ£o.' }
+
+    NaoEncontrado:
+      description: Recurso nÃ£o encontrado ou inativo
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Erro' }
+          example: { error: 'Projeto nÃ£o encontrado.' }
+
+    DadosInvalidos:
+      description: Corpo da requisiÃ§Ã£o invÃ¡lido ou campo obrigatÃ³rio ausente
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Erro' }
+
+    EntidadeNaoProcessavel:
+      description: ValidaÃ§Ã£o de negÃ³cio falhou (referÃªncia FK inexistente, campo obrigatÃ³rio vazio, etc.)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Erro' }
+
+    ErroInterno:
+      description: Erro interno do servidor
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Erro' }
+          example: { error: 'Erro ao salvar no banco de dados.' }
+
+    Sucesso:
+      description: OperaÃ§Ã£o concluÃ­da com sucesso
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/RespostaSucesso' }
+
+  # â”€â”€ Schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  schemas:
+
+    # â”€â”€ EnumeraÃ§Ãµes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    StatusProjeto:
+      type: string
+      description: Fase atual do projeto no ciclo de vida
+      enum:
+        - PROPOSTA
+        - TRIAGEM
+        - COMITE_IDEIAS
+        - VIABILIDADE
+        - COMPLEMENTACAO_TAP
+        - APROVACAO
+        - ESTRUTURACAO
+        - CRONOGRAMA
+        - EXECUCAO
+        - PROJETO_CONCLUIDO
+        - PAYBACK_ACOMPANHAMENTO
+        - PAYBACK_ENCERRADO
+        - PROJETO_ENCERRADO
+
+    Prioridade:
+      type: string
+      enum: [BAIXA, MEDIA, ALTA]
+
+    Complexidade:
+      type: string
+      enum: [BAIXA, MEDIA, ALTA]
+
+    Classificacao:
+      type: string
+      enum: [PROJETO, MELHORIA_CONTINUA]
+
+    PerfilUsuario:
+      type: string
+      enum: [ADMIN, PMO, CEO, DIRETOR, GESTOR, SOLICITANTE]
+
+    StatusArtefato:
+      type: string
+      description: Fase do artefato (TAP ou Viabilidade) no fluxo de aprovaÃ§Ã£o
+      enum: [RASCUNHO, PENDENTE_APROVACAO, APROVADO, REVISAO, CANCELADO]
+
+    TipoParticipacaoWorkflow:
+      type: string
+      enum: [APROVACAO, CIENCIA]
+      description: >
+        APROVACAO â€” pode aprovar, reprovar ou solicitar revisÃ£o.
+        CIENCIA â€” apenas registra ciÃªncia; nÃ£o pode aprovar ou reprovar.
+
+    AcaoAprovacao:
+      type: string
+      enum: [APROVAR, REPROVAR, REVISAO]
+
+    # â”€â”€ Entidades base â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    Erro:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Mensagem de erro legÃ­vel pelo usuÃ¡rio
+          example: Projeto nÃ£o encontrado.
+
+    RespostaSucesso:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+          example: true
+
+    Usuario:
+      type: object
+      properties:
+        id:           { type: integer, example: 1 }
+        nome:         { type: string, example: "Elayne Leite" }
+        email:        { type: string, format: email, example: "elayne@megag.com.br" }
+        cpf:          { type: string, example: "12345678900" }
+        cargo:        { type: string, example: "Gerente de TI", nullable: true }
+        perfil:       { $ref: '#/components/schemas/PerfilUsuario' }
+        diretoria_id: { type: integer, nullable: true }
+        area_id:      { type: integer, nullable: true }
+
+    # â”€â”€ Projeto â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    Projeto:
+      type: object
+      description: RepresentaÃ§Ã£o completa de um projeto
+      properties:
+        id:                  { type: integer, example: 42 }
+        codigo:              { type: string, example: "PRJ-2026-042" }
+        nome:                { type: string, example: "ImplantaÃ§Ã£o ERP" }
+        descricao:           { type: string, nullable: true }
+        objetivo:            { type: string, nullable: true }
+        justificativa:       { type: string, nullable: true }
+        beneficios:          { type: string, nullable: true }
+        ponto_focal:         { type: string, nullable: true }
+        contato:             { type: string, nullable: true }
+        status:              { $ref: '#/components/schemas/StatusProjeto' }
+        prioridade:          { $ref: '#/components/schemas/Prioridade' }
+        complexidade:        { $ref: '#/components/schemas/Complexidade' }
+        classificacao:       { $ref: '#/components/schemas/Classificacao' }
+        tipo_beneficio:      { type: string, enum: [QUANTITATIVO, QUALITATIVO], nullable: true }
+        diretoria_id:        { type: integer, nullable: true }
+        diretoria_nome:      { type: string, nullable: true }
+        area_id:             { type: integer, nullable: true }
+        area_nome:           { type: string, nullable: true }
+        solicitante_id:      { type: integer, nullable: true }
+        solicitante_nome:    { type: string, nullable: true }
+        gerente_id:          { type: integer, nullable: true }
+        gerente_nome:        { type: string, nullable: true }
+        pmo_responsavel_id:  { type: integer, nullable: true }
+        pmo_responsavel_nome: { type: string, nullable: true }
+        capex_aprovado:      { type: number, format: float, nullable: true }
+        opex_aprovado:       { type: number, format: float, nullable: true }
+        data_inicio_prev:    { type: string, format: date, nullable: true }
+        data_fim_prev:       { type: string, format: date, nullable: true }
+        created_at:          { type: string, format: date-time }
+        updated_at:          { type: string, format: date-time, nullable: true }
+
+    ProjetoCriacao:
+      type: object
+      required: [nome, diretoria_id, area_id, objetivo, justificativa]
+      properties:
+        nome:           { type: string, example: "ImplantaÃ§Ã£o ERP" }
+        diretoria_id:   { type: integer, example: 2 }
+        area_id:        { type: integer, example: 5 }
+        objetivo:       { type: string, example: "Digitalizar os processos de compras" }
+        justificativa:  { type: string, example: "Reduzir retrabalho em 30%" }
+        ponto_focal:    { type: string, nullable: true }
+        contato:        { type: string, nullable: true }
+        descricao:      { type: string, nullable: true }
+        beneficios:     { type: string, nullable: true }
+        solicitante_id: { type: integer, nullable: true, description: "Default: usuÃ¡rio autenticado" }
+        gerente_id:     { type: integer, nullable: true }
+        classificacao:  { $ref: '#/components/schemas/Classificacao' }
+        prioridade:     { $ref: '#/components/schemas/Prioridade' }
+
+    ProjetoAtualizacao:
+      type: object
+      description: Campos que podem ser alterados via PATCH. Somente os campos enviados sÃ£o processados.
+      properties:
+        status:              { $ref: '#/components/schemas/StatusProjeto' }
+        prioridade:          { $ref: '#/components/schemas/Prioridade' }
+        motivo:              { type: string, description: "Justificativa para mudanÃ§a de status ou prioridade" }
+        nome:                { type: string }
+        ponto_focal:         { type: string }
+        contato:             { type: string }
+        objetivo:            { type: string }
+        justificativa:       { type: string }
+        descricao:           { type: string }
+        beneficios:          { type: string }
+        gerente_id:          { type: integer }
+        pmo_responsavel_id:  { type: integer }
+        capex_aprovado:      { type: number }
+        opex_aprovado:       { type: number }
+        data_inicio_prev:    { type: string, format: date }
+        data_fim_prev:       { type: string, format: date }
+        classificacao:       { $ref: '#/components/schemas/Classificacao' }
+        complexidade:        { $ref: '#/components/schemas/Complexidade' }
+
+    ProjetoVisaoGeralAtualizacao:
+      type: object
+      description: Campos editÃ¡veis na aba VisÃ£o Geral. Campos obrigatÃ³rios nÃ£o podem ser enviados vazios.
+      properties:
+        nome:                { type: string }
+        descricao:           { type: string }
+        objetivo:            { type: string }
+        solicitante_id:      { type: integer }
+        contato:             { type: string }
+        gerente_id:          { type: integer }
+        pmo_responsavel_id:  { type: integer }
+        ponto_focal:         { type: string }
+        diretoria_id:        { type: integer }
+        area_id:             { type: integer }
+        prioridade:          { $ref: '#/components/schemas/Prioridade' }
+        tipo_beneficio:      { type: string, enum: [QUANTITATIVO, QUALITATIVO] }
+        data_inicio_prev:    { type: string, format: date }
+        data_fim_prev:       { type: string, format: date }
+        complexidade:        { $ref: '#/components/schemas/Complexidade' }
+        classificacao:       { $ref: '#/components/schemas/Classificacao' }
+
+    DashboardProjeto:
+      type: object
+      description: KPIs consolidados do projeto para exibiÃ§Ã£o no painel
+      properties:
+        cronograma:
+          type: object
+          properties:
+            total:      { type: integer, description: "Total de tarefas/atividades" }
+            concluidas: { type: integer, description: "Tarefas com data_conclusao preenchida ou status CONCLUIDA" }
+            atrasadas:  { type: integer, description: "Tarefas nÃ£o concluÃ­das com data_fim no passado" }
+            pct:        { type: integer, description: "Percentual de conclusÃ£o (0â€“100)" }
+        financeiro:
+          type: object
+          properties:
+            capex_planejado:  { type: number }
+            capex_realizado:  { type: number }
+            capex_saldo:      { type: number }
+            capex_pct:        { type: integer }
+            opex_planejado:   { type: number }
+            opex_realizado:   { type: number }
+            opex_saldo:       { type: number }
+            opex_pct:         { type: integer }
+            total_planejado:  { type: number }
+            total_realizado:  { type: number }
+            total_saldo:      { type: number }
+            total_pct:        { type: integer }
+        payback:
+          type: object
+          properties:
+            pct:         { type: integer, description: "0 ou 100 conforme status do projeto" }
+            label:       { type: string, example: "Em acompanhamento" }
+            is_concluido: { type: boolean }
+
+    # â”€â”€ TAP â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    TapVersao:
+      type: object
+      description: VersÃ£o do Termo de Abertura do Projeto (TAP)
+      properties:
+        id:                   { type: integer }
+        projeto_id:           { type: integer }
+        versao:               { type: integer, example: 1 }
+        status:               { $ref: '#/components/schemas/StatusArtefato' }
+        objetivo_detalhado:   { type: string, nullable: true }
+        situacao_atual:       { type: string, nullable: true }
+        escopo_fisico:        { type: string, nullable: true }
+        escopo_sistemico:     { type: string, nullable: true }
+        escopo_processo:      { type: string, nullable: true }
+        setores_envolvidos:   { type: string, nullable: true }
+        etapas_projeto:       { type: string, nullable: true }
+        entregaveis:          { type: string, nullable: true }
+        pontos_atencao:       { type: string, nullable: true }
+        pontos_definir:       { type: string, nullable: true }
+        beneficios_tap:       { type: string, nullable: true }
+        escopo_inicial:       { type: string, nullable: true }
+        escopo_fora:          { type: string, nullable: true }
+        restricoes:           { type: string, nullable: true }
+        premissas:            { type: string, nullable: true }
+        riscos_iniciais:      { type: string, nullable: true }
+        fase_origem:          { type: string, nullable: true }
+        criado_por:           { type: integer }
+        created_at:           { type: string, format: date-time }
+        updated_at:           { type: string, format: date-time, nullable: true }
+
+    TapAtualizacao:
+      type: object
+      description: Campos editÃ¡veis do TAP. Pelo menos um campo deve ser enviado. Proibido quando status Ã© APROVADO ou PENDENTE_APROVACAO.
+      properties:
+        objetivo_detalhado:  { type: string }
+        situacao_atual:      { type: string }
+        escopo_fisico:       { type: string }
+        escopo_sistemico:    { type: string }
+        escopo_processo:     { type: string }
+        setores_envolvidos:  { type: string }
+        etapas_projeto:      { type: string }
+        entregaveis:         { type: string }
+        pontos_atencao:      { type: string }
+        pontos_definir:      { type: string }
+        beneficios_tap:      { type: string }
+        escopo_inicial:      { type: string }
+        escopo_fora:         { type: string }
+        restricoes:          { type: string }
+        premissas:           { type: string }
+        riscos_iniciais:     { type: string }
+
+    # â”€â”€ Viabilidade â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    ViabilidadeVersao:
+      type: object
+      description: VersÃ£o do Estudo de Viabilidade do projeto
+      properties:
+        id:                         { type: integer }
+        projeto_id:                 { type: integer }
+        versao:                     { type: integer, example: 1 }
+        status:                     { $ref: '#/components/schemas/StatusArtefato' }
+        resumo_executivo:           { type: string, nullable: true }
+        investimento_total:         { type: number, nullable: true }
+        roi:                        { type: number, nullable: true, description: "ROI em %" }
+        tir:                        { type: number, nullable: true, description: "TIR em %" }
+        payback_meses:              { type: integer, nullable: true }
+        capex:                      { type: number, nullable: true }
+        opex:                       { type: number, nullable: true }
+        opex_periodicidade:         { type: string, nullable: true }
+        economia_estimada:          { type: number, nullable: true }
+        economia_periodicidade:     { type: string, nullable: true }
+        tipo_payback:               { type: string, nullable: true }
+        payback_informado:          { type: number, nullable: true }
+        payback_unidade:            { type: string, nullable: true }
+        tipo_payback_quantitativo:  { type: string, nullable: true }
+        tipo_payback_qualitativo:   { type: string, nullable: true }
+        beneficios_esperados:       { type: string, nullable: true }
+        baseline_valor:             { type: number, nullable: true }
+        meta_valor:                 { type: number, nullable: true }
+        tipo_indicador:             { type: string, nullable: true }
+        economia_mensal_esperada:   { type: number, nullable: true }
+        sistemas_envolvidos:        { type: string, nullable: true }
+        complexidade_tecnica:       { type: string, nullable: true }
+        dependencia_fornecedores:   { type: string, nullable: true }
+        infraestrutura:             { type: string, nullable: true }
+        impacto_operacional:        { type: string, nullable: true }
+        mudanca_processo:           { type: string, nullable: true }
+        recursos_necessarios:       { type: string, nullable: true }
+        impactos:                   { type: string, nullable: true }
+        riscos:                     { type: string, nullable: true }
+        data_inicio_prev:           { type: string, format: date, nullable: true }
+        data_fim_prev:              { type: string, format: date, nullable: true }
+        marcos:                     { type: string, nullable: true }
+        recomendacao:               { type: string, nullable: true }
+        justificativa_recomendacao: { type: string, nullable: true }
+        condicoes_aprovacao:        { type: string, nullable: true }
+        criado_por:                 { type: integer }
+        created_at:                 { type: string, format: date-time }
+        updated_at:                 { type: string, format: date-time, nullable: true }
+
+    ViabilidadeAtualizacao:
+      type: object
+      description: Campos editÃ¡veis do Estudo de Viabilidade. Pelo menos um campo deve ser enviado.
+      properties:
+        resumo_executivo:           { type: string }
+        investimento_total:         { type: number }
+        roi:                        { type: number }
+        tir:                        { type: number }
+        payback_meses:              { type: integer }
+        capex:                      { type: number }
+        opex:                       { type: number }
+        opex_periodicidade:         { type: string }
+        economia_estimada:          { type: number }
+        economia_periodicidade:     { type: string }
+        tipo_payback:               { type: string }
+        payback_informado:          { type: number }
+        payback_unidade:            { type: string }
+        tipo_payback_quantitativo:  { type: string }
+        tipo_payback_qualitativo:   { type: string }
+        beneficios_esperados:       { type: string }
+        baseline_valor:             { type: number }
+        meta_valor:                 { type: number }
+        tipo_indicador:             { type: string }
+        economia_mensal_esperada:   { type: number }
+        sistemas_envolvidos:        { type: string }
+        complexidade_tecnica:       { type: string }
+        dependencia_fornecedores:   { type: string }
+        infraestrutura:             { type: string }
+        impacto_operacional:        { type: string }
+        mudanca_processo:           { type: string }
+        recursos_necessarios:       { type: string }
+        impactos:                   { type: string }
+        riscos:                     { type: string }
+        data_inicio_prev:           { type: string, format: date }
+        data_fim_prev:              { type: string, format: date }
+        marcos:                     { type: string }
+        recomendacao:               { type: string }
+        justificativa_recomendacao: { type: string }
+        condicoes_aprovacao:        { type: string }
+        status:                     { type: string }
+
+    # â”€â”€ Workflow de aprovaÃ§Ã£o â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    EtapaWorkflow:
+      type: object
+      required: [usuario_id, tipo]
+      description: Etapa de participaÃ§Ã£o no workflow de aprovaÃ§Ã£o do artefato
+      properties:
+        usuario_id: { type: integer, example: 5 }
+        tipo:       { $ref: '#/components/schemas/TipoParticipacaoWorkflow' }
+
+    SubmeterArtefato:
+      type: object
+      required: [etapas]
+      description: >
+        Corpo para submeter um artefato (TAP ou Viabilidade) ao workflow de aprovaÃ§Ã£o.
+        Deve conter ao menos uma etapa com tipo APROVACAO.
+      properties:
+        etapas:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/EtapaWorkflow' }
+          example:
+            - { usuario_id: 3, tipo: APROVACAO }
+            - { usuario_id: 7, tipo: CIENCIA }
+        modeloId:
+          type: integer
+          nullable: true
+          description: ID de um modelo de workflow jÃ¡ salvo a reutilizar
+        novoModelo:
+          type: object
+          nullable: true
+          description: Salva o workflow como novo modelo
+          properties:
+            nome: { type: string, example: "Workflow PadrÃ£o Diretoria TI" }
+
+    ResultadoAprovacao:
+      type: object
+      properties:
+        ok:       { type: boolean, example: true }
+        resultado:
+          type: string
+          enum: [ADVANCED, COMPLETED]
+          description: >
+            ADVANCED â€” workflow avanÃ§ou para a prÃ³xima etapa, artefato ainda pendente.
+            COMPLETED â€” todas as etapas aprovadas; artefato marcado como APROVADO.
+
+    # â”€â”€ UsuÃ¡rios (estendido) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    UsuarioCompleto:
+      type: object
+      description: UsuÃ¡rio com todos os campos, incluindo status ativo/inativo
+      properties:
+        id:            { type: integer }
+        nome:          { type: string }
+        email:         { type: string, format: email }
+        cpf:           { type: string }
+        cargo:         { type: string, nullable: true }
+        perfil:        { $ref: '#/components/schemas/PerfilUsuario' }
+        perfil_id:     { type: integer }
+        diretoria_id:  { type: integer, nullable: true }
+        diretoria_nome: { type: string, nullable: true }
+        area_id:       { type: integer, nullable: true }
+        area_nome:     { type: string, nullable: true }
+        ativo:         { type: integer, enum: [0, 1] }
+        created_at:    { type: string, format: date-time }
+
+    # â”€â”€ AprovaÃ§Ãµes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    AprovacaoResumo:
+      type: object
+      description: Resumo de uma aprovaÃ§Ã£o para listagem
+      properties:
+        id:              { type: integer }
+        projeto_id:      { type: integer }
+        projeto_codigo:  { type: string, example: "PRJ-2026-042" }
+        projeto_nome:    { type: string }
+        solicitante_id:  { type: integer }
+        solicitante_nome: { type: string }
+        status:          { type: string }
+        created_at:      { type: string, format: date-time }
+
+    AprovacaoDetalhe:
+      type: object
+      description: Dados completos de uma aprovaÃ§Ã£o
+      properties:
+        id:              { type: integer }
+        projeto_id:      { type: integer }
+        projeto_codigo:  { type: string }
+        projeto_nome:    { type: string }
+        solicitante_id:  { type: integer }
+        solicitante_nome: { type: string }
+        aprovador_id:    { type: integer, nullable: true }
+        aprovador_nome:  { type: string, nullable: true }
+        status:          { type: string }
+        observacao_apr:  { type: string, nullable: true }
+        aprovado_em:     { type: string, format: date-time, nullable: true }
+        created_at:      { type: string, format: date-time }
+
+    AprovadorConfig:
+      type: object
+      description: ConfiguraÃ§Ã£o de aprovador padrÃ£o por tipo de documento
+      properties:
+        id:             { type: integer }
+        tipo_documento: { type: string, enum: [TAP, VIABILIDADE, CRONOGRAMA] }
+        usuario_id:     { type: integer }
+        usuario_nome:   { type: string }
+        usuario_email:  { type: string, format: email }
+        ordem:          { type: integer }
+        ativo:          { type: integer, enum: [0, 1] }
+
+    # â”€â”€ Workflow â€” Modelos â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    EtapaModeloWorkflow:
+      type: object
+      required: [ordem, usuario_id, usuario_nome, tipo]
+      description: Etapa de um modelo de workflow reutilizÃ¡vel
+      properties:
+        ordem:        { type: integer, example: 1 }
+        usuario_id:   { type: integer, example: 5 }
+        usuario_nome: { type: string, example: "JoÃ£o Gestor" }
+        tipo:         { $ref: '#/components/schemas/TipoParticipacaoWorkflow' }
+
+    ModeloWorkflow:
+      type: object
+      description: Modelo de workflow salvo para reutilizaÃ§Ã£o
+      properties:
+        id:            { type: integer }
+        nome:          { type: string, example: "Workflow PadrÃ£o Diretoria TI" }
+        descricao:     { type: string, nullable: true }
+        ativo:         { type: integer, enum: [0, 1] }
+        criado_por:    { type: integer }
+        criado_por_nome: { type: string }
+        etapas:
+          type: array
+          items:
+            type: object
+            properties:
+              id:           { type: integer }
+              modelo_id:    { type: integer }
+              ordem:        { type: integer }
+              usuario_id:   { type: integer }
+              usuario_nome: { type: string }
+              tipo:         { $ref: '#/components/schemas/TipoParticipacaoWorkflow' }
+
+    # â”€â”€ Cronograma â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    StatusCronograma:
+      type: string
+      description: Fase atual do cronograma no fluxo de aprovaÃ§Ã£o
+      enum:
+        - RASCUNHO
+        - PENDENTE_APROVACAO
+        - APROVADO
+        - PRONTO_PARA_ENCERRAMENTO
+
+    NivelTarefa:
+      type: string
+      description: NÃ­vel hierÃ¡rquico da tarefa na WBS
+      enum: [FASE, TAREFA, SUBTAREFA]
+
+    TipoTarefa:
+      type: string
+      description: ClassificaÃ§Ã£o funcional da tarefa. Marcos sÃ£o tarefas com tipo=MARCO; subtarefas sÃ£o tarefas com nivel=SUBTAREFA.
+      enum:
+        - TAREFA
+        - MARCO
+        - ENTREGA
+        - REUNIAO
+        - HOMOLOGACAO
+        - IMPLANTACAO
+        - TREINAMENTO
+        - GO_LIVE
+        - OUTRO
+
+    CriticidadeTarefa:
+      type: string
+      enum: [CRITICA, ALTA, NORMAL, BAIXA]
+
+    StatusTarefa:
+      type: string
+      enum: [PENDENTE, EM_ANDAMENTO, CONCLUIDA, CANCELADA, BLOQUEADA]
+
+    PrazoStatus:
+      type: string
+      enum: [NO_PRAZO, ATRASADA, CONCLUIDA_NO_PRAZO, CONCLUIDA_COM_ATRASO]
+      nullable: true
+
+    Cronograma:
+      type: object
+      description: VersÃ£o de um cronograma de projeto
+      properties:
+        id:               { type: integer, example: 1 }
+        projeto_id:       { type: integer }
+        versao:           { type: integer, example: 1 }
+        label:            { type: string, example: "VersÃ£o 1" }
+        modo:             { type: string, example: "CENTRALIZADO" }
+        status:           { $ref: '#/components/schemas/StatusCronograma' }
+        fonte_importacao: { type: string, example: "MANUAL" }
+        arquivo_origem:   { type: string, nullable: true }
+        created_at:       { type: string, format: date-time }
+
+    CronogramaSumario:
+      type: object
+      description: SumÃ¡rio de uma versÃ£o (usado na lista de versÃµes)
+      properties:
+        id:     { type: integer }
+        versao: { type: integer }
+        label:  { type: string }
+        status: { $ref: '#/components/schemas/StatusCronograma' }
+
+    Tarefa:
+      type: object
+      description: Tarefa, fase ou subtarefa de um cronograma. Hierarquia FASE > TAREFA > SUBTAREFA controlada pelo campo `nivel` e `parent_id`.
+      properties:
+        id:                   { type: integer }
+        cronograma_id:        { type: integer }
+        parent_id:            { type: integer, nullable: true, description: "ID da tarefa pai (para SUBTAREFA)" }
+        codigo:               { type: string, example: "1.2.3", description: "WBS calculado server-side" }
+        nome:                 { type: string }
+        nivel:                { $ref: '#/components/schemas/NivelTarefa' }
+        tipo:                 { $ref: '#/components/schemas/TipoTarefa' }
+        criticidade:          { $ref: '#/components/schemas/CriticidadeTarefa' }
+        tipo_macro:           { type: string, nullable: true, description: "Usado apenas em FASE" }
+        data_inicio:          { type: string, format: date, nullable: true }
+        data_fim:             { type: string, format: date, nullable: true }
+        duracao_dias:         { type: integer, nullable: true }
+        responsavel_id:       { type: integer, nullable: true }
+        responsavel_nome_ext: { type: string, nullable: true }
+        executor_id:          { type: integer, nullable: true }
+        executor_nome_ext:    { type: string, nullable: true }
+        area_id:              { type: integer, nullable: true }
+        peso:                 { type: integer, example: 1 }
+        ordem:                { type: integer }
+        percentual:           { type: integer, minimum: 0, maximum: 100 }
+        status:               { $ref: '#/components/schemas/StatusTarefa' }
+        prazo_status:         { $ref: '#/components/schemas/PrazoStatus' }
+        data_conclusao:       { type: string, format: date-time, nullable: true }
+        observacoes:          { type: string, nullable: true }
+        responsaveis:
+          type: array
+          items:
+            type: object
+            properties:
+              id:   { type: integer }
+              nome: { type: string }
+
+    TarefaInput:
+      type: object
+      description: Campos para criaÃ§Ã£o ou atualizaÃ§Ã£o de uma tarefa
+      required: [nome]
+      properties:
+        id:                   { type: integer, description: "Se presente, atualiza; se ausente, insere (somente em PUT /tarefas)" }
+        nome:                 { type: string, example: "Levantamento de Requisitos" }
+        nivel:                { $ref: '#/components/schemas/NivelTarefa' }
+        tipo:                 { $ref: '#/components/schemas/TipoTarefa' }
+        criticidade:          { $ref: '#/components/schemas/CriticidadeTarefa' }
+        tipo_macro:           { type: string, nullable: true }
+        data_inicio:          { type: string, format: date, nullable: true }
+        data_fim:             { type: string, format: date, nullable: true }
+        duracao_dias:         { type: integer, nullable: true }
+        responsavel_id:       { type: integer, nullable: true }
+        responsavel_nome_ext: { type: string, nullable: true }
+        executor_id:          { type: integer, nullable: true }
+        executor_nome_ext:    { type: string, nullable: true }
+        area_id:              { type: integer, nullable: true }
+        ordem:                { type: integer }
+        peso:                 { type: integer, default: 1 }
+        percentual:           { type: integer, minimum: 0, maximum: 100, default: 0 }
+        observacoes:          { type: string, nullable: true }
+        descricao:            { type: string, nullable: true }
+        responsaveis:
+          type: array
+          nullable: true
+          description: ResponsÃ¡veis mÃºltiplos (N:N); usado no PUT /tarefas
+          items:
+            type: object
+            properties:
+              id:   { type: integer, nullable: true }
+              nome: { type: string }
+        parentOrdinal:
+          type: integer
+          nullable: true
+          description: "PosiÃ§Ã£o (1-based) do item pai no array â€” gerado pelo parser Excel, nÃ£o usado em entrada manual"
+
+    ResultadoConclusaoTarefa:
+      type: object
+      properties:
+        ok:                          { type: boolean }
+        prazo_status:                { $ref: '#/components/schemas/PrazoStatus' }
+        dias_atraso:                 { type: integer }
+        is_subtarefa:                { type: boolean }
+        tarefa_pai_auto_completada:  { type: boolean }
+        tarefa_pai_nome:             { type: string, nullable: true }
+        fase_auto_completada:        { type: boolean }
+        fase_nome:                   { type: string, nullable: true }
+        cronograma_concluido:        { type: boolean }
+
+    ResultadoCronograma:
+      type: object
+      description: Resposta ao criar ou importar um cronograma
+      properties:
+        ok:                  { type: boolean, example: true }
+        cronogramaId:        { type: integer }
+        versao:              { type: integer }
+        tarefasSalvas:       { type: integer }
+        arquivo:             { type: string, nullable: true, description: "Nome do arquivo importado (somente importaÃ§Ã£o Excel)" }
+        linhasLidas:         { type: integer, nullable: true }
+        fasesCriadas:        { type: integer, nullable: true }
+        tarefasCriadas:      { type: integer, nullable: true }
+        subtarefasCriadas:   { type: integer, nullable: true }
+        tarefasDescartadas:  { type: integer, nullable: true }
+        errosPorLinha:       { type: array, items: { type: object }, nullable: true }
+        warnings:            { type: array, items: { type: string }, nullable: true }
+
+    SubtarefaSugerida:
+      type: object
+      description: SugestÃ£o de subtarefa gerada por IA (Claude)
+      properties:
+        nome:      { type: string, example: "Mapear processos atuais" }
+        descricao: { type: string, example: "Identificar fluxos existentes e gargalos" }
+
+    TipoTarefaConfig:
+      type: object
+      description: Tipo de tarefa configurÃ¡vel no sistema
+      properties:
+        id:        { type: integer }
+        codigo:    { type: string, example: "MARCO" }
+        label:     { type: string, example: "Marco" }
+        ordem:     { type: integer }
+        ativo:     { type: integer, enum: [0, 1] }
+        is_system: { type: integer, enum: [0, 1], description: "1 = tipo do sistema (nÃ£o pode ser desativado)" }
+
+    NovaVersaoCronograma:
+      type: object
+      properties:
+        ok:     { type: boolean, example: true }
+        id:     { type: integer, description: "ID da nova versÃ£o" }
+        versao: { type: integer, description: "NÃºmero da nova versÃ£o" }
+
+    # â”€â”€ ImportaÃ§Ã£o/ExportaÃ§Ã£o â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    RespostaImportacao:
+      type: object
+      description: Resultado do parse de um arquivo xlsx importado. Os dados NÃƒO sÃ£o persistidos nesta chamada; o cliente deve confirmar em seguida.
+      properties:
+        ok:             { type: boolean, example: true }
+        dados:          { type: object, description: "Campos extraÃ­dos do arquivo, chave = nome do campo" }
+        camposFaltantes:
+          type: array
+          items: { type: string }
+          description: Campos esperados nÃ£o encontrados no arquivo
+        avisos:
+          type: array
+          items: { type: string }
+          description: Avisos nÃ£o-fatais durante o parse
+
+    NovaVersaoTap:
+      type: object
+      description: Resposta ao criar uma nova versÃ£o de rascunho do TAP
+      properties:
+        ok:     { type: boolean, example: true }
+        id:     { type: integer, description: "ID da nova versÃ£o" }
+        versao: { type: integer, description: "NÃºmero da nova versÃ£o" }
+        label:  { type: string, example: "TAP v2 â€” Rascunho" }
+
+    NovaVersaoViabilidade:
+      type: object
+      description: Resposta ao criar uma nova versÃ£o de rascunho do Estudo de Viabilidade
+      properties:
+        ok:     { type: boolean, example: true }
+        id:     { type: integer, description: "ID da nova versÃ£o" }
+        versao: { type: integer, description: "NÃºmero da nova versÃ£o" }
+
+    ConcluirProjeto:
+      type: object
+      required: [data_conclusao_real, responsavel_conclusao]
+      properties:
+        data_conclusao_real:   { type: string, format: date, example: "2026-08-06" }
+        hora_conclusao:        { type: string, example: "17:30", nullable: true }
+        responsavel_conclusao: { type: string, example: "Elayne Leite" }
+        motivo_conclusao:      { type: string, nullable: true }
+        checklist_conclusao:
+          type: object
+          nullable: true
+          description: Mapa JSON com itens do checklist de conclusÃ£o
+
+    # â"€â"€ Financeiro â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+    NaturezaFinanceira:
+      type: string
+      description: ClassificaÃ§Ã£o orÃ§amentÃ¡ria do investimento
+      enum: [CAPEX, OPEX]
+
+    TipoMovimento:
+      type: string
+      description: Tipo do documento financeiro registrado como movimento
+      enum: [NF, CONTRATO, COMPROVANTE, MEDICAO, ADIANTAMENTO, OUTRO]
+
+    StatusMovimento:
+      type: string
+      description: Estado atual do movimento financeiro
+      enum: [PENDENTE, APROVADO, REJEITADO, CANCELADO]
+
+    StatusContrato:
+      type: string
+      description: Ciclo de vida do contrato
+      enum: [ATIVO, SUSPENSO, ENCERRADO, CANCELADO]
+
+    LancamentoFinanceiro:
+      type: object
+      description: LanÃ§amento financeiro avulso (nÃ£o vinculado a contrato)
+      properties:
+        id:              { type: integer }
+        projeto_id:      { type: integer }
+        tipo:            { type: string }
+        categoria:       { type: string }
+        descricao:       { type: string }
+        valor:           { type: number, format: float }
+        data_lancamento: { type: string, format: date }
+        fornecedor:      { type: string, nullable: true }
+        numero_doc:      { type: string, nullable: true }
+        competencia:     { type: string, nullable: true, example: "2026-08" }
+        observacoes:     { type: string, nullable: true }
+        arquivo_nf_path: { type: string, nullable: true }
+        projeto_nome:    { type: string, nullable: true }
+        criado_por_nome: { type: string, nullable: true }
+        created_at:      { type: string, format: date-time }
+
+    LancamentoFinanceiroInput:
+      type: object
+      required: [tipo, categoria, descricao, valor, data_lancamento]
+      properties:
+        tipo:            { type: string, description: "Tipo do lanÃ§amento (ex.: CAPEX, OPEX)" }
+        categoria:       { type: string, description: "Categoria contÃ¡bil" }
+        descricao:       { type: string }
+        valor:           { type: number, format: float, minimum: 0.01 }
+        data_lancamento: { type: string, format: date }
+        fornecedor:      { type: string, nullable: true }
+        numero_doc:      { type: string, nullable: true }
+        competencia:     { type: string, nullable: true, example: "2026-08" }
+        observacoes:     { type: string, nullable: true }
+
+    MovimentoFinanceiro:
+      type: object
+      description: Documento financeiro (NF, contrato, comprovante) registrado no projeto
+      properties:
+        id:             { type: integer }
+        projeto_id:     { type: integer }
+        tipo_movimento: { $ref: '#/components/schemas/TipoMovimento' }
+        valor_total:    { type: number, format: float }
+        item_id:        { type: integer, nullable: true }
+        numero_doc:     { type: string, nullable: true }
+        fornecedor:     { type: string, nullable: true }
+        data_emissao:   { type: string, format: date, nullable: true }
+        data_vencimento: { type: string, format: date, nullable: true }
+        observacoes:    { type: string, nullable: true }
+        status:         { $ref: '#/components/schemas/StatusMovimento' }
+        criado_por:     { type: integer }
+        criado_por_nome: { type: string, nullable: true }
+        created_at:     { type: string, format: date-time }
+
+    MovimentoFinanceiroInput:
+      type: object
+      required: [tipo_movimento, valor_total]
+      properties:
+        tipo_movimento:  { $ref: '#/components/schemas/TipoMovimento' }
+        valor_total:     { type: number, format: float, minimum: 0.01 }
+        item_id:         { type: integer, nullable: true }
+        numero_doc:      { type: string, nullable: true }
+        fornecedor:      { type: string, nullable: true }
+        data_emissao:    { type: string, format: date, nullable: true }
+        data_vencimento: { type: string, format: date, nullable: true }
+        observacoes:     { type: string, nullable: true }
+
+    Pagamento:
+      type: object
+      description: Pagamento registrado contra um contrato
+      properties:
+        id:               { type: integer }
+        contrato_id:      { type: integer }
+        numero_documento: { type: string, nullable: true }
+        tipo_documento:   { type: string, nullable: true, example: "NF" }
+        nota_fiscal:      { type: string, nullable: true }
+        data_pagamento:   { type: string, format: date, nullable: true }
+        competencia:      { type: string, nullable: true, example: "2026-08" }
+        valor_pago:       { type: number, format: float }
+        observacao:       { type: string, nullable: true }
+        arquivo_path:     { type: string, nullable: true }
+        ativo:            { type: integer, enum: [0, 1] }
+        criado_por:       { type: integer }
+        criado_por_nome:  { type: string, nullable: true }
+        created_at:       { type: string, format: date-time }
+
+    PagamentoInput:
+      type: object
+      required: [valor_pago]
+      properties:
+        valor_pago:       { type: number, format: float, minimum: 0.01 }
+        numero_documento: { type: string, nullable: true }
+        tipo_documento:   { type: string, nullable: true, example: "NF" }
+        nota_fiscal:      { type: string, nullable: true }
+        data_pagamento:   { type: string, format: date, nullable: true }
+        competencia:      { type: string, nullable: true, example: "2026-08" }
+        observacao:       { type: string, nullable: true }
+
+    PagamentoAtualizacao:
+      type: object
+      description: Campos atualizÃ¡veis de um pagamento (todos opcionais)
+      properties:
+        numero_documento: { type: string, nullable: true }
+        tipo_documento:   { type: string, nullable: true }
+        nota_fiscal:      { type: string, nullable: true }
+        data_pagamento:   { type: string, format: date, nullable: true }
+        competencia:      { type: string, nullable: true }
+        valor_pago:       { type: number, format: float, minimum: 0.01 }
+        observacao:       { type: string, nullable: true }
+
+    Contrato:
+      type: object
+      description: Contrato financeiro de um projeto com fornecedor
+      properties:
+        id:               { type: integer }
+        projeto_id:       { type: integer }
+        numero_contrato:  { type: string, nullable: true }
+        contratado:       { type: string }
+        tipo_contrato:    { type: string, nullable: true, example: "SERVICO" }
+        descricao_servico: { type: string, nullable: true }
+        valor_aprovado:   { type: number, format: float }
+        natureza_financeira: { $ref: '#/components/schemas/NaturezaFinanceira' }
+        status:           { $ref: '#/components/schemas/StatusContrato' }
+        observacao:       { type: string, nullable: true }
+        ativo:            { type: integer, enum: [0, 1] }
+        criado_por:       { type: integer }
+        criado_por_nome:  { type: string, nullable: true }
+        created_at:       { type: string, format: date-time }
+        updated_at:       { type: string, format: date-time }
+
+    ContratoInput:
+      type: object
+      required: [contratado, valor_aprovado, natureza_financeira]
+      properties:
+        contratado:        { type: string }
+        valor_aprovado:    { type: number, format: float, minimum: 0 }
+        natureza_financeira: { $ref: '#/components/schemas/NaturezaFinanceira' }
+        numero_contrato:   { type: string, nullable: true }
+        tipo_contrato:     { type: string, nullable: true }
+        descricao_servico: { type: string, nullable: true }
+        observacao:        { type: string, nullable: true }
+
+    ContratoAtualizacao:
+      type: object
+      description: Campos atualizÃ¡veis de um contrato (todos opcionais)
+      properties:
+        numero_contrato:   { type: string, nullable: true }
+        contratado:        { type: string }
+        tipo_contrato:     { type: string, nullable: true }
+        natureza_financeira: { $ref: '#/components/schemas/NaturezaFinanceira' }
+        descricao_servico: { type: string, nullable: true }
+        valor_aprovado:    { type: number, format: float }
+        status:            { $ref: '#/components/schemas/StatusContrato' }
+        observacao:        { type: string, nullable: true }
+
+    ContratoCompleto:
+      type: object
+      description: Contrato com pagamentos e mÃ©tricas calculadas
+      allOf:
+        - { $ref: '#/components/schemas/Contrato' }
+        - type: object
+          properties:
+            pagamentos:
+              type: array
+              items: { $ref: '#/components/schemas/Pagamento' }
+            valor_pago_total:      { type: number, format: float, description: "SomatÃ³rio dos pagamentos ativos" }
+            saldo:                 { type: number, format: float, description: "valor_aprovado - valor_pago_total" }
+            percentual_executado:  { type: number, format: float, description: "% do valor aprovado jÃ¡ pago" }
+
+    ResumoFinanceiro:
+      type: object
+      description: Totais consolidados de CAPEX e OPEX do projeto
+      properties:
+        capex_planejado:  { type: number, format: float }
+        opex_planejado:   { type: number, format: float }
+        capex_pago:       { type: number, format: float }
+        opex_pago:        { type: number, format: float }
+        total_planejado:  { type: number, format: float }
+        total_pago:       { type: number, format: float }
+        saldo_total:      { type: number, format: float }
+        qtd_contratos:    { type: integer }
+
+    DashboardFinanceiro:
+      type: object
+      description: "Resposta dos endpoints GET /financeiro e GET /contratos"
+      properties:
+        contratos:
+          type: array
+          items: { $ref: '#/components/schemas/ContratoCompleto' }
+        resumo: { $ref: '#/components/schemas/ResumoFinanceiro' }
+        viabilidade:
+          type: object
+          nullable: true
+          description: Valores CAPEX/OPEX da viabilidade aprovada (somente leitura)
+          properties:
+            capex: { type: number, format: float, nullable: true }
+            opex:  { type: number, format: float, nullable: true }
+
+    ResultadoImportacaoFinanceiro:
+      type: object
+      description: Resultado da importaÃ§Ã£o de contratos e pagamentos via Excel
+      properties:
+        ok:                    { type: boolean, example: true }
+        importados:            { type: integer, description: "Contratos inseridos/atualizados" }
+        pagamentosImportados:  { type: integer }
+        contratosProcessados:  { type: integer }
+        linhasLidas:           { type: integer }
+        warnings:
+          type: array
+          items: { type: string }
+
+    # â"€â"€ OrÃ§amento â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+    ItemOrcamento:
+      type: object
+      description: Item de orÃ§amento dentro de um grupo
+      properties:
+        id:                    { type: integer }
+        grupo_id:              { type: integer }
+        projeto_id:            { type: integer }
+        nome:                  { type: string }
+        descricao:             { type: string, nullable: true }
+        valor_aprovado:        { type: number, format: float }
+        conta_contabil_id:     { type: integer, nullable: true }
+        centro_custo_id:       { type: integer, nullable: true }
+        prioridade:            { type: string, nullable: true }
+        responsavel_usuario_id: { type: integer, nullable: true }
+        ordem:                 { type: integer, nullable: true }
+        ativo:                 { type: integer, enum: [0, 1] }
+        created_at:            { type: string, format: date-time }
+
+    ItemOrcamentoInput:
+      type: object
+      required: [nome, valor_aprovado]
+      properties:
+        nome:                  { type: string }
+        valor_aprovado:        { type: number, format: float, minimum: 0 }
+        descricao:             { type: string, nullable: true }
+        conta_contabil_id:     { type: integer, nullable: true }
+        centro_custo_id:       { type: integer, nullable: true }
+        prioridade:            { type: string, nullable: true }
+        responsavel_usuario_id: { type: integer, nullable: true }
+        ordem:                 { type: integer, nullable: true }
+
+    ItemOrcamentoAtualizacao:
+      type: object
+      description: Campos atualizÃ¡veis de um item de orÃ§amento (todos opcionais)
+      properties:
+        nome:                  { type: string }
+        valor_aprovado:        { type: number, format: float, minimum: 0 }
+        descricao:             { type: string, nullable: true }
+        conta_contabil_id:     { type: integer, nullable: true }
+        centro_custo_id:       { type: integer, nullable: true }
+        prioridade:            { type: string, nullable: true }
+        responsavel_usuario_id: { type: integer, nullable: true }
+        ordem:                 { type: integer, nullable: true }
+
+    GrupoOrcamento:
+      type: object
+      description: Grupo de orÃ§amento com itens aninhados
+      properties:
+        id:           { type: integer }
+        projeto_id:   { type: integer }
+        tipo:         { $ref: '#/components/schemas/NaturezaFinanceira' }
+        nome:         { type: string }
+        viabilidade_id: { type: integer, nullable: true }
+        cor:          { type: string, nullable: true, example: "#003087" }
+        icone:        { type: string, nullable: true }
+        ordem:        { type: integer, nullable: true }
+        ativo:        { type: integer, enum: [0, 1] }
+        itens:
+          type: array
+          items: { $ref: '#/components/schemas/ItemOrcamento' }
+
+    GrupoOrcamentoInput:
+      type: object
+      required: [tipo, nome]
+      properties:
+        tipo:          { $ref: '#/components/schemas/NaturezaFinanceira' }
+        nome:          { type: string }
+        viabilidade_id: { type: integer, nullable: true }
+        cor:           { type: string, nullable: true }
+        icone:         { type: string, nullable: true }
+        ordem:         { type: integer, nullable: true }
+
+    TotaisOrcamento:
+      type: object
+      description: Totais calculados do orÃ§amento por natureza e tipo de investimento
+      properties:
+        capex_total:  { type: number, format: float }
+        opex_total:   { type: number, format: float }
+        grand_total:  { type: number, format: float }
+        por_tipo:
+          type: object
+          description: "Mapa { tipo_investimento: total }"
+          additionalProperties: { type: number, format: float }
+
+# ===========================================================================
+# PATHS
+# ===========================================================================
+paths:
+
+  # â”€â”€ AutenticaÃ§Ã£o â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  /api/auth/login:
+    post:
+      operationId: authLogin
+      summary: Autenticar usuÃ¡rio
+      description: Valida CPF + senha e, em caso de sucesso, define o cookie de sessÃ£o `megag_pmo_session` (JWT, 8 h) na resposta.
+      security: []
+      tags: [AutenticaÃ§Ã£o]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cpf, senha]
+              properties:
+                cpf:   { type: string, example: "12345678900" }
+                senha: { type: string, format: password, example: "SenhaSegura123!" }
+      responses:
+        '200':
+          description: Login realizado â€” cookie `megag_pmo_session` definido
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  user:    { $ref: '#/components/schemas/Usuario' }
+        '400':
+          description: CPF ou senha nÃ£o informados
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+        '401':
+          description: Credenciais invÃ¡lidas
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+              example: { error: 'CPF ou senha invÃ¡lidos.' }
+        '500':
+          $ref: '#/components/responses/ErroInterno'
+
+  /api/auth/logout:
+    post:
+      operationId: authLogout
+      summary: Encerrar sessÃ£o
+      description: Remove o cookie de sessÃ£o do cliente.
+      tags: [AutenticaÃ§Ã£o]
+      responses:
+        '200':
+          description: SessÃ£o encerrada com sucesso
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RespostaSucesso' }
+
+  # â”€â”€ Projetos â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  /api/projetos:
+    get:
+      operationId: listarProjetos
+      summary: Listar projetos do portfolio
+      description: >
+        Retorna a lista de projetos ativos. Aceita filtros por status, diretoria,
+        prioridade e busca textual. PaginaÃ§Ã£o via `limit` / `offset`.
+        Requer perfil mÃ­nimo: qualquer usuÃ¡rio autenticado.
+      tags: [Projetos]
+      parameters:
+        - in: query
+          name: status
+          schema: { $ref: '#/components/schemas/StatusProjeto' }
+          description: Filtrar por fase do ciclo de vida
+        - in: query
+          name: diretoria_id
+          schema: { type: integer }
+          description: Filtrar pela diretoria responsÃ¡vel
+        - in: query
+          name: prioridade
+          schema: { $ref: '#/components/schemas/Prioridade' }
+          description: Filtrar por prioridade
+        - in: query
+          name: busca
+          schema: { type: string }
+          description: Texto livre â€” pesquisa em nome, cÃ³digo e objetivo
+        - in: query
+          name: limit
+          schema: { type: integer, default: 100 }
+        - in: query
+          name: offset
+          schema: { type: integer, default: 0 }
+      responses:
+        '200':
+          description: Lista de projetos (pode ser vazia)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  projetos:
+                    type: array
+                    items: { $ref: '#/components/schemas/Projeto' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '500':
+          $ref: '#/components/responses/ErroInterno'
+
+    post:
+      operationId: criarProjeto
+      summary: Criar novo projeto
+      description: >
+        Cria um projeto na fase PROPOSTA. O cÃ³digo (`PRJ-YYYY-NNN`) Ã© gerado
+        automaticamente. Requer perfil mÃ­nimo SOLICITANTE.
+      tags: [Projetos]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjetoCriacao' }
+            example:
+              nome: "ImplantaÃ§Ã£o ERP SAP"
+              diretoria_id: 2
+              area_id: 5
+              objetivo: "Digitalizar processos de compras e estoque"
+              justificativa: "Reduzir retrabalho manual em 30%"
+              prioridade: ALTA
+              classificacao: PROJETO
+      responses:
+        '201':
+          description: Projeto criado com sucesso
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  projeto: { $ref: '#/components/schemas/Projeto' }
+        '400':
+          $ref: '#/components/responses/DadosInvalidos'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '500':
+          $ref: '#/components/responses/ErroInterno'
+
+  /api/projetos/{id}:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+
+    get:
+      operationId: obterProjeto
+      summary: Obter projeto por ID
+      description: >
+        Retorna os dados completos do projeto, incluindo histÃ³rico de status,
+        histÃ³rico de prioridade e versÃµes do TAP associadas.
+      tags: [Projetos]
+      responses:
+        '200':
+          description: Dados completos do projeto
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  projeto:          { $ref: '#/components/schemas/Projeto' }
+                  historicoStatus:  { type: array, items: { type: object } }
+                  historicoPrioridade: { type: array, items: { type: object } }
+                  tapVersoes:       { type: array, items: { $ref: '#/components/schemas/TapVersao' } }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '500':
+          $ref: '#/components/responses/ErroInterno'
+
+    patch:
+      operationId: atualizarProjeto
+      summary: Atualizar status, prioridade ou campos gerais do projeto
+      description: >
+        Atualiza campos do projeto. Campos nÃ£o enviados nÃ£o sÃ£o alterados.
+
+        - Para alterar `status`, enviar tambÃ©m `motivo` (justificativa obrigatÃ³ria).
+        - Para alterar `prioridade`, enviar tambÃ©m `motivo`.
+        - Campos financeiros (`capex_aprovado`, `opex_aprovado`) requerem perfil PMO ou ADMIN.
+        - Perfil mÃ­nimo para ediÃ§Ã£o geral: GESTOR.
+      tags: [Projetos]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjetoAtualizacao' }
+            example:
+              status: VIABILIDADE
+              motivo: "TAP aprovado em comitÃª"
+      responses:
+        '200':
+          $ref: '#/components/responses/Sucesso'
+        '400':
+          $ref: '#/components/responses/DadosInvalidos'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '500':
+          $ref: '#/components/responses/ErroInterno'
+
+  /api/projetos/{id}/dashboard:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+
+    get:
+      operationId: dashboardProjeto
+      summary: KPIs consolidados do projeto
+      description: >
+        Retorna indicadores de progresso do cronograma, execuÃ§Ã£o financeira
+        (CAPEX/OPEX planejado vs. realizado) e situaÃ§Ã£o do payback.
+        Utilizado pelos cards de resumo na aba Dashboard do projeto.
+      tags: [Projetos]
+      responses:
+        '200':
+          description: KPIs do projeto
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DashboardProjeto' }
+              example:
+                cronograma: { total: 24, concluidas: 16, atrasadas: 2, pct: 67 }
+                financeiro:
+                  capex_planejado: 500000
+                  capex_realizado: 320000
+                  capex_saldo: 180000
+                  capex_pct: 64
+                  opex_planejado: 120000
+                  opex_realizado: 80000
+                  opex_saldo: 40000
+                  opex_pct: 67
+                  total_planejado: 620000
+                  total_realizado: 400000
+                  total_saldo: 220000
+                  total_pct: 65
+                payback: { pct: 0, label: "DisponÃ­vel apÃ³s conclusÃ£o", is_concluido: false }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+  /api/projetos/{id}/visao-geral:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+
+    patch:
+      operationId: atualizarVisaoGeral
+      summary: Atualizar dados gerais do projeto (aba VisÃ£o Geral)
+      description: >
+        Atualiza campos descritivos e de classificaÃ§Ã£o do projeto.
+        Campos obrigatÃ³rios (`nome`, `descricao`, `objetivo`, `solicitante_id`,
+        `diretoria_id`, `area_id`, `gerente_id`, `pmo_responsavel_id`,
+        `prioridade`, `tipo_beneficio`, `data_fim_prev`) nÃ£o podem ser enviados
+        vazios ou nulos se estiverem presentes no corpo.
+
+        Registra histÃ³rico de alteraÃ§Ãµes e evento na timeline.
+        Perfil mÃ­nimo: GESTOR.
+      tags: [Projetos]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjetoVisaoGeralAtualizacao' }
+            example:
+              nome: "ImplantaÃ§Ã£o ERP SAP â€” Fase 2"
+              gerente_id: 12
+              tipo_beneficio: QUANTITATIVO
+              data_fim_prev: "2027-03-31"
+      responses:
+        '200':
+          description: Dados atualizados com sucesso
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:      { type: boolean, example: true }
+                  projeto: { $ref: '#/components/schemas/Projeto' }
+        '400':
+          $ref: '#/components/responses/DadosInvalidos'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '422':
+          $ref: '#/components/responses/EntidadeNaoProcessavel'
+        '500':
+          $ref: '#/components/responses/ErroInterno'
+
+  /api/projetos/{id}/concluir:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+
+    post:
+      operationId: concluirProjeto
+      summary: Registrar conclusÃ£o do projeto
+      description: >
+        Marca o projeto como concluÃ­do, registrando data real de conclusÃ£o e
+        responsÃ¡vel. AvanÃ§a o status para PROJETO_CONCLUIDO.
+        Perfil mÃ­nimo: GESTOR (`projetos:manage`).
+      tags: [Projetos]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConcluirProjeto' }
+            example:
+              data_conclusao_real: "2026-08-06"
+              hora_conclusao: "17:30"
+              responsavel_conclusao: "Elayne Leite"
+              motivo_conclusao: "Todos os entregÃ¡veis aceitos pelo cliente"
+              checklist_conclusao: { documentacao: true, treinamento: true, homologacao: true }
+      responses:
+        '200':
+          $ref: '#/components/responses/Sucesso'
+        '400':
+          description: Data de conclusÃ£o ou responsÃ¡vel ausentes, ou regra de negÃ³cio violada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+
+  /api/projetos/{id}/encerrar:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+
+    post:
+      operationId: encerrarProjeto
+      summary: Encerrar projeto (cancelamento ou encerramento formal)
+      description: >
+        Encerra o projeto formalmente, avanÃ§ando para PROJETO_ENCERRADO.
+        Perfil mÃ­nimo: PMO.
+      tags: [Projetos]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                motivo:
+                  type: string
+                  description: Justificativa do encerramento
+                  example: "Projeto cancelado por decisÃ£o estratÃ©gica da diretoria"
+      responses:
+        '200':
+          $ref: '#/components/responses/Sucesso'
+        '400':
+          description: "Regra de negÃ³cio violada (ex.: status incompatÃ­vel)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+
+  # â”€â”€ TAP â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  /api/projetos/{id}/tap/{tapId}:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+      - $ref: '#/components/parameters/tapId'
+
+    get:
+      operationId: obterTap
+      summary: Obter versÃ£o do TAP
+      description: Retorna os dados completos de uma versÃ£o especÃ­fica do Termo de Abertura do Projeto.
+      tags: [TAP]
+      responses:
+        '200':
+          description: Dados da versÃ£o do TAP
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tap:     { $ref: '#/components/schemas/TapVersao' }
+                  projeto: { $ref: '#/components/schemas/Projeto' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+    patch:
+      operationId: atualizarTap
+      summary: Atualizar rascunho do TAP
+      description: >
+        Atualiza campos do TAP. OperaÃ§Ã£o bloqueada se o TAP estiver com status
+        `APROVADO` ou `PENDENTE_APROVACAO`. Pelo menos um campo deve ser enviado.
+        Registra histÃ³rico e evento na timeline.
+        Perfil mÃ­nimo: PMO.
+      tags: [TAP]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TapAtualizacao' }
+            example:
+              objetivo_detalhado: "Implantar mÃ³dulo de compras do SAP S/4HANA atÃ© Q1 2027"
+              escopo_fisico: "Unidades de SÃ£o Paulo e Recife"
+              riscos_iniciais: "DependÃªncia de consultoria externa; prazo apertado"
+      responses:
+        '200':
+          $ref: '#/components/responses/Sucesso'
+        '400':
+          $ref: '#/components/responses/DadosInvalidos'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '409':
+          description: TAP bloqueado para ediÃ§Ã£o (status APROVADO ou PENDENTE_APROVACAO)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+              example: { error: 'TAP nÃ£o pode ser editado no status atual.' }
+        '500':
+          $ref: '#/components/responses/ErroInterno'
+
+  /api/projetos/{id}/tap/{tapId}/submeter:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+      - $ref: '#/components/parameters/tapId'
+
+    post:
+      operationId: submeterTap
+      summary: Submeter TAP ao workflow de aprovaÃ§Ã£o
+      description: >
+        Cria o workflow de aprovaÃ§Ã£o para o TAP e altera seu status para
+        `PENDENTE_APROVACAO`. O TAP deve estar em `RASCUNHO`.
+
+        O array `etapas` define a sequÃªncia de aprovadores/cientistas.
+        Deve conter ao menos um item com `tipo = APROVACAO`.
+
+        Perfil mÃ­nimo: PMO.
+      tags: [TAP]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SubmeterArtefato' }
+            example:
+              etapas:
+                - { usuario_id: 3, tipo: APROVACAO }
+                - { usuario_id: 7, tipo: CIENCIA }
+              novoModelo: { nome: "Workflow PadrÃ£o TI" }
+      responses:
+        '200':
+          $ref: '#/components/responses/Sucesso'
+        '400':
+          description: TAP nÃ£o estÃ¡ em RASCUNHO ou workflow invÃ¡lido (sem etapa APROVACAO)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+  /api/projetos/{id}/tap/{tapId}/aprovar:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+      - $ref: '#/components/parameters/tapId'
+
+    post:
+      operationId: aprovarTap
+      summary: AvanÃ§ar etapa de aprovaÃ§Ã£o do TAP
+      description: >
+        O usuÃ¡rio autenticado registra sua aprovaÃ§Ã£o (ou ciÃªncia) na etapa
+        atual do workflow. Quando a Ãºltima etapa Ã© concluÃ­da (`COMPLETED`):
+
+        - Status do TAP â†’ `APROVADO`
+        - Status do projeto â†’ `VIABILIDADE`
+        - Estudo de Viabilidade V1 Ã© criado automaticamente se nÃ£o existir
+
+        Requer que o usuÃ¡rio autenticado seja o responsÃ¡vel pela etapa atual.
+        O TAP deve estar em `PENDENTE_APROVACAO`.
+      tags: [TAP]
+      requestBody:
+        required: false
+        description: Nenhum corpo obrigatÃ³rio
+      responses:
+        '200':
+          description: Etapa registrada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResultadoAprovacao' }
+        '400':
+          description: TAP nÃ£o estÃ¡ em PENDENTE_APROVACAO ou usuÃ¡rio nÃ£o Ã© o responsÃ¡vel da etapa
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+  /api/projetos/{id}/tap/{tapId}/revisao:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+      - $ref: '#/components/parameters/tapId'
+
+    post:
+      operationId: solicitarRevisaoTap
+      summary: Solicitar revisÃ£o do TAP
+      description: >
+        O aprovador responsÃ¡vel pela etapa atual solicita revisÃ£o do TAP.
+        O TAP retorna ao status `RASCUNHO`. Eventuais registros de Viabilidade
+        ativos sÃ£o cancelados. PMOs sÃ£o notificados.
+
+        Requer que o usuÃ¡rio seja o responsÃ¡vel da etapa atual e que a etapa
+        seja do tipo `APROVACAO`.
+      tags: [TAP]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [observacao]
+              properties:
+                observacao:
+                  type: string
+                  minLength: 1
+                  example: "NecessÃ¡rio detalhar o escopo de integraÃ§Ã£o com o sistema legado"
+      responses:
+        '200':
+          $ref: '#/components/responses/Sucesso'
+        '400':
+          description: ObservaÃ§Ã£o vazia, TAP nÃ£o estÃ¡ em PENDENTE_APROVACAO ou usuÃ¡rio nÃ£o Ã© o responsÃ¡vel
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+  /api/projetos/{id}/tap/{tapId}/nova-versao:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+      - $ref: '#/components/parameters/tapId'
+
+    post:
+      operationId: novaVersaoTap
+      summary: Criar nova versÃ£o de rascunho do TAP
+      description: >
+        Cria uma nova versÃ£o em `RASCUNHO` copiando todos os campos da versÃ£o
+        `APROVADO` atual. O TAP de origem deve estar em `APROVADO`.
+        Perfil mÃ­nimo: ADMIN.
+      tags: [TAP]
+      requestBody:
+        required: false
+        description: Campos opcionais para sobrescrever na cÃ³pia
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TapAtualizacao' }
+      responses:
+        '201':
+          description: Nova versÃ£o criada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NovaVersaoTap' }
+        '400':
+          description: TAP de origem nÃ£o estÃ¡ em APROVADO
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+
+  /api/projetos/{id}/tap/{tapId}/exportar-modelo:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+      - $ref: '#/components/parameters/tapId'
+
+    get:
+      operationId: exportarModeloTap
+      summary: Exportar template XLSX do TAP
+      description: >
+        Gera e retorna um arquivo Excel (`.xlsx`) com a estrutura do TAP
+        preenchida com os dados atuais. Pode ser reimportado via
+        `POST /importar` apÃ³s ediÃ§Ã£o.
+      tags: [TAP]
+      responses:
+        '200':
+          description: Arquivo XLSX do TAP
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Content-Disposition:
+              schema: { type: string }
+              example: attachment; filename="Modelo_TAP.xlsx"
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '500':
+          $ref: '#/components/responses/ErroInterno'
+
+  /api/projetos/{id}/tap/{tapId}/importar:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+      - $ref: '#/components/parameters/tapId'
+
+    post:
+      operationId: importarTap
+      summary: Importar dados do TAP a partir de arquivo XLSX
+      description: >
+        Recebe um arquivo `.xlsx` ou `.xls`, extrai os campos do TAP e retorna
+        os dados parseados. **Esta operaÃ§Ã£o nÃ£o persiste nada no banco.**
+        O cliente deve chamar `PATCH /tap/{tapId}` com os dados retornados
+        para confirmar a importaÃ§Ã£o.
+
+        O TAP deve estar em `RASCUNHO`.
+      tags: [TAP]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [arquivo]
+              properties:
+                arquivo:
+                  type: string
+                  format: binary
+                  description: Arquivo .xlsx ou .xls gerado pelo endpoint exportar-modelo
+      responses:
+        '200':
+          description: Dados extraÃ­dos do arquivo (ainda nÃ£o persistidos)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RespostaImportacao' }
+        '400':
+          description: Arquivo ausente, formato invÃ¡lido ou TAP nÃ£o estÃ¡ em RASCUNHO
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+
+  # â”€â”€ Estudo de Viabilidade â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  /api/projetos/{id}/viabilidade/{vid}:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+      - $ref: '#/components/parameters/viabilidadeId'
+
+    get:
+      operationId: obterViabilidade
+      summary: Obter versÃ£o do Estudo de Viabilidade
+      description: Retorna os dados completos de uma versÃ£o especÃ­fica do Estudo de Viabilidade.
+      tags: [Viabilidade]
+      responses:
+        '200':
+          description: Dados da versÃ£o do Estudo de Viabilidade
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  viabilidade: { $ref: '#/components/schemas/ViabilidadeVersao' }
+                  projeto:     { $ref: '#/components/schemas/Projeto' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+    patch:
+      operationId: atualizarViabilidade
+      summary: Atualizar Estudo de Viabilidade
+      description: >
+        Atualiza campos do Estudo de Viabilidade. OperaÃ§Ã£o bloqueada se o
+        status for `PENDENTE_APROVACAO` ou `APROVADO` (exceto V1 com status
+        APROVADO, que permanece editÃ¡vel para dados financeiros).
+
+        AlteraÃ§Ãµes nos campos financeiros (`capex`, `opex`, `economia_estimada`,
+        `payback_informado`, `baseline_valor`, `meta_valor`,
+        `economia_mensal_esperada`) sÃ£o registradas no histÃ³rico de alteraÃ§Ãµes
+        do projeto.
+
+        Perfil mÃ­nimo: PMO.
+      tags: [Viabilidade]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ViabilidadeAtualizacao' }
+            example:
+              resumo_executivo: "Investimento de R$ 500k com retorno em 18 meses"
+              capex: 500000
+              opex: 120000
+              roi: 35.5
+              tir: 22.1
+              payback_meses: 18
+      responses:
+        '200':
+          $ref: '#/components/responses/Sucesso'
+        '400':
+          $ref: '#/components/responses/DadosInvalidos'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '409':
+          description: Viabilidade bloqueada para ediÃ§Ã£o (status PENDENTE_APROVACAO ou APROVADO)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+        '500':
+          $ref: '#/components/responses/ErroInterno'
+
+  /api/projetos/{id}/viabilidade/{vid}/submeter:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+      - $ref: '#/components/parameters/viabilidadeId'
+
+    post:
+      operationId: submeterViabilidade
+      summary: Submeter Estudo de Viabilidade ao workflow de aprovaÃ§Ã£o
+      description: >
+        Cria o workflow de aprovaÃ§Ã£o e altera o status da Viabilidade para
+        `PENDENTE_APROVACAO`. IdÃªntico ao fluxo do TAP.
+        Perfil mÃ­nimo: PMO.
+      tags: [Viabilidade]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SubmeterArtefato' }
+            example:
+              etapas:
+                - { usuario_id: 10, tipo: APROVACAO }
+                - { usuario_id: 4, tipo: APROVACAO }
+      responses:
+        '200':
+          $ref: '#/components/responses/Sucesso'
+        '400':
+          description: Viabilidade nÃ£o estÃ¡ em RASCUNHO ou workflow sem etapa APROVACAO
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+  /api/projetos/{id}/viabilidade/{vid}/aprovar:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+      - $ref: '#/components/parameters/viabilidadeId'
+
+    post:
+      operationId: aprovarViabilidade
+      summary: AvanÃ§ar etapa de aprovaÃ§Ã£o do Estudo de Viabilidade
+      description: >
+        Registra aprovaÃ§Ã£o/ciÃªncia do usuÃ¡rio na etapa atual do workflow.
+        Quando a Ãºltima etapa Ã© concluÃ­da (`COMPLETED`):
+
+        - Status da Viabilidade â†’ `APROVADO`
+        - Status do projeto â†’ `ESTRUTURACAO`
+
+        Requer que o usuÃ¡rio autenticado seja o responsÃ¡vel pela etapa atual.
+      tags: [Viabilidade]
+      requestBody:
+        required: false
+        description: Nenhum corpo obrigatÃ³rio
+      responses:
+        '200':
+          description: Etapa registrada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResultadoAprovacao' }
+        '400':
+          description: Viabilidade nÃ£o estÃ¡ em PENDENTE_APROVACAO ou usuÃ¡rio nÃ£o Ã© o responsÃ¡vel
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+  /api/projetos/{id}/viabilidade/{vid}/revisao:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+      - $ref: '#/components/parameters/viabilidadeId'
+
+    post:
+      operationId: solicitarRevisaoViabilidade
+      summary: Solicitar revisÃ£o do Estudo de Viabilidade
+      description: >
+        O aprovador responsÃ¡vel solicita revisÃ£o. A Viabilidade retorna ao
+        status `RASCUNHO` e os PMOs sÃ£o notificados.
+      tags: [Viabilidade]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [observacao]
+              properties:
+                observacao:
+                  type: string
+                  minLength: 1
+                  example: "ROI subestimado â€” recalcular com dados de mercado atualizados"
+      responses:
+        '200':
+          $ref: '#/components/responses/Sucesso'
+        '400':
+          description: ObservaÃ§Ã£o vazia, Viabilidade nÃ£o estÃ¡ em PENDENTE_APROVACAO ou usuÃ¡rio nÃ£o Ã© responsÃ¡vel
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+  /api/projetos/{id}/viabilidade/{vid}/nova-versao:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+      - $ref: '#/components/parameters/viabilidadeId'
+
+    post:
+      operationId: novaVersaoViabilidade
+      summary: Criar nova versÃ£o de rascunho do Estudo de Viabilidade
+      description: >
+        Cria uma nova versÃ£o em `RASCUNHO` copiando os dados da versÃ£o
+        `APROVADO`. Os grupos e itens de orÃ§amento sÃ£o clonados.
+        Perfil mÃ­nimo: PMO.
+      tags: [Viabilidade]
+      requestBody:
+        required: false
+        description: Nenhum corpo obrigatÃ³rio â€” todos os campos sÃ£o copiados da versÃ£o aprovada
+      responses:
+        '201':
+          description: Nova versÃ£o criada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NovaVersaoViabilidade' }
+        '400':
+          description: Viabilidade de origem nÃ£o estÃ¡ em APROVADO
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+
+  /api/projetos/{id}/viabilidade/{vid}/exportar-modelo:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+      - $ref: '#/components/parameters/viabilidadeId'
+
+    get:
+      operationId: exportarModeloViabilidade
+      summary: Exportar template XLSX do Estudo de Viabilidade
+      description: >
+        Gera e retorna um arquivo Excel com o template do Estudo de Viabilidade.
+        O nome do arquivo varia conforme o `tipo_beneficio` do projeto:
+        `Modelo_Viabilidade.xlsx` (QUANTITATIVO) ou
+        `Modelo_Viabilidade_Qualitativo.xlsx` (QUALITATIVO).
+      tags: [Viabilidade]
+      responses:
+        '200':
+          description: Arquivo XLSX do Estudo de Viabilidade
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Content-Disposition:
+              schema: { type: string }
+              example: attachment; filename="Modelo_Viabilidade.xlsx"
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '500':
+          $ref: '#/components/responses/ErroInterno'
+
+  /api/projetos/{id}/viabilidade/{vid}/importar:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+      - $ref: '#/components/parameters/viabilidadeId'
+
+    post:
+      operationId: importarViabilidade
+      summary: Importar dados do Estudo de Viabilidade a partir de arquivo XLSX
+      description: >
+        Recebe um arquivo `.xlsx` ou `.xls`, extrai os campos do Estudo de
+        Viabilidade e retorna os dados parseados. **NÃ£o persiste no banco.**
+        O cliente deve chamar `PATCH /viabilidade/{vid}` para confirmar.
+
+        A Viabilidade deve estar em `RASCUNHO`.
+      tags: [Viabilidade]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [arquivo]
+              properties:
+                arquivo:
+                  type: string
+                  format: binary
+                  description: Arquivo .xlsx ou .xls gerado pelo endpoint exportar-modelo
+      responses:
+        '200':
+          description: Dados extraÃ­dos do arquivo (ainda nÃ£o persistidos)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RespostaImportacao' }
+        '400':
+          description: Arquivo ausente, formato invÃ¡lido ou Viabilidade nÃ£o estÃ¡ em RASCUNHO
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+
+  # â”€â”€ Cronograma â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  /api/projetos/{id}/cronograma:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+
+    get:
+      operationId: obterCronograma
+      summary: Obter cronograma do projeto
+      description: >
+        Retorna o cronograma ativo (versÃ£o mais recente) com todas as tarefas,
+        hierarquia e lista de versÃµes disponÃ­veis. Aceita `cronogramaId` para
+        buscar uma versÃ£o especÃ­fica. Retorna `{cronograma: null, tarefas: [],
+        versoes: []}` quando nenhum cronograma foi criado ainda.
+      tags: [Cronograma]
+      parameters:
+        - in: query
+          name: cronogramaId
+          schema: { type: integer }
+          description: ID de uma versÃ£o especÃ­fica. Se omitido, retorna a mais recente.
+      responses:
+        '200':
+          description: Cronograma com tarefas e lista de versÃµes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cronograma:
+                    oneOf:
+                      - { $ref: '#/components/schemas/Cronograma' }
+                      - { type: 'null' }
+                  tarefas:
+                    type: array
+                    items: { $ref: '#/components/schemas/Tarefa' }
+                  versoes:
+                    type: array
+                    items: { $ref: '#/components/schemas/CronogramaSumario' }
+              example:
+                cronograma:
+                  id: 1
+                  versao: 1
+                  label: "VersÃ£o 1"
+                  modo: "CENTRALIZADO"
+                  status: "RASCUNHO"
+                tarefas:
+                  - id: 10
+                    codigo: "1"
+                    nome: "Fase 1 â€” Levantamento"
+                    nivel: FASE
+                    tipo: OUTRO
+                    criticidade: NORMAL
+                    percentual: 0
+                    status: PENDENTE
+                versoes:
+                  - { id: 1, versao: 1, label: "VersÃ£o 1", status: RASCUNHO }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '500':
+          $ref: '#/components/responses/ErroInterno'
+
+    post:
+      operationId: criarCronograma
+      summary: Criar novo cronograma ou importar via Excel
+      description: >
+        Cria um novo cronograma com tarefas. Suporta dois modos:
+
+        **JSON manual** (`application/json`): o campo `tarefas` deve conter ao
+        menos uma tarefa; cada tarefa precisa de `responsavel_id`.
+
+        **ImportaÃ§Ã£o Excel** (`multipart/form-data`): o arquivo `.xlsx` segue o
+        modelo oficial (baixado via `GET /cronograma/modelo`). O campo `acao`
+        controla se substitui o cronograma ativo (`SUBSTITUIR`) ou cria nova
+        versÃ£o (`NOVA_VERSAO`, padrÃ£o).
+
+        Em ambos os casos, tarefas existentes da versÃ£o afetada sÃ£o substituÃ­das
+        integralmente.
+      tags: [Cronograma]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tarefas]
+              properties:
+                label:
+                  type: string
+                  description: "RÃ³tulo da versÃ£o (padrÃ£o: 'VersÃ£o N')"
+                modo:
+                  type: string
+                  default: CENTRALIZADO
+                fonte_importacao:
+                  type: string
+                  default: MANUAL
+                tarefas:
+                  type: array
+                  minItems: 1
+                  items: { $ref: '#/components/schemas/TarefaInput' }
+            example:
+              label: "VersÃ£o inicial"
+              tarefas:
+                - nome: "Fase 1 â€” Levantamento"
+                  nivel: FASE
+                  tipo: OUTRO
+                  responsavel_id: 5
+                  data_inicio: "2026-09-01"
+                  data_fim: "2026-10-31"
+                - nome: "Mapear processos"
+                  nivel: TAREFA
+                  tipo: TAREFA
+                  responsavel_id: 5
+                  parentOrdinal: 1
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Arquivo .xlsx no formato do modelo oficial
+                acao:
+                  type: string
+                  enum: [NOVA_VERSAO, SUBSTITUIR]
+                  default: NOVA_VERSAO
+                label:
+                  type: string
+                  description: RÃ³tulo da versÃ£o criada
+      responses:
+        '200':
+          description: Cronograma criado com sucesso
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResultadoCronograma' }
+              example:
+                ok: true
+                cronogramaId: 12
+                versao: 2
+                tarefasSalvas: 18
+        '400':
+          $ref: '#/components/responses/DadosInvalidos'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '500':
+          $ref: '#/components/responses/ErroInterno'
+
+  /api/projetos/{id}/cronograma/exportar:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+
+    get:
+      operationId: exportarCronograma
+      summary: Exportar cronograma ativo como Excel
+      description: >
+        Gera e retorna um arquivo `.xlsx` com o cronograma ativo do projeto.
+        Colunas: WBS, NÃ­vel, Nome, DescriÃ§Ã£o, Tipo, Criticidade, ResponsÃ¡vel,
+        Executor, Data InÃ­cio, Data Fim, Percentual, Status, ObservaÃ§Ãµes, Tipo Macro.
+      tags: [Cronograma]
+      responses:
+        '200':
+          description: Arquivo Excel do cronograma
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Content-Disposition:
+              schema: { type: string }
+              example: 'attachment; filename="Cronograma_Projeto_42_V2_Versao_2.xlsx"'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '404':
+          description: Projeto nÃ£o encontrado ou sem cronograma ativo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+        '500':
+          $ref: '#/components/responses/ErroInterno'
+
+  /api/projetos/{id}/cronograma/modelo:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+
+    get:
+      operationId: baixarModeloCronograma
+      summary: Baixar modelo Excel para importaÃ§Ã£o de cronograma
+      description: >
+        Retorna o modelo `.xlsx` oficial com exemplos, instruÃ§Ãµes e a lista de
+        usuÃ¡rios cadastrados no sistema. Possui trÃªs abas: CRONOGRAMA (com exemplos
+        e validaÃ§Ãµes), INSTRUCOES e USUARIOS. Deve ser preenchido e enviado via
+        `POST /cronograma` (multipart).
+      tags: [Cronograma]
+      responses:
+        '200':
+          description: Arquivo modelo Excel para importaÃ§Ã£o
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Content-Disposition:
+              schema: { type: string }
+              example: 'attachment; filename="Modelo_Cronograma_Projeto_42.xlsx"'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '500':
+          $ref: '#/components/responses/ErroInterno'
+
+  /api/projetos/{id}/cronograma/{cronogramaId}/tarefas:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+      - $ref: '#/components/parameters/cronogramaId'
+
+    put:
+      operationId: editarTarefasCronograma
+      summary: EdiÃ§Ã£o inline â€” substituir lista de tarefas do cronograma
+      description: >
+        Substitui integralmente as tarefas de um cronograma em `RASCUNHO`.
+        Tarefas com `id` sÃ£o atualizadas; sem `id` sÃ£o inseridas; tarefas
+        existentes nÃ£o presentes no array sÃ£o removidas (diferencial).
+
+        O cronograma deve estar com status `RASCUNHO`. Registra evento na
+        timeline do projeto.
+      tags: [Cronograma]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tarefas]
+              properties:
+                tarefas:
+                  type: array
+                  minItems: 1
+                  items: { $ref: '#/components/schemas/TarefaInput' }
+            example:
+              tarefas:
+                - id: 10
+                  nome: "Fase 1 â€” Levantamento (atualizado)"
+                  nivel: FASE
+                  data_inicio: "2026-09-01"
+                  data_fim: "2026-11-30"
+                - nome: "Nova tarefa adicionada"
+                  nivel: TAREFA
+                  responsavel_id: 7
+      responses:
+        '200':
+          description: Tarefas salvas com sucesso
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:     { type: boolean, example: true }
+                  salvos: { type: integer, description: "Total de itens salvos" }
+        '400':
+          description: Array vazio ou cronograma nÃ£o estÃ¡ em RASCUNHO
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '409':
+          description: Cronograma nÃ£o estÃ¡ em RASCUNHO
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+              example: { error: 'Cronograma nÃ£o estÃ¡ em rascunho.' }
+        '500':
+          $ref: '#/components/responses/ErroInterno'
+
+  /api/projetos/{id}/cronograma/{cronogramaId}/nova-atividade:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+      - $ref: '#/components/parameters/cronogramaId'
+
+    post:
+      operationId: adicionarAtividade
+      summary: Adicionar nova atividade a cronograma aprovado
+      description: >
+        Adiciona uma nova tarefa ou subtarefa a um cronograma que jÃ¡ estÃ¡
+        `APROVADO`. Usado para incluir atividades durante a execuÃ§Ã£o do projeto,
+        sem necessidade de criar nova versÃ£o.
+
+        - Para nÃ­vel `TAREFA`: informar `macro_id` (ID da fase pai, opcional).
+        - Para nÃ­vel `SUBTAREFA`: informar `parent_id` (ID da tarefa pai).
+        - `responsavel_id` Ã© obrigatÃ³rio.
+      tags: [Cronograma]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nome, responsavel_id]
+              properties:
+                nome:             { type: string, example: "ReuniÃ£o de alinhamento pÃ³s-implantaÃ§Ã£o" }
+                responsavel_id:   { type: integer }
+                nivel:            { $ref: '#/components/schemas/NivelTarefa' }
+                macro_id:         { type: integer, nullable: true, description: "ID da fase pai (para TAREFA)" }
+                parent_id:        { type: integer, nullable: true, description: "ID da tarefa pai (para SUBTAREFA)" }
+                descricao:        { type: string }
+                tipo:             { $ref: '#/components/schemas/TipoTarefa' }
+                criticidade:      { $ref: '#/components/schemas/CriticidadeTarefa' }
+                executor_id:      { type: integer, nullable: true }
+                area_id:          { type: integer, nullable: true }
+                data_inicio:      { type: string, format: date }
+                data_fim:         { type: string, format: date }
+                duracao_dias:     { type: integer, nullable: true }
+                observacoes:      { type: string }
+                peso:             { type: integer, default: 1 }
+                percentual:       { type: integer, minimum: 0, maximum: 100, default: 0 }
+      responses:
+        '201':
+          description: Atividade adicionada com sucesso
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+                  id: { type: integer, description: "ID da nova tarefa criada" }
+        '400':
+          description: Campos obrigatÃ³rios ausentes ou cronograma nÃ£o estÃ¡ APROVADO
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+  /api/projetos/{id}/cronograma/{cronogramaId}/submeter:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+      - $ref: '#/components/parameters/cronogramaId'
+
+    post:
+      operationId: submeterCronograma
+      summary: Submeter cronograma ao workflow de aprovaÃ§Ã£o
+      description: >
+        Cria o workflow de aprovaÃ§Ã£o e altera o status do cronograma para
+        `PENDENTE_APROVACAO`. O cronograma deve estar em `RASCUNHO` e conter
+        ao menos uma tarefa.
+
+        O array `etapas` deve ter ao menos um item com `tipo = APROVACAO`.
+        Perfil mÃ­nimo: PMO.
+      tags: [Cronograma]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SubmeterArtefato' }
+            example:
+              etapas:
+                - { usuario_id: 3, tipo: APROVACAO }
+                - { usuario_id: 7, tipo: CIENCIA }
+      responses:
+        '200':
+          $ref: '#/components/responses/Sucesso'
+        '400':
+          description: Cronograma nÃ£o estÃ¡ em RASCUNHO, sem tarefas, ou workflow sem etapa APROVACAO
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+  /api/projetos/{id}/cronograma/{cronogramaId}/aprovar:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+      - $ref: '#/components/parameters/cronogramaId'
+
+    post:
+      operationId: aprovarCronograma
+      summary: AvanÃ§ar etapa de aprovaÃ§Ã£o do cronograma
+      description: >
+        Registra aprovaÃ§Ã£o ou ciÃªncia do usuÃ¡rio na etapa atual do workflow.
+        Quando a Ãºltima etapa for concluÃ­da (`COMPLETED`):
+
+        - Status do cronograma â†’ `APROVADO`
+        - Status do projeto pode avanÃ§ar para `EXECUCAO` automaticamente
+
+        Requer que o usuÃ¡rio autenticado seja o responsÃ¡vel pela etapa atual.
+        O cronograma deve estar em `PENDENTE_APROVACAO`.
+      tags: [Cronograma]
+      requestBody:
+        required: false
+        description: Nenhum corpo obrigatÃ³rio
+      responses:
+        '200':
+          description: Etapa registrada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResultadoAprovacao' }
+        '400':
+          description: Cronograma nÃ£o estÃ¡ em PENDENTE_APROVACAO ou usuÃ¡rio nÃ£o Ã© o responsÃ¡vel
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+  /api/projetos/{id}/cronograma/{cronogramaId}/revisao:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+      - $ref: '#/components/parameters/cronogramaId'
+
+    post:
+      operationId: solicitarRevisaoCronograma
+      summary: Solicitar revisÃ£o do cronograma
+      description: >
+        O aprovador responsÃ¡vel pela etapa atual solicita revisÃ£o. O cronograma
+        retorna ao status `RASCUNHO` e os PMOs sÃ£o notificados.
+
+        Requer que o usuÃ¡rio seja o responsÃ¡vel da etapa atual e que a etapa
+        seja do tipo `APROVACAO`.
+      tags: [Cronograma]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [observacao]
+              properties:
+                observacao:
+                  type: string
+                  minLength: 1
+                  example: "Cronograma de testes estÃ¡ comprimido demais â€” revisar prazos da fase 3"
+      responses:
+        '200':
+          $ref: '#/components/responses/Sucesso'
+        '400':
+          description: ObservaÃ§Ã£o vazia, cronograma nÃ£o estÃ¡ em PENDENTE_APROVACAO ou usuÃ¡rio nÃ£o Ã© responsÃ¡vel
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+  /api/projetos/{id}/cronograma/{cronogramaId}/nova-versao:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+      - $ref: '#/components/parameters/cronogramaId'
+
+    post:
+      operationId: novaVersaoCronograma
+      summary: Criar nova versÃ£o de rascunho do cronograma
+      description: >
+        Cria uma nova versÃ£o em `RASCUNHO` copiando todas as tarefas da versÃ£o
+        `APROVADO`. A versÃ£o original permanece inalterada.
+        Perfil mÃ­nimo: PMO.
+      tags: [Cronograma]
+      requestBody:
+        required: false
+        description: Nenhum corpo obrigatÃ³rio
+      responses:
+        '201':
+          description: Nova versÃ£o criada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NovaVersaoCronograma' }
+              example: { ok: true, id: 15, versao: 3 }
+        '400':
+          description: Cronograma de origem nÃ£o estÃ¡ em APROVADO
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+
+  /api/projetos/{id}/cronograma/{cronogramaId}/gerar-subtarefas:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+      - $ref: '#/components/parameters/cronogramaId'
+
+    post:
+      operationId: gerarSubtarefas
+      summary: Gerar sugestÃµes de subtarefas via IA
+      description: >
+        Usa IA (Claude) para sugerir subtarefas para uma tarefa existente,
+        com base no contexto do projeto (TAP, Viabilidade, estrutura do
+        cronograma). **As sugestÃµes nÃ£o sÃ£o salvas automaticamente** â€” o
+        cliente deve confirmar chamando `PUT /tarefas` ou
+        `POST /nova-atividade`.
+      tags: [Cronograma]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tarefa_id, tarefa_nome]
+              properties:
+                tarefa_id:          { type: integer, description: "ID da tarefa pai" }
+                tarefa_nome:        { type: string, example: "DefiniÃ§Ã£o de Arquitetura de Dados" }
+                tarefa_descricao:   { type: string, description: "DescriÃ§Ã£o adicional da tarefa para contexto da IA" }
+      responses:
+        '200':
+          description: SugestÃµes de subtarefas geradas
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subtarefas:
+                    type: array
+                    items: { $ref: '#/components/schemas/SubtarefaSugerida' }
+              example:
+                subtarefas:
+                  - nome: "Mapear entidades de domÃ­nio"
+                    descricao: "Identificar as principais entidades e seus relacionamentos"
+                  - nome: "Definir modelo conceitual"
+                    descricao: "Criar diagrama ER do modelo de dados"
+                  - nome: "Validar com time de desenvolvimento"
+                    descricao: "Revisar e homologar o modelo definido"
+        '400':
+          $ref: '#/components/responses/DadosInvalidos'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '500':
+          $ref: '#/components/responses/ErroInterno'
+
+  /api/projetos/{id}/cronograma/{cronogramaId}/tarefas/{tarefaId}/concluir:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+      - $ref: '#/components/parameters/cronogramaId'
+      - $ref: '#/components/parameters/tarefaId'
+
+    post:
+      operationId: concluirTarefa
+      summary: Concluir tarefa ou subtarefa
+      description: >
+        Marca uma tarefa ou subtarefa como concluÃ­da, registrando data/hora e
+        calculando `prazo_status` (NO_PRAZO / ATRASADA).
+
+        **PropagaÃ§Ã£o automÃ¡tica:**
+        - Se for subtarefa e todas as irmÃ£s estiverem concluÃ­das â†’ tarefa pai Ã©
+          automaticamente concluÃ­da.
+        - Se a tarefa pai for concluÃ­da e todas as tarefas da fase estiverem
+          concluÃ­das â†’ fase Ã© automaticamente concluÃ­da.
+        - Se todas as fases/tarefas do cronograma estiverem concluÃ­das â†’
+          cronograma avanÃ§a para `PRONTO_PARA_ENCERRAMENTO`.
+
+        NÃ£o Ã© possÃ­vel concluir uma FASE diretamente â€” apenas TAREFA e SUBTAREFA.
+        NÃ£o reabre um item jÃ¡ concluÃ­do.
+      tags: [Cronograma]
+      requestBody:
+        required: false
+        description: Nenhum corpo obrigatÃ³rio
+      responses:
+        '200':
+          description: Tarefa concluÃ­da
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResultadoConclusaoTarefa' }
+              example:
+                ok: true
+                prazo_status: "NO_PRAZO"
+                dias_atraso: 0
+                is_subtarefa: false
+                tarefa_pai_auto_completada: false
+                tarefa_pai_nome: null
+                fase_auto_completada: false
+                fase_nome: null
+                cronograma_concluido: false
+        '400':
+          description: Tarefa Ã© uma FASE (nÃ£o pode ser concluÃ­da diretamente), jÃ¡ estÃ¡ concluÃ­da, ou cronograma nÃ£o estÃ¡ APROVADO
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+  # â”€â”€ ConfiguraÃ§Ãµes â€” Tipos de Tarefa â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  /api/configuracoes/tipos-tarefa:
+    get:
+      operationId: listarTiposTarefa
+      summary: Listar tipos de tarefa configurados
+      description: >
+        Retorna todos os tipos de tarefa ativos (sistema e personalizados),
+        ordenados por `ordem`. Os mesmos dados sÃ£o acessÃ­veis via
+        `/api/configuracoes/cronograma` (rota equivalente).
+      tags: [ConfiguraÃ§Ãµes]
+      responses:
+        '200':
+          description: Lista de tipos de tarefa
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/TipoTarefaConfig' }
+              example:
+                - { id: 1, codigo: "TAREFA", label: "Tarefa", ordem: 1, ativo: 1, is_system: 1 }
+                - { id: 2, codigo: "MARCO", label: "Marco", ordem: 2, ativo: 1, is_system: 1 }
+                - { id: 7, codigo: "REUNIAO_KICKOFF", label: "ReuniÃ£o de Kickoff", ordem: 7, ativo: 1, is_system: 0 }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+
+    post:
+      operationId: criarTipoTarefa
+      summary: Criar tipo de tarefa personalizado
+      description: >
+        Cria um novo tipo de tarefa. O `codigo` Ã© normalizado para
+        UPPER_SNAKE_CASE e deve ser Ãºnico. Tipos criados pelo usuÃ¡rio tÃªm
+        `is_system = 0` e podem ser desativados posteriormente.
+        Perfil mÃ­nimo: PMO.
+      tags: [ConfiguraÃ§Ãµes]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [label, codigo]
+              properties:
+                label:  { type: string, example: "ReuniÃ£o de Kickoff" }
+                codigo: { type: string, example: "REUNIAO_KICKOFF", description: "Normalizado para UPPER_SNAKE_CASE" }
+      responses:
+        '201':
+          description: Tipo criado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: integer }
+        '400':
+          description: label ou codigo ausentes, ou codigo jÃ¡ existe
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+
+  /api/configuracoes/tipos-tarefa/{id}:
+    parameters:
+      - $ref: '#/components/parameters/tipoTarefaId'
+
+    patch:
+      operationId: atualizarTipoTarefa
+      summary: Atualizar tipo de tarefa
+      description: >
+        Atualiza `label`, `ativo` ou `ordem` de um tipo de tarefa.
+        Tipos do sistema (`is_system = 1`) nÃ£o podem ser desativados
+        (`ativo = 0`).
+        Perfil mÃ­nimo: PMO.
+      tags: [ConfiguraÃ§Ãµes]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label: { type: string, example: "ReuniÃ£o de Alinhamento" }
+                ativo: { type: integer, enum: [0, 1], description: "0 = desativar (proibido para tipos de sistema)" }
+                ordem: { type: integer, example: 5 }
+      responses:
+        '200':
+          $ref: '#/components/responses/Sucesso'
+        '400':
+          description: Nenhum campo enviado ou tentativa de desativar tipo de sistema
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+              example: { error: 'Tipos do sistema nÃ£o podem ser desativados.' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+  /api/configuracoes/cronograma:
+    get:
+      operationId: obterConfiguracaoCronograma
+      summary: Obter configuraÃ§Ã£o padrÃ£o de importaÃ§Ã£o de cronograma
+      description: >
+        Retorna o usuÃ¡rio configurado como responsÃ¡vel padrÃ£o para importaÃ§Ãµes
+        de cronograma via Excel. Quando um arquivo Ã© importado sem `responsavel_id`
+        em uma linha, esse usuÃ¡rio Ã© atribuÃ­do.
+      tags: [ConfiguraÃ§Ãµes]
+      responses:
+        '200':
+          description: ConfiguraÃ§Ã£o atual
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  responsavel_padrao:
+                    oneOf:
+                      - type: object
+                        properties:
+                          id:    { type: integer }
+                          nome:  { type: string }
+                          email: { type: string, format: email }
+                      - { type: 'null' }
+              example:
+                responsavel_padrao:
+                  id: 3
+                  nome: "JoÃ£o Silva"
+                  email: "joao@megag.com.br"
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+
+    patch:
+      operationId: atualizarConfiguracaoCronograma
+      summary: Definir responsÃ¡vel padrÃ£o para importaÃ§Ã£o de cronograma
+      description: >
+        Define qual usuÃ¡rio ativo serÃ¡ usado como responsÃ¡vel quando uma linha
+        do Excel nÃ£o especificar um responsÃ¡vel. Enviar `usuario_id: null` para
+        remover a configuraÃ§Ã£o.
+        Perfil mÃ­nimo: PMO.
+      tags: [ConfiguraÃ§Ãµes]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [usuario_id]
+              properties:
+                usuario_id:
+                  oneOf:
+                    - { type: integer, example: 3 }
+                    - { type: 'null' }
+                  description: ID do usuÃ¡rio ativo ou null para remover
+      responses:
+        '200':
+          $ref: '#/components/responses/Sucesso'
+        '400':
+          description: usuario_id nÃ£o informado ou usuÃ¡rio nÃ£o encontrado/inativo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+
+  # â”€â”€ AprovaÃ§Ãµes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  /api/aprovacoes:
+    get:
+      operationId: listarAprovacoes
+      summary: Listar aprovaÃ§Ãµes pendentes do usuÃ¡rio autenticado
+      description: >
+        Retorna as aprovaÃ§Ãµes onde o usuÃ¡rio autenticado Ã© o responsÃ¡vel pela
+        etapa atual do workflow. Usado para montar a tela de AprovaÃ§Ãµes
+        Pendentes.
+      tags: [AprovaÃ§Ãµes]
+      responses:
+        '200':
+          description: Lista de aprovaÃ§Ãµes pendentes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  aprovacoes:
+                    type: array
+                    items: { $ref: '#/components/schemas/AprovacaoResumo' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+
+  /api/aprovacoes/{aprovacaoId}:
+    parameters:
+      - $ref: '#/components/parameters/aprovacaoId'
+
+    get:
+      operationId: obterAprovacao
+      summary: Obter detalhe de uma aprovaÃ§Ã£o
+      description: Retorna os dados completos de uma aprovaÃ§Ã£o especÃ­fica, incluindo projeto, solicitante e histÃ³rico.
+      tags: [AprovaÃ§Ãµes]
+      responses:
+        '200':
+          description: Dados da aprovaÃ§Ã£o
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  aprovacao: { $ref: '#/components/schemas/AprovacaoDetalhe' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+    patch:
+      operationId: registrarDecisaoAprovacao
+      summary: Aprovar ou rejeitar uma aprovaÃ§Ã£o
+      description: >
+        O usuÃ¡rio autenticado registra sua decisÃ£o (`APROVADO` ou `REJEITADO`)
+        em uma aprovaÃ§Ã£o da qual Ã© responsÃ¡vel. Seta `aprovador_id`,
+        `aprovado_em` e registra auditoria `APPROVE` ou `REJECT`.
+
+        **Nota:** Para artefatos com workflow multi-etapa (TAP, Viabilidade,
+        Cronograma), use os endpoints dedicados `POST .../aprovar` e
+        `POST .../revisao` que controlam o avanÃ§o de etapas. Este endpoint
+        opera na entidade `aprovacoes` diretamente.
+      tags: [AprovaÃ§Ãµes]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [APROVADO, REJEITADO]
+                  description: DecisÃ£o do aprovador
+                observacao:
+                  type: string
+                  nullable: true
+                  description: ObservaÃ§Ã£o ou justificativa da decisÃ£o
+            example:
+              status: APROVADO
+              observacao: "DocumentaÃ§Ã£o completa e dentro dos padrÃµes."
+      responses:
+        '200':
+          $ref: '#/components/responses/Sucesso'
+        '400':
+          $ref: '#/components/responses/DadosInvalidos'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '500':
+          $ref: '#/components/responses/ErroInterno'
+
+  # â”€â”€ Aprovadores (ConfiguraÃ§Ã£o) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  /api/aprovadores:
+    get:
+      operationId: listarAprovadores
+      summary: Listar configuraÃ§Ã£o de aprovadores padrÃ£o
+      description: >
+        Retorna a lista de usuÃ¡rios configurados como aprovadores padrÃ£o por
+        tipo de documento (`TAP`, `VIABILIDADE`, `CRONOGRAMA`). Usada para
+        prÃ©-preencher o workflow ao submeter um artefato.
+      tags: [AprovaÃ§Ãµes]
+      responses:
+        '200':
+          description: Lista de aprovadores configurados
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  aprovadores:
+                    type: array
+                    items: { $ref: '#/components/schemas/AprovadorConfig' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+
+    post:
+      operationId: adicionarAprovador
+      summary: Adicionar aprovador padrÃ£o para um tipo de documento
+      description: >
+        Vincula um usuÃ¡rio como aprovador padrÃ£o para o tipo de documento
+        informado. Perfil mÃ­nimo: PMO.
+      tags: [AprovaÃ§Ãµes]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tipo_documento, usuario_id]
+              properties:
+                tipo_documento:
+                  type: string
+                  enum: [TAP, VIABILIDADE, CRONOGRAMA]
+                  description: Tipo de artefato para o qual o aprovador Ã© padrÃ£o
+                usuario_id:
+                  type: integer
+                  description: ID do usuÃ¡rio aprovador
+                ordem:
+                  type: integer
+                  default: 1
+                  description: PosiÃ§Ã£o na sequÃªncia de aprovaÃ§Ã£o
+            example:
+              tipo_documento: TAP
+              usuario_id: 5
+              ordem: 1
+      responses:
+        '201':
+          $ref: '#/components/responses/Sucesso'
+        '400':
+          $ref: '#/components/responses/DadosInvalidos'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+
+    delete:
+      operationId: removerAprovador
+      summary: Remover aprovador padrÃ£o
+      description: >
+        Inativa (soft delete) um aprovador padrÃ£o identificado por `id`.
+        O `id` Ã© passado como query parameter. Perfil mÃ­nimo: PMO.
+      tags: [AprovaÃ§Ãµes]
+      parameters:
+        - in: query
+          name: id
+          required: true
+          schema: { type: integer }
+          description: ID do registro de aprovador a remover
+      responses:
+        '200':
+          $ref: '#/components/responses/Sucesso'
+        '400':
+          description: ParÃ¢metro id ausente
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+
+  # â”€â”€ Workflow â€” Modelos â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  /api/workflow/modelos:
+    get:
+      operationId: listarModelosWorkflow
+      summary: Listar modelos de workflow salvos
+      description: >
+        Retorna todos os modelos de workflow ativos (`ativo = 1`), ordenados por
+        nome, com suas etapas. Os modelos sÃ£o reutilizados ao submeter TAP,
+        Viabilidade e Cronograma para aprovaÃ§Ã£o.
+      tags: [Workflow]
+      responses:
+        '200':
+          description: Lista de modelos com suas etapas
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ModeloWorkflow' }
+              example:
+                - id: 1
+                  nome: "Workflow PadrÃ£o Diretoria TI"
+                  descricao: "AprovaÃ§Ã£o pelo Gestor TI + ciÃªncia do PMO"
+                  ativo: 1
+                  criado_por: 3
+                  criado_por_nome: "Elayne Leite"
+                  etapas:
+                    - id: 10
+                      modelo_id: 1
+                      ordem: 1
+                      usuario_id: 5
+                      usuario_nome: "JoÃ£o Gestor"
+                      tipo: APROVACAO
+                    - id: 11
+                      modelo_id: 1
+                      ordem: 2
+                      usuario_id: 3
+                      usuario_nome: "Elayne Leite"
+                      tipo: CIENCIA
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+
+    post:
+      operationId: criarModeloWorkflow
+      summary: Criar modelo de workflow reutilizÃ¡vel
+      description: >
+        Cria e persiste um modelo de workflow que pode ser referenciado ao
+        submeter artefatos via `modeloId`. Deve conter ao menos uma etapa.
+      tags: [Workflow]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nome, etapas]
+              properties:
+                nome:     { type: string, minLength: 1, example: "Workflow PadrÃ£o Diretoria TI" }
+                descricao: { type: string, nullable: true }
+                etapas:
+                  type: array
+                  minItems: 1
+                  items: { $ref: '#/components/schemas/EtapaModeloWorkflow' }
+      responses:
+        '201':
+          description: Modelo criado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: integer, description: "ID do modelo criado" }
+        '400':
+          description: Nome vazio ou sem etapas
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+
+  /api/workflow/modelos/{modeloId}:
+    parameters:
+      - $ref: '#/components/parameters/modeloId'
+
+    patch:
+      operationId: atualizarModeloWorkflow
+      summary: Atualizar ou inativar modelo de workflow
+      description: >
+        Atualiza os dados de um modelo. Se `ativo` estiver no corpo, apenas
+        ativa/inativa o modelo (ignora nome e etapas). Se `etapas` for enviado,
+        deleta todas as etapas existentes e recria com os novos dados.
+      tags: [Workflow]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                nome:
+                  type: string
+                  minLength: 1
+                  description: ObrigatÃ³rio se nÃ£o for operaÃ§Ã£o de ativo/inativo
+                descricao:
+                  type: string
+                  nullable: true
+                etapas:
+                  type: array
+                  description: Se enviado, recria todas as etapas do modelo
+                  items: { $ref: '#/components/schemas/EtapaModeloWorkflow' }
+                ativo:
+                  type: integer
+                  enum: [0, 1]
+                  description: "Se presente, apenas ativa (1) ou inativa (0) o modelo"
+            example:
+              ativo: 0
+      responses:
+        '200':
+          $ref: '#/components/responses/Sucesso'
+        '400':
+          description: Nome vazio (quando nÃ£o Ã© operaÃ§Ã£o de ativo/inativo)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+  # â”€â”€ Dashboard global â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  /api/dashboard:
+    get:
+      operationId: dashboardPortfolio
+      summary: KPIs e resumo do portfolio
+      tags: [Dashboard]
+      responses:
+        '200':
+          description: Dados do painel executivo
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+
+  # â”€â”€ UsuÃ¡rios â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  /api/usuarios:
+    get:
+      operationId: listarUsuarios
+      summary: Listar usuÃ¡rios
+      description: >
+        Retorna usuÃ¡rios ativos. ADMIN com `all=1` inclui inativos tambÃ©m.
+      tags: [UsuÃ¡rios]
+      parameters:
+        - in: query
+          name: all
+          schema: { type: string, enum: ["1"] }
+          description: "Somente ADMIN: inclui usuÃ¡rios inativos quando `all=1`"
+      responses:
+        '200':
+          description: Lista de usuÃ¡rios
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  usuarios:
+                    type: array
+                    items: { $ref: '#/components/schemas/UsuarioCompleto' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+
+    post:
+      operationId: criarUsuario
+      summary: Criar usuÃ¡rio
+      description: >
+        Cria um novo usuÃ¡rio no sistema. CPF e e-mail devem ser Ãºnicos.
+        Senha Ã© armazenada com hash. Perfil mÃ­nimo: ADMIN.
+      tags: [UsuÃ¡rios]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nome, cpf, email, senha, perfil_id]
+              properties:
+                nome:         { type: string, example: "Maria Silva" }
+                cpf:          { type: string, example: "98765432100" }
+                email:        { type: string, format: email, example: "maria@megag.com.br" }
+                senha:        { type: string, minLength: 8, description: "MÃ­nimo 8 caracteres" }
+                perfil_id:    { type: integer, description: "ID do perfil (referencia tabela de perfis)" }
+                cargo:        { type: string, nullable: true }
+                diretoria_id: { type: integer, nullable: true }
+                area_id:      { type: integer, nullable: true }
+      responses:
+        '201':
+          description: UsuÃ¡rio criado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: integer, description: "ID do usuÃ¡rio criado" }
+        '400':
+          $ref: '#/components/responses/DadosInvalidos'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '409':
+          description: CPF ou e-mail jÃ¡ cadastrado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+              example: { error: "CPF jÃ¡ cadastrado." }
+
+  /api/usuarios/{usuarioId}:
+    parameters:
+      - $ref: '#/components/parameters/usuarioId'
+
+    patch:
+      operationId: atualizarUsuario
+      summary: Atualizar dados do usuÃ¡rio
+      description: >
+        Atualiza campos do usuÃ¡rio. Somente campos enviados sÃ£o alterados.
+        CPF e e-mail precisam ser Ãºnicos entre todos os usuÃ¡rios.
+        Senha, se enviada, Ã© re-hasheada (mÃ­nimo 8 caracteres).
+        Perfil mÃ­nimo: ADMIN.
+      tags: [UsuÃ¡rios]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                nome:         { type: string }
+                cpf:          { type: string }
+                email:        { type: string, format: email }
+                cargo:        { type: string, nullable: true }
+                perfil_id:    { type: integer }
+                diretoria_id: { type: integer, nullable: true }
+                area_id:      { type: integer, nullable: true }
+                ativo:        { type: integer, enum: [0, 1] }
+                senha:        { type: string, minLength: 8 }
+            example:
+              cargo: "Coordenador de TI"
+              ativo: 1
+      responses:
+        '200':
+          $ref: '#/components/responses/Sucesso'
+        '400':
+          $ref: '#/components/responses/DadosInvalidos'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '409':
+          description: CPF ou e-mail jÃ¡ utilizado por outro usuÃ¡rio
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+
+    delete:
+      operationId: excluirUsuario
+      summary: Excluir usuÃ¡rio
+      description: >
+        Remove fisicamente o usuÃ¡rio (hard delete). NÃ£o Ã© possÃ­vel excluir o
+        prÃ³prio usuÃ¡rio autenticado. Se o usuÃ¡rio tiver dependÃªncias em
+        projetos ou registros, a operaÃ§Ã£o retorna 422 com
+        `pode_inativar: true`, sugerindo usar `PATCH` com `ativo: 0`.
+        Perfil mÃ­nimo: ADMIN.
+      tags: [UsuÃ¡rios]
+      responses:
+        '200':
+          $ref: '#/components/responses/Sucesso'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '422':
+          description: NÃ£o Ã© possÃ­vel excluir (prÃ³prio usuÃ¡rio ou usuÃ¡rio com dependÃªncias)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:          { type: string }
+                  pode_inativar:  { type: boolean, description: "true = tem dependÃªncias mas pode ser inativado via PATCH" }
+              example:
+                error: "UsuÃ¡rio possui projetos associados. Use a opÃ§Ã£o de inativar."
+                pode_inativar: true
+
+  # â”€â”€ ComitÃªs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  /api/comites:
+    get:
+      operationId: listarComites
+      summary: Listar comitÃªs
+      tags: [ComitÃªs]
+      responses:
+        '200':
+          description: Lista de comitÃªs
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+    post:
+      operationId: criarComite
+      summary: Criar comitÃª
+      tags: [ComitÃªs]
+      responses:
+        '201':
+          description: ComitÃª criado
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+
+  # â”€â”€ Financeiro â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # ── Financeiro global ─────────────────────────────────────────────────────
+  /api/financeiro:
+    get:
+      operationId: listarLancamentosGlobais
+      summary: Listar lançamentos financeiros do portfolio
+      description: >
+        Retorna lançamentos financeiros cross-projeto, com informações do projeto
+        e criador. Máximo de 200 registros, ordenados por `created_at DESC`.
+      tags: [Financeiro]
+      parameters:
+        - in: query
+          name: projeto_id
+          schema: { type: integer }
+          description: Filtrar por projeto
+        - in: query
+          name: tipo
+          schema: { type: string }
+          description: Filtrar pelo tipo do lançamento
+        - in: query
+          name: status
+          schema: { type: string }
+          description: Filtrar pelo status
+      responses:
+        '200':
+          description: Lista de lançamentos financeiros
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  lancamentos:
+                    type: array
+                    items: { $ref: '#/components/schemas/LancamentoFinanceiro' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+
+  # ── Configurações financeiras ──────────────────────────────────────────────
+  /api/configuracoes/financeiro:
+    patch:
+      operationId: atualizarConfiguracaoFinanceira
+      summary: Atualizar premissa financeira global (SELIC, taxa de desconto, inflação)
+      description: >
+        Atualiza uma das três premissas financeiras globais utilizadas nos
+        cálculos de VPL, TIR e ROI. Somente as chaves `selic`, `taxa_desconto`
+        e `inflacao` são aceitas. Registra auditoria com valores anterior e
+        posterior. Perfil mínimo: PMO.
+      tags: [Configurações]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [chave, valor]
+              properties:
+                chave:
+                  type: string
+                  enum: [selic, taxa_desconto, inflacao]
+                  description: Nome da premissa a atualizar
+                valor:
+                  description: Valor percentual da premissa (armazenado como string)
+                  example: 10.75
+            example:
+              chave: selic
+              valor: 10.75
+      responses:
+        '200':
+          description: Premissa atualizada com sucesso
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+        '400':
+          description: Chave inválida ou valor ausente
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+
+  # ── Financeiro do projeto ──────────────────────────────────────────────────
+  /api/projetos/{id}/financeiro:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+
+    get:
+      operationId: dashboardFinanceiroProjeto
+      summary: Dashboard financeiro do projeto
+      description: >
+        Retorna contratos completos (com pagamentos), resumo de totais
+        CAPEX/OPEX, e indicadores da viabilidade financeira aprovada.
+        Equivalente a `GET /contratos` — ambos os endpoints retornam os mesmos
+        dados.
+      tags: [Financeiro]
+      responses:
+        '200':
+          description: Dashboard financeiro do projeto
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DashboardFinanceiro' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+    post:
+      operationId: criarLancamentoFinanceiro
+      summary: Criar lançamento financeiro avulso no projeto
+      description: >
+        Cria um lançamento financeiro não vinculado a contrato. Aceita
+        `application/json` ou `multipart/form-data` (quando há upload de nota
+        fiscal). O arquivo é salvo em `public/uploads/financeiro/`.
+        Permissão: `projetos:manage` (GESTOR ou superior).
+      tags: [Financeiro]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LancamentoFinanceiroInput' }
+          multipart/form-data:
+            schema:
+              allOf:
+                - { $ref: '#/components/schemas/LancamentoFinanceiroInput' }
+                - type: object
+                  properties:
+                    arquivo_nf:
+                      type: string
+                      format: binary
+                      description: Arquivo da nota fiscal
+      responses:
+        '200':
+          description: Lançamento criado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+                  id: { type: integer }
+        '400':
+          $ref: '#/components/responses/DadosInvalidos'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+
+  # ── Movimentos financeiros ─────────────────────────────────────────────────
+  /api/projetos/{id}/financeiro/movimentos:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+
+    get:
+      operationId: listarMovimentosFinanceiros
+      summary: Listar movimentos financeiros do projeto
+      description: Retorna documentos/NFs registrados no projeto (modelo legacy de movimentos).
+      tags: [Financeiro]
+      responses:
+        '200':
+          description: Lista de movimentos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  movimentos:
+                    type: array
+                    items: { $ref: '#/components/schemas/MovimentoFinanceiro' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+
+    post:
+      operationId: criarMovimentoFinanceiro
+      summary: Registrar movimento financeiro (documento/NF)
+      description: >
+        Cria um novo movimento financeiro (NF, contrato, comprovante, medição
+        etc.) no projeto. Perfil mínimo: GESTOR.
+      tags: [Financeiro]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MovimentoFinanceiroInput' }
+      responses:
+        '201':
+          description: Movimento criado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+                  id: { type: integer }
+        '400':
+          $ref: '#/components/responses/DadosInvalidos'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+
+    patch:
+      operationId: atualizarStatusMovimento
+      summary: Aprovar, rejeitar ou cancelar movimento financeiro
+      description: >
+        Atualiza o status de um movimento existente. Somente movimentos com
+        status `PENDENTE` podem ser alterados. Registra evento na timeline
+        do projeto. Perfil mínimo: DIRETOR.
+      tags: [Financeiro]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [movimentoId, status]
+              properties:
+                movimentoId: { type: integer }
+                status:
+                  type: string
+                  enum: [PENDENTE, APROVADO, REJEITADO, CANCELADO]
+                observacoes: { type: string, nullable: true }
+            example:
+              movimentoId: 45
+              status: APROVADO
+              observacoes: "NF conferida e aprovada."
+      responses:
+        '200':
+          $ref: '#/components/responses/Sucesso'
+        '400':
+          description: Movimento não está em PENDENTE ou campos obrigatórios ausentes
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+
+  # ── Contratos ──────────────────────────────────────────────────────────────
+  /api/projetos/{id}/financeiro/contratos:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+
+    get:
+      operationId: listarContratos
+      summary: Listar contratos do projeto com resumo financeiro
+      description: >
+        Retorna os contratos com pagamentos, resumo de totais e indicadores de
+        viabilidade. Equivalente a `GET /api/projetos/{id}/financeiro`.
+      tags: [Financeiro]
+      responses:
+        '200':
+          description: Contratos, resumo e viabilidade
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DashboardFinanceiro' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+
+    post:
+      operationId: criarContrato
+      summary: Criar contrato financeiro no projeto
+      description: >
+        Cria um novo contrato (fornecedor + valor aprovado + natureza CAPEX/OPEX).
+        Perfil mínimo: GESTOR (`projetos:manage`).
+      tags: [Financeiro]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ContratoInput' }
+            example:
+              contratado: "Accenture Brasil Ltda."
+              valor_aprovado: 250000
+              natureza_financeira: CAPEX
+              numero_contrato: "CT-2026-007"
+              tipo_contrato: SERVICO
+              descricao_servico: "Consultoria de implementação SAP S/4HANA"
+      responses:
+        '201':
+          description: Contrato criado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+                  id: { type: integer }
+        '400':
+          $ref: '#/components/responses/DadosInvalidos'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+
+  /api/projetos/{id}/financeiro/contratos/exportar:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+
+    get:
+      operationId: exportarContratosExcel
+      summary: Exportar contratos e pagamentos como Excel
+      description: >
+        Gera e retorna um arquivo `.xlsx` com todos os contratos e seus
+        pagamentos do projeto.
+      tags: [Financeiro]
+      responses:
+        '200':
+          description: Arquivo Excel dos contratos
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Content-Disposition:
+              schema: { type: string }
+              example: 'attachment; filename="Financeiro_Projeto_42.xlsx"'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '500':
+          $ref: '#/components/responses/ErroInterno'
+
+  /api/projetos/{id}/financeiro/contratos/importar:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+
+    post:
+      operationId: importarContratosExcel
+      summary: Importar contratos em lote via Excel
+      description: >
+        Recebe um arquivo `.xlsx` ou `.xls`, parseia contratos e pagamentos e
+        os persiste em transação. Em caso de erros fatais na planilha, retorna
+        422 sem persistir nada.
+
+        Colunas oficiais do template (ordem fixa):
+        `Número Contrato | Contratado | Tipo Contrato | Descrição Serviço |
+        Valor Aprovado | Número Documento | Tipo Documento | Nota Fiscal |
+        Data Pagamento | Competência | Valor Pago | Observação`
+      tags: [Financeiro]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Arquivo .xlsx ou .xls no formato do template oficial
+      responses:
+        '200':
+          description: Importação concluída com sucesso
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResultadoImportacaoFinanceiro' }
+        '400':
+          description: Nenhum arquivo enviado ou extensão inválida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '422':
+          description: Erros fatais na planilha ou nenhum contrato válido encontrado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:          { type: boolean, example: false }
+                  errosFatais: { type: array, items: { type: string } }
+                  warnings:    { type: array, items: { type: string } }
+                  mensagem:    { type: string, nullable: true }
+
+  /api/projetos/{id}/financeiro/contratos/{contId}:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+      - $ref: '#/components/parameters/contId'
+
+    patch:
+      operationId: atualizarContrato
+      summary: Atualizar dados de um contrato
+      description: >
+        Atualiza campos do contrato. Somente os campos enviados são alterados.
+        Perfil mínimo: GESTOR (`projetos:manage`).
+      tags: [Financeiro]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ContratoAtualizacao' }
+      responses:
+        '200':
+          $ref: '#/components/responses/Sucesso'
+        '400':
+          $ref: '#/components/responses/DadosInvalidos'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+    delete:
+      operationId: desativarContrato
+      summary: Desativar contrato (soft-delete)
+      description: >
+        Marca o contrato como inativo (`ativo = 0`). Os pagamentos associados
+        permanecem no banco. Perfil mínimo: GESTOR (`projetos:manage`).
+      tags: [Financeiro]
+      responses:
+        '200':
+          $ref: '#/components/responses/Sucesso'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+  # ── Pagamentos ─────────────────────────────────────────────────────────────
+  /api/projetos/{id}/financeiro/contratos/{contId}/pagamentos:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+      - $ref: '#/components/parameters/contId'
+
+    post:
+      operationId: criarPagamento
+      summary: Registrar pagamento em um contrato
+      description: >
+        Lança um pagamento contra o contrato. Aceita `application/json` ou
+        `multipart/form-data` (quando há upload de comprovante). O arquivo é
+        salvo em `public/uploads/financeiro/{projeto_id}/`.
+
+        `valor_pago` deve ser maior que zero.
+        Perfil mínimo: GESTOR (`projetos:manage`).
+      tags: [Financeiro]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PagamentoInput' }
+            example:
+              valor_pago: 50000
+              numero_documento: "NF-2026-1234"
+              tipo_documento: NF
+              nota_fiscal: "12345"
+              data_pagamento: "2026-08-01"
+              competencia: "2026-08"
+          multipart/form-data:
+            schema:
+              allOf:
+                - { $ref: '#/components/schemas/PagamentoInput' }
+                - type: object
+                  properties:
+                    arquivo:
+                      type: string
+                      format: binary
+                      description: Comprovante de pagamento (qualquer extensão)
+      responses:
+        '201':
+          description: Pagamento registrado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+                  id: { type: integer }
+        '400':
+          description: valor_pago ausente, <= 0, ou valor excede saldo do contrato
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+
+  /api/projetos/{id}/financeiro/contratos/{contId}/pagamentos/{pagId}:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+      - $ref: '#/components/parameters/contId'
+      - $ref: '#/components/parameters/pagId'
+
+    patch:
+      operationId: atualizarPagamento
+      summary: Atualizar dados de um pagamento
+      description: >
+        Atualiza campos de um pagamento existente. Somente os campos enviados
+        são alterados. Perfil mínimo: GESTOR (`projetos:manage`).
+      tags: [Financeiro]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PagamentoAtualizacao' }
+      responses:
+        '200':
+          $ref: '#/components/responses/Sucesso'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+    delete:
+      operationId: desativarPagamento
+      summary: Desativar pagamento (soft-delete)
+      description: >
+        Marca o pagamento como inativo (`ativo = 0`).
+        Perfil mínimo: GESTOR (`projetos:manage`).
+      tags: [Financeiro]
+      responses:
+        '200':
+          $ref: '#/components/responses/Sucesso'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+  # ── Orçamento ──────────────────────────────────────────────────────────────
+  /api/projetos/{id}/orcamento:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+
+    get:
+      operationId: listarOrcamento
+      summary: Listar grupos e itens do orçamento do projeto
+      description: >
+        Retorna grupos de orçamento com seus itens aninhados e totais calculados
+        (por tipo de investimento e natureza CAPEX/OPEX).
+      tags: [Orçamento]
+      responses:
+        '200':
+          description: Orçamento completo
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  grupos:
+                    type: array
+                    items: { $ref: '#/components/schemas/GrupoOrcamento' }
+                  totais: { $ref: '#/components/schemas/TotaisOrcamento' }
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+
+    post:
+      operationId: criarGrupoOrcamento
+      summary: Criar grupo de orçamento
+      description: >
+        Cria um novo grupo de orçamento no projeto. **Bloqueado** se o Estudo
+        de Viabilidade mais recente estiver com status `APROVADO` (403 com
+        mensagem orientando solicitar revisão).
+        Perfil mínimo: GESTOR.
+      tags: [Orçamento]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GrupoOrcamentoInput' }
+            example:
+              tipo: CAPEX
+              nome: "Hardware e Infraestrutura"
+              ordem: 1
+      responses:
+        '201':
+          description: Grupo criado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+                  id: { type: integer }
+        '400':
+          $ref: '#/components/responses/DadosInvalidos'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          description: Sem permissão ou orçamento bloqueado pelo Estudo de Viabilidade aprovado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+              example:
+                error: "O orçamento está bloqueado. O Estudo de Viabilidade foi aprovado. Solicite uma revisão para editar."
+
+  /api/projetos/{id}/orcamento/grupos/{grupoId}/itens:
+    parameters:
+      - $ref: '#/components/parameters/projetoId'
+      - $ref: '#/components/parameters/grupoId'
+
+    post:
+      operationId: criarItemOrcamento
+      summary: Criar item de orçamento dentro de um grupo
+      description: >
+        Adiciona um item ao grupo de orçamento. **Bloqueado** se o Estudo de
+        Viabilidade mais recente estiver `APROVADO`.
+        Perfil mínimo: GESTOR.
+      tags: [Orçamento]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ItemOrcamentoInput' }
+            example:
+              nome: "Servidores Dell PowerEdge"
+              valor_aprovado: 120000
+              descricao: "3 servidores para ambiente de produção"
+              ordem: 1
+      responses:
+        '201':
+          description: Item criado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+                  id: { type: integer }
+        '400':
+          $ref: '#/components/responses/DadosInvalidos'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          description: Sem permissão ou orçamento bloqueado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Erro' }
+
+    patch:
+      operationId: atualizarItemOrcamento
+      summary: Atualizar item de orçamento
+      description: >
+        Atualiza os campos de um item existente. **Bloqueado** se o Estudo de
+        Viabilidade mais recente estiver `APROVADO`.
+        Perfil mínimo: GESTOR.
+      tags: [Orçamento]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - type: object
+                  required: [itemId]
+                  properties:
+                    itemId: { type: integer, description: "ID do item a atualizar" }
+                - { $ref: '#/components/schemas/ItemOrcamentoAtualizacao' }
+      responses:
+        '200':
+          $ref: '#/components/responses/Sucesso'
+        '400':
+          $ref: '#/components/responses/DadosInvalidos'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+
+    delete:
+      operationId: deletarItemOuGrupo
+      summary: Remover item de orçamento ou grupo inteiro
+      description: >
+        Se `itemId` for informado via query param, desativa o item.
+        Se omitido, desativa o grupo `grupoId` inteiro.
+        **Bloqueado** se o Estudo de Viabilidade mais recente estiver `APROVADO`.
+        Perfil mínimo: PMO (GESTOR não pode deletar).
+      tags: [Orçamento]
+      parameters:
+        - in: query
+          name: itemId
+          schema: { type: integer }
+          description: "Se presente, desativa este item; se omitido, desativa o grupo"
+      responses:
+        '200':
+          $ref: '#/components/responses/Sucesso'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'

@@ -11,6 +11,9 @@ interface HistoricoItem {
 interface Props {
   statusAtual: string
   historicoStatus: HistoricoItem[]
+  temCronogramaAprovado?: boolean
+  temViabilidadeAprovada?: boolean
+  temTapAprovado?: boolean
 }
 
 const SHORT_LABELS: Record<string, string> = {
@@ -23,21 +26,48 @@ const SHORT_LABELS: Record<string, string> = {
   ESTRUTURACAO: 'ES',
   CRONOGRAMA: 'CR',
   EXECUCAO: 'EX',
+  PROJETO_CONCLUIDO: 'PC',
+  PAYBACK_ACOMPANHAMENTO: 'PA',
+  PAYBACK_ENCERRADO: 'PE',
+  PROJETO_ENCERRADO: 'EN',
   GOLIVE: 'GL',
   ROI: 'RO',
-  ENCERRAMENTO: 'EN',
+  ENCERRAMENTO: 'EC',
+}
+
+const PHASE_ICONS: Record<string, string> = {
+  PROPOSTA: '💡',
+  TRIAGEM: '📄',
+  COMITE_IDEIAS: '🤝',
+  VIABILIDADE: '📊',
+  COMPLEMENTACAO_TAP: '📄',
+  APROVACAO: '✅',
+  ESTRUTURACAO: '🏗️',
+  CRONOGRAMA: '📅',
+  EXECUCAO: '🚀',
+  PROJETO_CONCLUIDO: '✅',
+  PAYBACK_ACOMPANHAMENTO: '💰',
+  PAYBACK_ENCERRADO: '💰',
+  PROJETO_ENCERRADO: '🏁',
+  GOLIVE: '🚀',
+  ROI: '📈',
+  ENCERRAMENTO: '🏁',
 }
 
 const PHASE_LABELS: Record<string, string> = {
   PROPOSTA: 'Proposta / Ideia',
   TRIAGEM: 'Triagem / TAP',
-  COMITE_IDEIAS: 'Comitê de Ideias',
+  COMITE_IDEIAS: 'Comitê de Projetos',
   VIABILIDADE: 'Viabilidade',
   COMPLEMENTACAO_TAP: 'Complementação TAP',
   APROVACAO: 'Aprovação',
   ESTRUTURACAO: 'Estruturação',
   CRONOGRAMA: 'Cronograma',
   EXECUCAO: 'Execução',
+  PROJETO_CONCLUIDO: 'Projeto Concluído',
+  PAYBACK_ACOMPANHAMENTO: 'Payback',
+  PAYBACK_ENCERRADO: 'Payback Encerrado',
+  PROJETO_ENCERRADO: 'Projeto Encerrado',
   GOLIVE: 'Go Live',
   ROI: 'Acompanhamento ROI',
   ENCERRAMENTO: 'Encerramento',
@@ -51,12 +81,41 @@ function formatDate(iso: string): string {
   }
 }
 
-export default function ProjectTimeline({ statusAtual, historicoStatus }: Props) {
+export default function ProjectTimeline({ statusAtual, historicoStatus, temCronogramaAprovado, temViabilidadeAprovada, temTapAprovado }: Props) {
   const isCancelado = statusAtual === 'CANCELADO'
   const isSuspenso = statusAtual === 'SUSPENSO'
+  const isPausado = statusAtual === 'PAUSADO'
   const isSpecial = isCancelado || isSuspenso
 
-  const currentIndex = STATUS_ORDER.indexOf(statusAtual as any)
+  // Infere o status efetivo mais avançado com base nos marcos já atingidos.
+  // Garante que a Timeline nunca fique "para trás" do que os artefatos indicam.
+  function inferirStatusEfetivo(status: string): string {
+    const idx = (s: string) => STATUS_ORDER.indexOf(s as never)
+    let efetivo = status
+
+    if (temTapAprovado && idx(efetivo) < idx('TRIAGEM')) efetivo = 'TRIAGEM'
+    if (temViabilidadeAprovada && idx(efetivo) < idx('VIABILIDADE')) efetivo = 'VIABILIDADE'
+    if (temCronogramaAprovado && idx(efetivo) < idx('CRONOGRAMA')) efetivo = 'CRONOGRAMA'
+    // Se já há cronograma aprovado e o status ainda está antes de EXECUCAO, avança para EXECUCAO
+    if (temCronogramaAprovado && idx(efetivo) === idx('CRONOGRAMA') && idx(status) >= idx('EXECUCAO')) {
+      efetivo = status
+    }
+
+    return efetivo
+  }
+
+  const statusEfetivo = isSpecial || isPausado ? statusAtual : inferirStatusEfetivo(statusAtual)
+  const currentIndex = STATUS_ORDER.indexOf(statusEfetivo as never)
+
+  // Mapa de conclusão explícita por artefato:
+  // garante que TAP, Viabilidade e Cronograma mostrem como concluídos
+  // sempre que o artefato correspondente estiver aprovado E o status já tiver avançado.
+  const ARTEFATO_CONCLUIDO: Partial<Record<string, boolean>> = {
+    TRIAGEM:     !!temTapAprovado          && currentIndex > STATUS_ORDER.indexOf('TRIAGEM'     as never),
+    VIABILIDADE: !!temViabilidadeAprovada  && currentIndex > STATUS_ORDER.indexOf('VIABILIDADE' as never),
+    CRONOGRAMA:  !!temCronogramaAprovado   && currentIndex > STATUS_ORDER.indexOf('CRONOGRAMA'  as never),
+  }
+
   const completedCount = isSpecial ? 0 : Math.max(0, currentIndex)
   const totalPhases = STATUS_ORDER.length
 
@@ -94,9 +153,9 @@ export default function ProjectTimeline({ statusAtual, historicoStatus }: Props)
           <div className="min-w-max">
             <div className="flex items-start">
               {STATUS_ORDER.map((phase, idx) => {
-                const isCompleted = !isSpecial && idx < currentIndex
-                const isCurrent = !isSpecial && phase === statusAtual
-                const isFuture = isSpecial || idx > currentIndex
+                const isCompleted = !isSpecial && (idx < currentIndex || !!ARTEFATO_CONCLUIDO[phase])
+                const isCurrent = !isSpecial && phase === statusEfetivo
+                const isFuture = isSpecial || (!isCompleted && !isCurrent)
                 const entryDate = entryDates[phase]
                 const isLast = idx === STATUS_ORDER.length - 1
 
@@ -126,7 +185,7 @@ export default function ProjectTimeline({ statusAtual, historicoStatus }: Props)
                             color: isCompleted || isCurrent ? '#fff' : '#9CA3AF',
                           }}
                         >
-                          {isCompleted ? '✓' : SHORT_LABELS[phase] ?? idx + 1}
+                          {isCompleted ? (PHASE_ICONS[phase] ?? '✓') : SHORT_LABELS[phase] ?? idx + 1}
                         </div>
                       </div>
                       {/* Phase name */}
@@ -185,7 +244,7 @@ export default function ProjectTimeline({ statusAtual, historicoStatus }: Props)
             </div>
             <div className="text-center p-3 rounded-lg bg-yellow-50">
               <div className="text-lg font-bold" style={{ color: '#C8A84B' }}>
-                {isSpecial ? statusAtual : (PHASE_LABELS[statusAtual] ?? statusAtual)}
+                {isSpecial ? statusAtual : (PHASE_LABELS[statusEfetivo] ?? statusEfetivo)}
               </div>
               <div className="text-xs text-gray-500 mt-1">Fase atual</div>
             </div>

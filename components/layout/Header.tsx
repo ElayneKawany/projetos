@@ -2,6 +2,7 @@
 
 import { Bell, Search, ChevronDown } from 'lucide-react'
 import { useState } from 'react'
+import Link from 'next/link'
 import type { SessionUser } from '@/lib/auth'
 
 interface HeaderProps {
@@ -32,14 +33,14 @@ export default function Header({ usuario, notificacoes = 0 }: HeaderProps) {
 
       <div className="flex items-center gap-3 ml-auto">
         {/* Notificações */}
-        <button className="relative p-2 rounded-lg text-megag-cinza-texto hover:bg-megag-cinza-claro hover:text-megag-azul transition-colors">
+        <Link href="/notificacoes" className="relative p-2 rounded-lg text-megag-cinza-texto hover:bg-megag-cinza-claro hover:text-megag-azul transition-colors">
           <Bell size={20} />
           {notificacoes > 0 && (
             <span className="absolute top-1 right-1 w-4 h-4 bg-red-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
               {notificacoes > 9 ? '9+' : notificacoes}
             </span>
           )}
-        </button>
+        </Link>
 
         {/* Separador */}
         <div className="w-px h-6 bg-megag-cinza-medio" />

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import React, { useState } from 'react'
 import { ShieldCheck, Search } from 'lucide-react'
 import type { SessionUser } from '@/lib/auth'
 
@@ -94,8 +94,8 @@ export default function AuditoriaClient({ logs, projetos, session }: Props) {
               {filtrados.length === 0 ? (
                 <tr><td colSpan={7} className="text-center py-10 text-megag-cinza-texto">Nenhum registro encontrado.</td></tr>
               ) : filtrados.map(log => (
-                <>
-                  <tr key={log.id}>
+                <React.Fragment key={log.id}>
+                  <tr>
                     <td className="text-xs whitespace-nowrap">
                       {new Date(log.created_at).toLocaleString('pt-BR')}
                     </td>
@@ -141,7 +141,7 @@ export default function AuditoriaClient({ logs, projetos, session }: Props) {
                       </td>
                     </tr>
                   )}
-                </>
+                </React.Fragment>
               ))}
             </tbody>
           </table>

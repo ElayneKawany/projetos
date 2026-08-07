@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { DollarSign, TrendingUp, TrendingDown, AlertCircle } from 'lucide-react'
 import type { SessionUser } from '@/lib/auth'
+import { gerarSiglaDiretoria } from '@/lib/utils/diretoria'
 
 interface ProjetoFinanceiro {
   id: number; codigo: string; nome: string; status: string; diretoria_nome: string
@@ -119,7 +120,9 @@ export default function FinanceiroClient({ projetos, configFinanceira, ultimosLa
                       <td>
                         <span className="font-mono text-megag-azul text-xs font-semibold">{p.codigo}</span>
                         <p className="text-sm font-medium">{p.nome}</p>
-                        <p className="text-xs text-megag-cinza-texto">{p.diretoria_nome}</p>
+                        <p className="text-xs text-megag-cinza-texto" title={p.diretoria_nome}>
+                          {gerarSiglaDiretoria(p.diretoria_nome)}
+                        </p>
                       </td>
                       <td className="text-sm">{fmt(p.capex_aprovado)}</td>
                       <td className="text-sm">{fmt(p.capex_realizado)}</td>

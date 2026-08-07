@@ -33,7 +33,7 @@ export default function CronogramasClient({ cronogramas, projetos, session }: Pr
         <div className="card text-center py-16 text-megag-cinza-texto">
           <CalendarDays size={36} className="mx-auto mb-3 opacity-30" />
           <p className="font-medium">Nenhum cronograma cadastrado.</p>
-          <p className="text-sm mt-1">Cronogramas são criados a partir da página do projeto quando ele atinge a fase "Cronograma Oficial".</p>
+          <p className="text-sm mt-1">Cronogramas são criados a partir da página do projeto quando ele atinge a fase &quot;Cronograma Oficial&quot;.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">

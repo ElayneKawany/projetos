@@ -1,0 +1,203 @@
+import { notFound } from 'next/navigation'
+import { getSession } from '@/lib/auth'
+import getDb from '@/lib/db'
+import ComiteDetalheClient from './ComiteDetalheClient'
+
+export default async function ComiteDetalhePage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
+  const comiteId = parseInt(id)
+  if (isNaN(comiteId)) notFound()
+
+  const session = await getSession()
+  if (!session) notFound()
+
+  const db = getDb()
+  const comite = db.prepare('SELECT c.*, u.nome AS criador_nome FROM comites c LEFT JOIN usuarios u ON u.id = c.created_by WHERE c.id = ?').get(comiteId)
+  if (!comite) notFound()
+
+  const participantes = db.prepare(`
+    SELECT cp.*, COALESCE(u.nome, cp.nome_externo) AS nome_exibicao, u.cargo AS usuario_cargo
+    FROM comite_participantes cp
+    LEFT JOIN usuarios u ON u.id = cp.usuario_id
+    WHERE cp.comite_id = ? ORDER BY cp.id
+  `).all(comiteId)
+
+  const comiteProjetos = db.prepare(`
+    SELECT cp.*, p.codigo AS projeto_codigo, p.nome AS projeto_nome,
+           p.status AS projeto_status, d.nome AS projeto_diretoria
+    FROM comite_projetos cp
+    JOIN projetos p ON p.id = cp.projeto_id
+    LEFT JOIN diretorias d ON d.id = p.diretoria_id
+    WHERE cp.comite_id = ?
+    ORDER BY cp.ordem_pauta, cp.id
+  `).all(comiteId)
+
+  const decisoes = db.prepare(`
+    SELECT cd.*, p.nome AS projeto_nome, p.codigo AS projeto_codigo
+    FROM comite_decisoes cd LEFT JOIN projetos p ON p.id = cd.projeto_id
+    WHERE cd.comite_id = ? ORDER BY cd.created_at
+  `).all(comiteId)
+
+  const pendencias = db.prepare(`
+    SELECT cp.*, p.nome AS projeto_nome, p.codigo AS projeto_codigo
+    FROM comite_pendencias cp LEFT JOIN projetos p ON p.id = cp.projeto_id
+    WHERE cp.comite_id = ? ORDER BY cp.status, cp.prazo
+  `).all(comiteId)
+
+  const ata = db.prepare('SELECT * FROM comite_ata WHERE comite_id = ?').get(comiteId)
+  const ataHistorico = db.prepare('SELECT * FROM comite_ata_historico WHERE comite_id = ? ORDER BY created_at DESC LIMIT 20').all(comiteId)
+
+  // Portfolio data for slides
+  const todosProjetos = db.prepare(`
+    SELECT p.id, p.codigo, p.nome, p.status, p.prioridade, p.complexidade,
+           p.capex_aprovado AS investimento,
+           p.data_inicio_prev AS data_inicio_prevista,
+           p.data_fim_prev AS data_fim_prevista,
+           d.nome AS diretoria, a.nome AS area,
+           u.nome AS gerente_nome,
+           (SELECT tv.roi_previsto FROM tap_versoes tv WHERE tv.projeto_id = p.id ORDER BY tv.versao DESC LIMIT 1) AS roi_previsto
+    FROM projetos p
+    LEFT JOIN diretorias d ON d.id = p.diretoria_id
+    LEFT JOIN areas a ON a.id = p.area_id
+    LEFT JOIN usuarios u ON u.id = p.gerente_id
+    WHERE p.ativo = 1
+    ORDER BY p.status, p.nome
+  `).all()
+
+  // Detail data for the Viabilidade slide
+  const projetosViabilidadeDetalhe = db.prepare(`
+    SELECT
+      p.id,
+      p.objetivo,
+      p.descricao,
+      sol.nome AS solicitante_nome,
+      tv.situacao_atual,
+      v.impacto_operacional AS cenario_atual,
+      v.beneficios_esperados,
+      v.riscos AS riscos_json,
+      v.payback_meses,
+      v.capex,
+      v.opex,
+      v.investimento_total
+    FROM projetos p
+    LEFT JOIN usuarios sol ON sol.id = p.solicitante_id
+    LEFT JOIN (
+      SELECT tv2.projeto_id, tv2.situacao_atual
+      FROM tap_versoes tv2
+      WHERE tv2.versao = (SELECT MAX(tv3.versao) FROM tap_versoes tv3 WHERE tv3.projeto_id = tv2.projeto_id)
+    ) tv ON tv.projeto_id = p.id
+    LEFT JOIN (
+      SELECT v2.projeto_id, v2.impacto_operacional, v2.beneficios_esperados, v2.riscos, v2.payback_meses, v2.capex, v2.opex, v2.investimento_total
+      FROM viabilidade v2
+      WHERE v2.versao = (SELECT MAX(v3.versao) FROM viabilidade v3 WHERE v3.projeto_id = v2.projeto_id)
+    ) v ON v.projeto_id = p.id
+    WHERE p.ativo = 1 AND p.status IN ('VIABILIDADE','COMPLEMENTACAO_TAP','APROVACAO')
+  `).all()
+
+  // Detail data for the Propostas slide
+  const projetosPropostaDetalhe = db.prepare(`
+    SELECT
+      p.id, p.objetivo, p.beneficios, p.descricao,
+      sol.nome AS solicitante_nome,
+      t.beneficios AS triagem_beneficios,
+      t.observacoes AS triagem_observacoes,
+      t.areas_impactadas AS triagem_areas_json,
+      (SELECT tv.riscos_iniciais FROM tap_versoes tv WHERE tv.projeto_id = p.id ORDER BY tv.versao DESC LIMIT 1) AS riscos_iniciais,
+      (SELECT tv.payback_meses FROM tap_versoes tv WHERE tv.projeto_id = p.id ORDER BY tv.versao DESC LIMIT 1) AS payback_meses,
+      (SELECT tv.beneficios_tap FROM tap_versoes tv WHERE tv.projeto_id = p.id ORDER BY tv.versao DESC LIMIT 1) AS beneficios_tap,
+      (SELECT GROUP_CONCAT(a.nome, ', ')
+       FROM projeto_areas pa JOIN areas a ON a.id = pa.area_id
+       WHERE pa.projeto_id = p.id AND pa.ativo = 1) AS areas_envolvidas
+    FROM projetos p
+    LEFT JOIN usuarios sol ON sol.id = p.solicitante_id
+    LEFT JOIN triagens t ON t.projeto_id = p.id
+    WHERE p.ativo = 1 AND p.status IN ('PROPOSTA','TRIAGEM','COMITE_IDEIAS')
+  `).all()
+
+  // Detail data for the Em Execução slide
+  const projetosExecucaoDetalhe = db.prepare(`
+    SELECT
+      p.id, p.codigo, p.nome,
+      d.nome AS diretoria, a.nome AS area,
+      u.nome AS gerente_nome,
+      p.data_inicio_prev, p.data_fim_prev,
+      p.capex_aprovado, p.opex_aprovado,
+      COALESCE(
+        (SELECT SUM(fc2.valor_aprovado) FROM financeiro_contratos fc2
+         WHERE fc2.projeto_id = p.id AND fc2.ativo = 1), 0
+      ) AS total_contratado,
+      COALESCE(
+        (SELECT SUM(fp2.valor_pago)
+         FROM financeiro_pagamentos fp2
+         JOIN financeiro_contratos fc3 ON fc3.id = fp2.contrato_id
+         WHERE fc3.projeto_id = p.id
+           AND fp2.contrato_id IS NOT NULL
+           AND (fp2.ativo IS NULL OR fp2.ativo = 1)), 0
+      ) AS total_pago
+    FROM projetos p
+    LEFT JOIN diretorias d ON d.id = p.diretoria_id
+    LEFT JOIN areas a ON a.id = p.area_id
+    LEFT JOIN usuarios u ON u.id = p.gerente_id
+    WHERE p.ativo = 1 AND p.status IN ('EXECUCAO', 'GOLIVE')
+  `).all()
+
+  // Macro tarefas (nivel=1) from latest active cronograma for each EXECUCAO project
+  const macroTarefasExecucao = db.prepare(`
+    SELECT
+      t.id, c.projeto_id, t.nome, t.nivel, t.percentual,
+      t.data_inicio, t.data_fim, t.data_conclusao,
+      t.bloqueio, t.motivo_bloqueio, t.motivo_atraso, t.criticidade,
+      t.observacoes, t.prazo_status, t.ordem,
+      COALESCE(u.nome, t.responsavel_nome_ext) AS responsavel_nome
+    FROM cronograma_tarefas t
+    JOIN cronogramas c ON c.id = t.cronograma_id
+    LEFT JOIN usuarios u ON u.id = t.responsavel_id
+    WHERE (c.ativo IS NULL OR c.ativo = 1)
+      AND t.nivel = 1
+      AND (t.ativo IS NULL OR t.ativo = 1)
+      AND c.versao = (
+        SELECT MAX(c2.versao) FROM cronogramas c2
+        WHERE c2.projeto_id = c.projeto_id
+          AND (c2.ativo IS NULL OR c2.ativo = 1)
+      )
+      AND c.projeto_id IN (
+        SELECT id FROM projetos WHERE ativo = 1 AND status IN ('EXECUCAO', 'GOLIVE')
+      )
+    ORDER BY t.ordem, t.id
+  `).all()
+
+  const usuarios = db.prepare("SELECT id, nome, cargo FROM usuarios WHERE ativo = 1 ORDER BY nome").all()
+  const diretorias = db.prepare("SELECT id, nome FROM diretorias WHERE ativo = 1 ORDER BY ordem, nome").all()
+  const projetosLista = db.prepare("SELECT id, codigo, nome FROM projetos WHERE ativo = 1 ORDER BY nome").all()
+
+  // Previous comitês for history
+  const historico = db.prepare(`
+    SELECT id, titulo, tipo, data_realizacao, status,
+           (SELECT COUNT(*) FROM comite_projetos WHERE comite_id = c.id) AS num_projetos
+    FROM comites c
+    WHERE id != ? AND status = 'REALIZADO'
+    ORDER BY data_realizacao DESC LIMIT 10
+  `).all(comiteId)
+
+  return (
+    <ComiteDetalheClient
+      comite={comite as any}
+      participantes={participantes as any}
+      comiteProjetos={comiteProjetos as any}
+      decisoes={decisoes as any}
+      pendencias={pendencias as any}
+      ata={ata as any}
+      ataHistorico={ataHistorico as any}
+      todosProjetos={todosProjetos as any}
+      projetosViabilidadeDetalhe={projetosViabilidadeDetalhe as any}
+      projetosPropostaDetalhe={projetosPropostaDetalhe as any}
+      projetosExecucaoDetalhe={projetosExecucaoDetalhe as any}
+      macroTarefasExecucao={macroTarefasExecucao as any}
+      usuarios={usuarios as any}
+      diretorias={diretorias as any}
+      projetosLista={projetosLista as any}
+      historico={historico as any}
+      session={session}
+    />
+  )
+}
