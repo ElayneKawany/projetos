@@ -193,7 +193,7 @@ export default function ProjetoDetalheClient(props: Props) {
   const [formVG, setFormVG] = useState(vgInicial)
   const [vgOriginal, setVgOriginal] = useState<typeof vgInicial | null>(null)
 
-  const VG_OBRIGATORIOS = ['nome', 'descricao', 'objetivo', 'solicitante_id', 'diretoria_id', 'area_id', 'gerente_id', 'pmo_responsavel_id', 'prioridade', 'tipo_beneficio', 'data_fim_prev'] as const
+  const VG_OBRIGATORIOS = ['nome', 'descricao', 'objetivo', 'solicitante_id', 'diretoria_id', 'area_id', 'gerente_id', 'pmo_responsavel_id', 'prioridade', 'tipo_beneficio'] as const
   const canSaveVG = VG_OBRIGATORIOS.every(c => String(formVG[c] ?? '').trim() !== '')
 
   function vgFieldCls(campo: keyof typeof vgInicial, required = false): string {
@@ -285,7 +285,7 @@ export default function ProjetoDetalheClient(props: Props) {
   const statusCronograma = (() => {
     if (!cronogramaAprovado) return 'SEM_CRONOGRAMA'
     const hj = new Date(); hj.setHours(0,0,0,0)
-    const dataFimStr = projeto.data_fim_efetiva ?? projeto.data_fim_prev
+    const dataFimStr = projeto.data_fim_efetiva
     const dataFim = dataFimStr ? new Date(dataFimStr) : null
     if (dataFim) {
       const df = new Date(dataFim); df.setHours(0,0,0,0)
@@ -308,7 +308,7 @@ export default function ProjetoDetalheClient(props: Props) {
 
   // Dias restantes ou de atraso
   const diasInfo = (() => {
-    const dataFimPrev = projeto.data_fim_efetiva ?? projeto.data_fim_prev
+    const dataFimPrev = projeto.data_fim_efetiva
     if (!dataFimPrev) return null
     const hj = new Date(); hj.setHours(0,0,0,0)
     const df = new Date(dataFimPrev); df.setHours(0,0,0,0)
@@ -747,8 +747,8 @@ export default function ProjetoDetalheClient(props: Props) {
                       onChange={e => setFormVG(f => ({ ...f, data_inicio_prev: e.target.value }))} />
                   </div>
                   <div>
-                    <label className="input-label">Data Prevista de Término <span className="text-red-500">*</span></label>
-                    <input type="date" className={vgFieldCls('data_fim_prev', true)} value={formVG.data_fim_prev}
+                    <label className="input-label">Data Prevista de Término</label>
+                    <input type="date" className={vgFieldCls('data_fim_prev')} value={formVG.data_fim_prev}
                       onChange={e => setFormVG(f => ({ ...f, data_fim_prev: e.target.value }))} />
                   </div>
                   <div>
@@ -781,7 +781,7 @@ export default function ProjetoDetalheClient(props: Props) {
                     ['PMO Responsável',   projeto.pmo_responsavel_nome || projeto.pmo_responsavel || '—'],
                     ['Tipo de Benefício', projeto.tipo_beneficio || '—'],
                     ['Previsão Início',   fmtDataBR(projeto.data_inicio_prev)],
-                    ['Previsão Entrega',  fmtDataBR(projeto.data_fim_efetiva ?? projeto.data_fim_prev)],
+                    ['Conclusão (Cronograma)', projeto.data_fim_efetiva ? fmtDataBR(projeto.data_fim_efetiva) : 'Sem cronograma'],
                     ['Classificação',     projeto.classificacao?.replace('_', ' ') || '—'],
                     ['Complexidade',      projeto.complexidade || '—'],
                     ...(projeto.status === 'PAUSADO' ? [
@@ -844,7 +844,7 @@ export default function ProjetoDetalheClient(props: Props) {
                     {diasInfo && (
                       <p className="text-xs text-megag-cinza-texto mt-0.5">{diasInfo}</p>
                     )}
-                    {!(projeto.data_fim_efetiva ?? projeto.data_fim_prev) && statusCronograma !== 'SEM_CRONOGRAMA' && (
+                    {!projeto.data_fim_efetiva && statusCronograma !== 'SEM_CRONOGRAMA' && (
                       <p className="text-xs text-megag-cinza-texto mt-0.5">Sem data de entrega definida</p>
                     )}
                   </div>
@@ -1070,8 +1070,8 @@ export default function ProjetoDetalheClient(props: Props) {
 
       {/* ACOMPANHAMENTO DE PAYBACK */}
       {abaAtiva === 'Acompanhamento de Payback' && (() => {
-        // dataFimPrev vem do cronograma com status APROVADO mais recente; fallback para o projeto
-        const dataFimPrev = cronogramaAprovadoData?.data_fim_prev ?? projeto.data_fim_prev ?? null
+        // dataFimPrev vem do cronograma (última tarefa) — fonte única de verdade
+        const dataFimPrev = projeto.data_fim_efetiva ?? null
         const dataReal    = projeto.data_conclusao_real ?? null
 
         let diasPrevistos: number | null = null
