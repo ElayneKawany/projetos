@@ -1,0 +1,49 @@
+{
+  "ultima_atualizacao": "2026-08-05",
+  "sprint_atual": "Sprint 8 — Comitês",
+  "modulos_migrados": [
+    {
+      "modulo": "Projetos",
+      "sprint": "Sprint 1–4",
+      "repositorio": "lib/repositories/projetos.ts",
+      "status": "COMPLETO"
+    },
+    {
+      "modulo": "Usuários",
+      "sprint": "Sprint 5 + Correções pré-8",
+      "repositorio": "lib/repositories/usuarios.ts",
+      "status": "COMPLETO"
+    },
+    {
+      "modulo": "Cronograma",
+      "sprint": "Sprint 6",
+      "repositorio": "lib/repositories/cronograma.ts",
+      "status": "COMPLETO"
+    },
+    {
+      "modulo": "Financeiro",
+      "sprint": "Sprint 7 + Correções pré-8",
+      "repositorio": "lib/repositories/financeiro.ts",
+      "status": "COMPLETO"
+    },
+    {
+      "modulo": "Comitês",
+      "sprint": "Sprint 8",
+      "repositorio": "lib/repositories/comites.ts",
+      "status": "COMPLETO"
+    }
+  ],
+  "modulos_pendentes": [
+    "Configurações (28 arquivos)",
+    "Aprovações",
+    "Orçamento",
+    "Workflow",
+    "Notificações",
+    "Timeline",
+    "Permissões",
+    "Meu-Trabalho",
+    "Payback (Sprint 9)"
+  ],
+  "getDb_removidos_total": 124,
+  "getDb_restantes_estimativa": "~80 (Configurações + módulos menores)"
+}

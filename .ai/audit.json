@@ -1,0 +1,99 @@
+{
+  "programa": "IA Champions",
+  "ultima_atualizacao": "2026-08-06",
+  "itens": [
+    {
+      "id": 5,
+      "categoria": "Refatoração da Camada Database (Preparação para PostgreSQL)",
+      "status": "COMPLETO",
+      "data_conclusao": "2026-08-06",
+      "arquivos_criados": [
+        "lib/database/async-client.ts"
+      ],
+      "arquivos_alterados": [
+        "lib/database/sqlite.ts",
+        "lib/database/index.ts"
+      ],
+      "observacoes": "Interface AsyncDatabaseClient criada com insertedId (neutro para PostgreSQL). AsyncSqliteAdapter envolve SqliteClient síncrono em Promises — SQLite continua funcionando sem alteração. export asyncDb adicionado ao index.ts; export db (síncrono) preservado. 8 repositórios existentes: zero alterações. Guia de migração PostgreSQL documentado em 4 passos. Validação: tsc --noEmit = 0 erros, npm run build = 37 páginas geradas com sucesso."
+    },
+    {
+      "id": 1,
+      "categoria": "Gestão de Segredos",
+      "status": "COMPLETO",
+      "data_conclusao": "2026-08-06",
+      "arquivos_criados": [
+        ".env.example",
+        "lib/config/env.ts"
+      ],
+      "arquivos_alterados": [
+        "lib/auth.ts",
+        "middleware.ts",
+        ".env.local"
+      ],
+      "observacoes": "JWT_SECRET e ANTHROPIC_API_KEY documentados. Fallback hardcoded removido. Módulo centralizado com fail-fast implementado."
+    },
+    {
+      "id": 4,
+      "categoria": "Preparação para Migração SQLite → PostgreSQL",
+      "status": "COMPLETO",
+      "data_conclusao": "2026-08-06",
+      "arquivos_criados": [],
+      "arquivos_alterados": [],
+      "observacoes": "Auditoria técnica concluída. Nenhum arquivo da aplicação foi alterado. 60 tabelas inventariadas, 13 índices, 0 views, 0 triggers. 9 categorias de incompatibilidades identificadas (~155 ocorrências). Risco alto: API síncrona (precisa virar async), lastInsertRowid, named params @param, julianday(), MAX() em UPDATE. Risco médio: datetime('now')/date('now') (~50 ocorrências), INSERT OR IGNORE (~12), AUTOINCREMENT, tipos de dados. Risco baixo: PRAGMA (4), ON CONFLICT (compatível). Estimativa: 18–27 dias úteis em 3 sprints. Ativo arquitetural chave: lib/database/client.ts (DatabaseClient interface já isolada)."
+    },
+    {
+      "id": 3,
+      "categoria": "CI Pipeline (GitHub Actions)",
+      "status": "COMPLETO",
+      "data_conclusao": "2026-08-06",
+      "arquivos_criados": [
+        ".github/workflows/ci.yml",
+        ".eslintrc.json"
+      ],
+      "arquivos_alterados": [
+        "app/(dashboard)/comites/[id]/ComiteDetalheClient.tsx"
+      ],
+      "observacoes": "Pipeline CI com TypeScript, ESLint e Build. Validado localmente: 0 erros TS, 0 erros ESLint, build de 37 páginas concluído com sucesso. Correção: react/no-unescaped-entities em ComiteDetalheClient.tsx. Plugin @typescript-eslint registrado via .eslintrc.json."
+    },
+    {
+      "id": 2,
+      "categoria": "Containerização (Docker)",
+      "status": "COMPLETO",
+      "data_conclusao": "2026-08-06",
+      "arquivos_criados": [
+        "Dockerfile",
+        ".dockerignore",
+        "docker-compose.yml",
+        "DOCKER.md"
+      ],
+      "arquivos_alterados": [],
+      "observacoes": "Multi-stage build (deps→builder→runner). Usuário não-root (nextjs uid 1001). Volumes para SQLite e uploads. Healthcheck via wget /login. Docker indisponível no ambiente de desenvolvimento — validação executada no terminal do desenvolvedor."
+    }
+  ],
+  "conformidade_padrao_ia_champions": {
+    "data_auditoria": "2026-08-06",
+    "itens": {
+      "Linguagem": { "status": "NAO_CONFORME", "nota": "Next.js/TypeScript (Node). Python não presente. Isenção pendente do Comitê IA Champions para projetos fullstack Node." },
+      "Banco_de_Dados": { "status": "NAO_CONFORME", "nota": "SQLite. PostgreSQL exigido. Migração mapeada (Item 4). Infraestrutura AsyncDatabaseClient preparada (Item 5)." },
+      "Controle_de_Versao": { "status": "OK", "nota": "Git inicializado. Conventional Commits adotados." },
+      "Containerizacao": { "status": "OK", "nota": "Dockerfile multi-stage, docker-compose.yml, .dockerignore presentes." },
+      "API": { "status": "OK", "nota": "openapi.yml — Sprint 4 concluída: 57 paths (S1: Projetos/TAP/Viabilidade; S2: Cronograma/Configurações; S3: Auth/Usuários/Workflow/Aprovações; S4: Financeiro/Contratos/Pagamentos/Movimentos/Orçamento). 72 schemas, 12 parameters, 7 responses. Cobertura: ~57/98 endpoints totais (~58%). Pendente: Comitês, Dashboard, Payback, Configurações diversas." },
+      "ORM_Migrations": { "status": "PARCIAL", "nota": "Sistema de migrations próprio (runMigrations com ALTER TABLE idempotente). Funcional, mas não usa ORM padrão de mercado." },
+      "Testes": { "status": "OK", "nota": "Jest configurado. 35 testes unitários em 3 suites: financeiro (ROI/TIR/Payback), auth (temPermissao), status de projeto. npm test passa 35/35." },
+      "Lint_Formatacao": { "status": "OK", "nota": ".eslintrc.json com eslint-config-next e @typescript-eslint. Pipeline CI executa lint em cada push." },
+      "CI_CD": { "status": "OK", "nota": ".github/workflows/ci.yml com etapas TypeScript → ESLint → Testes → Build." },
+      "Autenticacao": { "status": "OK", "nota": "JWT via jose, middleware de sessão, hierarquia de perfis, JWT_SECRET obrigatório via fail-fast." },
+      "Logging": { "status": "OK", "nota": "pino instalado. lib/logger.ts com loggers por módulo (auth, api, db, cronograma). Todos console.error nas APIs substituídos por apiLogger.error/authLogger.error." },
+      "Gestao_de_Segredos": { "status": "OK", "nota": ".env.example versionado, .env.local no .gitignore, fail-fast via lib/config/env.ts." },
+      "IaC": { "status": "OK", "nota": "infra/main.tf + variables.tf + outputs.tf + terraform.tfvars.example. Provider kreuzwerker/docker. terraform.tfvars no .gitignore." }
+    },
+    "score": "10/13 conformes (77%)"
+  },
+  "itens_pendentes": [
+    "Migração para PostgreSQL (3 sprints estimadas)",
+    "Isenção formal Comitê IA Champions para stack Node.js",
+    "Adoção de ORM formal (Prisma/Drizzle) antes da migração PostgreSQL",
+    "Expansão da suite de testes (integração, cobertura >80%)",
+    "Sprint OpenAPI 5 — documentar módulos Comitês, Dashboard, Payback, Auditoria, Configurações diversas"
+  ]
+}
