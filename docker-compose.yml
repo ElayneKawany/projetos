@@ -1,0 +1,41 @@
+# ============================================================
+# MegaG PMO — Docker Compose
+# Ambiente de desenvolvimento / homologação local com SQLite
+#
+# Uso rápido:
+#   docker compose up --build
+#   docker compose down
+# ============================================================
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Placeholder usado apenas durante o build da imagem.
+        # O valor real de JWT_SECRET vem do arquivo .env.local abaixo.
+        JWT_SECRET: build-placeholder-not-used-at-runtime
+    container_name: megag-pmo
+    restart: unless-stopped
+
+    # Variáveis de ambiente carregadas do arquivo local.
+    # Copie .env.example para .env.local e preencha os valores reais.
+    env_file:
+      - .env.local
+
+    ports:
+      - "3000:3000"
+
+    volumes:
+      # SQLite — banco de dados persistido no host
+      - ./data:/app/data
+      # Uploads enviados pelos usuários (financeiro, cronograma, etc.)
+      - ./public/uploads:/app/public/uploads
+
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/login"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s

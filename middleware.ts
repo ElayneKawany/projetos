@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { jwtVerify } from 'jose'
+import { env } from '@/lib/config/env'
 
-const JWT_SECRET = new TextEncoder().encode(
-  process.env.JWT_SECRET || 'megag-pmo-secret-change-in-production-2026'
-)
+const JWT_SECRET = new TextEncoder().encode(env.JWT_SECRET)
 const COOKIE_NAME = 'megag_pmo_session'
 
 const PUBLIC_PATHS = ['/login', '/api/auth/login', '/_next', '/favicon', '/megag']

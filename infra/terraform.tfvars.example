@@ -1,0 +1,12 @@
+# Copie este arquivo para terraform.tfvars e preencha os valores reais.
+# NUNCA versionar terraform.tfvars com segredos reais.
+
+app_name      = "megag-pmo"
+image_name    = "megag-pmo"
+image_tag     = "latest"
+build_context = ".."
+external_port = 3000
+log_level     = "info"
+
+# Segredo real (não use o exemplo abaixo em produção)
+# jwt_secret = "mude-este-valor-para-algo-seguro-em-producao"

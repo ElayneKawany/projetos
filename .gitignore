@@ -23,3 +23,20 @@ public/uploads/
 # Misc
 .DS_Store
 *.log
+logs/
+coverage/
+.next.bkp/
+
+# Claude Code
+.claude/
+
+# Scripts de dados/temporários
+scripts/cookies.txt
+scripts/*.xlsx
+scripts/*.mjs
+
+# Terraform
+infra/terraform.tfvars
+infra/.terraform/
+infra/*.tfstate
+infra/*.tfstate.backup

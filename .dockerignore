@@ -1,0 +1,55 @@
+# Dependências — reinstaladas pelo npm ci dentro do container
+node_modules
+
+# Artefatos de build — recriados pelo next build
+.next
+.next.bkp
+out
+
+# Controle de versão
+.git
+.gitignore
+
+# Testes e cobertura
+coverage
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# Variáveis de ambiente com segredos reais — NUNCA incluir na imagem
+.env
+.env.local
+.env.*.local
+
+# Editores e IDEs
+.vscode
+.idea
+*.swp
+*.swo
+
+# Scripts utilitários — não necessários na imagem
+scripts/
+
+# TypeScript incremental build info — artefato de build local
+*.tsbuildinfo
+
+# Banco de dados local — persistido via volume
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# Uploads locais — persistidos via volume
+public/uploads/
+
+# Documentação e metadados do repositório
+.ai/
+README.md
+DOCKER.md
+CHANGELOG.md
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
