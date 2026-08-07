@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Plus, Search, FolderKanban, TrendingUp, AlertTriangle, Clock } from 'lucide-react'
 import type { Projeto, StatusProjeto, Prioridade, StatusCronograma } from '@/types'
 import { STATUS_LABELS, PRIORIDADE_LABELS } from '@/types'
+import { STATUS_MACRO_ORDER, STATUS_MACRO_LABELS, getStatusOperacionais } from '@/lib/status-macro'
 import type { SessionUser } from '@/lib/auth'
 import NovoprojetoModal from './NovoProjetoModal'
 import { formatDistanceToNow } from 'date-fns'
@@ -164,8 +165,10 @@ export default function ProjetosClient({ projetos: initial, diretorias, areas, u
 
           <select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)} className="input w-48 py-2 text-sm">
             <option value="">Todos os status</option>
-            {Object.entries(STATUS_LABELS).map(([k, v]) => (
-              <option key={k} value={k}>{v}</option>
+            {STATUS_MACRO_ORDER.map(macro => (
+              <option key={macro} value={getStatusOperacionais(macro).join(',')}>
+                {STATUS_MACRO_LABELS[macro]}
+              </option>
             ))}
           </select>
 
