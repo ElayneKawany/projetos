@@ -39,14 +39,13 @@ const STATUS_CRON_CONFIG: Record<StatusCronograma, { emoji: string; label: strin
 
 type StatusData = 'ATRASADO' | 'ATENCAO' | 'NO_PRAZO' | 'SEM_DATA'
 
-const STATUS_DATA_CONFIG: Record<StatusData, { emoji: string; label: string; cls: string }> = {
-  ATRASADO: { emoji: '🔴', label: 'Atrasado',  cls: 'bg-red-100 text-red-700' },
-  ATENCAO:  { emoji: '🟡', label: 'Atenção',   cls: 'bg-amber-100 text-amber-700' },
-  NO_PRAZO: { emoji: '🟢', label: 'No Prazo',  cls: 'bg-green-100 text-green-700' },
-  SEM_DATA: { emoji: '⚪', label: 'Sem Data',  cls: 'bg-gray-100 text-gray-600' },
+// Cor do texto da data por status de prazo
+const STATUS_DATA_COR: Record<StatusData, string> = {
+  ATRASADO: 'text-red-600 font-semibold',
+  ATENCAO:  'text-amber-600 font-medium',
+  NO_PRAZO: 'text-green-700',
+  SEM_DATA: '',
 }
-
-const MACRO_TERMINAL = new Set(['MACRO_CONCLUIDO', 'MACRO_PAYBACK', 'MACRO_PAUSADO', 'MACRO_CANCELADO'])
 
 function calcularStatusData(p: Projeto): StatusData {
   const dataRef = p.data_fim_efetiva ?? p.data_fim_prev
@@ -110,7 +109,7 @@ export default function ProjetosClient({ projetos: initial, diretorias, areas, u
     }
     if (filtroPrioridade && p.prioridade !== filtroPrioridade) return false
     if (filtroDiretoria && String(p.diretoria_id) !== filtroDiretoria) return false
-    if (filtroStatusCron && calcularStatusCronograma(p) !== filtroStatusCron) return false
+    if (filtroStatusCron && calcularStatusData(p) !== filtroStatusCron) return false
     if (filtroGerente && p.gerente_nome !== filtroGerente) return false
     if (filtroPmo && p.pmo_responsavel_nome !== filtroPmo) return false
     return true
@@ -210,11 +209,11 @@ export default function ProjetosClient({ projetos: initial, diretorias, areas, u
           </select>
 
           <select value={filtroStatusCron} onChange={e => setFiltroStatusCron(e.target.value)} className="input w-44 py-2 text-sm">
-            <option value="">Status do Projeto</option>
+            <option value="">Prazo</option>
             <option value="NO_PRAZO">🟢 No Prazo</option>
             <option value="ATENCAO">🟡 Atenção</option>
             <option value="ATRASADO">🔴 Atrasado</option>
-            <option value="SEM_CRONOGRAMA">⚪ Sem Cronograma</option>
+            <option value="SEM_DATA">⚪ Sem Data</option>
           </select>
 
           {gerentesUnicos.length > 0 && (
@@ -266,7 +265,6 @@ export default function ProjetosClient({ projetos: initial, diretorias, areas, u
               ) : filtrados.map(p => {
                 const macro = getStatusMacro(p.status as StatusProjeto)
                 const statusData = calcularStatusData(p)
-                const sdCfg = STATUS_DATA_CONFIG[statusData]
                 return (
                   <tr
                     key={p.id}
@@ -304,14 +302,9 @@ export default function ProjetosClient({ projetos: initial, diretorias, areas, u
                     </td>
                     <td className="text-sm">{p.gerente_nome || <span className="text-megag-cinza-texto text-xs">Não definido</span>}</td>
                     <td className="text-sm">
-                      <div className="flex flex-col gap-1">
-                        <span>{fmtDataBR(p.data_fim_efetiva ?? p.data_fim_prev)}</span>
-                        {statusData !== 'SEM_DATA' && (
-                          <span className={`badge text-xs ${sdCfg.cls}`}>
-                            {sdCfg.emoji} {sdCfg.label}
-                          </span>
-                        )}
-                      </div>
+                      <span className={STATUS_DATA_COR[statusData]}>
+                        {fmtDataBR(p.data_fim_efetiva ?? p.data_fim_prev)}
+                      </span>
                     </td>
                     <td className="text-xs text-megag-cinza-texto">
                       {formatDistanceToNow(new Date(p.created_at), { locale: ptBR, addSuffix: true })}
