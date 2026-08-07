@@ -829,6 +829,7 @@ function SlideAbertura({ comite, participantes, todosProjetos, diretorias, prese
 
         {/* ── Topo: Logo + Badge tipo ── */}
         <div className="flex items-start justify-between mb-6">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src="/megag/logo.png"
             alt="MegaG Alimentos"

@@ -784,6 +784,7 @@ export default function CronogramaEditor({
     fetch('/api/configuracoes/criticidades')
       .then(r => r.ok ? r.json() : [])
       .then(setCriticidadesList)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projetoId])
 
   function addLinha()  { setLinhas(p => [...p, emptyLinha()]) }

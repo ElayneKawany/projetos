@@ -201,7 +201,7 @@ export default function EnviarAprovacaoModal({
       .then((data: WorkflowModelo[]) => { if (Array.isArray(data)) setModelos(data) })
       .catch(() => {})
       .finally(() => setLoadingModelos(false))
-  }, [isOpen, sessionUser.id])
+  }, [isOpen, sessionUser])
 
   function selecionarModelo(m: WorkflowModelo) {
     setModeloSelecionado(m)
