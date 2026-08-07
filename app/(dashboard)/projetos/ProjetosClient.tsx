@@ -37,6 +37,29 @@ const STATUS_CRON_CONFIG: Record<StatusCronograma, { emoji: string; label: strin
   SEM_CRONOGRAMA: { emoji: '⚪', label: 'Sem Cronograma', cls: 'bg-gray-100 text-gray-600' },
 }
 
+type StatusData = 'ATRASADO' | 'ATENCAO' | 'NO_PRAZO' | 'SEM_DATA'
+
+const STATUS_DATA_CONFIG: Record<StatusData, { emoji: string; label: string; cls: string }> = {
+  ATRASADO: { emoji: '🔴', label: 'Atrasado',  cls: 'bg-red-100 text-red-700' },
+  ATENCAO:  { emoji: '🟡', label: 'Atenção',   cls: 'bg-amber-100 text-amber-700' },
+  NO_PRAZO: { emoji: '🟢', label: 'No Prazo',  cls: 'bg-green-100 text-green-700' },
+  SEM_DATA: { emoji: '⚪', label: 'Sem Data',  cls: 'bg-gray-100 text-gray-600' },
+}
+
+const MACRO_TERMINAL = new Set(['MACRO_CONCLUIDO', 'MACRO_PAYBACK', 'MACRO_PAUSADO', 'MACRO_CANCELADO'])
+
+function calcularStatusData(p: Projeto): StatusData {
+  const dataRef = p.data_fim_efetiva ?? p.data_fim_prev
+  if (!dataRef) return 'SEM_DATA'
+  if (['CANCELADO','SUSPENSO','PAUSADO','PROJETO_CONCLUIDO','PROJETO_ENCERRADO','PAYBACK_ENCERRADO','PAYBACK_ACOMPANHAMENTO','ROI','ENCERRAMENTO'].includes(p.status)) return 'SEM_DATA'
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0)
+  const data = new Date(dataRef); data.setHours(0, 0, 0, 0)
+  if (data < hoje) return 'ATRASADO'
+  const diasRestantes = Math.round((data.getTime() - hoje.getTime()) / (1000 * 60 * 60 * 24))
+  if (diasRestantes <= 30) return 'ATENCAO'
+  return 'NO_PRAZO'
+}
+
 function calcularStatusCronograma(p: Projeto): StatusCronograma {
   if (!p.has_cronograma) return 'SEM_CRONOGRAMA'
   const hoje = new Date()
@@ -228,7 +251,7 @@ export default function ProjetosClient({ projetos: initial, diretorias, areas, u
                 <th>Status</th>
                 <th>Prioridade</th>
                 <th>Gerente</th>
-                <th>Previsão Entrega</th>
+                <th>Conclusão</th>
                 <th>Criado em</th>
               </tr>
             </thead>
@@ -242,6 +265,8 @@ export default function ProjetosClient({ projetos: initial, diretorias, areas, u
                 </tr>
               ) : filtrados.map(p => {
                 const macro = getStatusMacro(p.status as StatusProjeto)
+                const statusData = calcularStatusData(p)
+                const sdCfg = STATUS_DATA_CONFIG[statusData]
                 return (
                   <tr
                     key={p.id}
@@ -279,11 +304,14 @@ export default function ProjetosClient({ projetos: initial, diretorias, areas, u
                     </td>
                     <td className="text-sm">{p.gerente_nome || <span className="text-megag-cinza-texto text-xs">Não definido</span>}</td>
                     <td className="text-sm">
-                      {(p.data_fim_efetiva ?? p.data_fim_prev) ? (
-                        <span className={new Date(p.data_fim_efetiva ?? p.data_fim_prev ?? '') < hoje && !['ENCERRAMENTO','CANCELADO'].includes(p.status) ? 'text-red-500 font-medium' : ''}>
-                          {fmtDataBR(p.data_fim_efetiva ?? p.data_fim_prev)}
-                        </span>
-                      ) : '—'}
+                      <div className="flex flex-col gap-1">
+                        <span>{fmtDataBR(p.data_fim_efetiva ?? p.data_fim_prev)}</span>
+                        {statusData !== 'SEM_DATA' && (
+                          <span className={`badge text-xs ${sdCfg.cls}`}>
+                            {sdCfg.emoji} {sdCfg.label}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="text-xs text-megag-cinza-texto">
                       {formatDistanceToNow(new Date(p.created_at), { locale: ptBR, addSuffix: true })}
