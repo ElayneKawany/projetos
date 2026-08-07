@@ -192,9 +192,8 @@ export function validarViabilidade(v: ViabilidadeParaValidar): ErroValidacao[] {
   req(erros, 'riscos',               'Riscos Principais',            v.riscos)
 
   // Bloco 5 — Cronograma Preliminar
+  // data_fim_prev e marcos não são obrigatórios: a data de conclusão vem do cronograma real
   req(erros, 'data_inicio_prev', 'Data de Início Prevista',          v.data_inicio_prev)
-  req(erros, 'data_fim_prev',    'Data de Entrega Prevista',         v.data_fim_prev)
-  req(erros, 'marcos',           'Marcos Principais',                v.marcos)
 
   // Bloco 6 — Recomendação (regras condicionais centralizadas)
   req(erros, 'recomendacao',               'Recomendação',                    v.recomendacao)
