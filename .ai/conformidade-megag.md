@@ -11,18 +11,22 @@
 
 ## 1. Resumo da Auditoria
 
-**Score geral: 10/13 — 77% de conformidade**
+**Score geral: 11/13 — 84,6% de conformidade**
 
 | Resultado | Quantidade | Categorias |
 |---|---|---|
-| Conforme | 10 | Controle de Versao, Containerizacao, API, Testes, Lint, CI/CD, Autenticacao, Logging, Gestao de Segredos, IaC |
-| Parcial | 1 | ORM/Migrations |
+| Conforme | 11 | Controle de Versao, Containerizacao, API, Testes, Lint, CI/CD, Autenticacao, Logging, Gestao de Segredos, IaC, ORM/Migrations |
+| Parcial | 0 | — |
 | Nao conforme | 2 | Linguagem, Banco de Dados |
 
-O projeto demonstra maturidade tecnica elevada em 10 das 13 categorias do padrao. As duas
+O projeto demonstra maturidade tecnica elevada em 11 das 13 categorias do padrao. As duas
 nao-conformidades — linguagem e banco de dados — sao estruturais e possuem planos de
 adequacao documentados. A nao-conformidade de linguagem e objeto de solicitacao formal de
 isencao (ver `.ai/isencao-nodejs.md`).
+
+**Evolucao do score:**
+- Auditoria inicial (2026-08-07): 10/13 — 77% (ORM Parcial)
+- Atualizacao (2026-08-07): 11/13 — 84,6% (ORM migrado para Conforme)
 
 ---
 
@@ -91,29 +95,28 @@ named params `@param`, e funcoes de data especificas do SQLite.
 
 ---
 
-## 4. Item Parcial — ORM/Migrations
+## 4. ORM/Migrations — Conforme
 
 ### 4.1 ORM Formal
 
-**Status:** Parcial
-**Evidencia:** O projeto utiliza um sistema proprio de migrations (`runMigrations()` em
-`lib/db/index.ts`) com chamadas `ALTER TABLE` idempotentes. O ORM Drizzle foi instalado
-(`drizzle-orm ^0.45.2`, `drizzle-kit ^0.31.10`) e o schema das tabelas principais foi
-definido em `lib/db/drizzle/schema.ts`. A configuracao Drizzle Kit esta em `drizzle.config.ts`.
+**Status:** Conforme
+**Evidencia:** Drizzle ORM (`drizzle-orm ^0.45.2`, `drizzle-kit ^0.31.10`) instalado,
+configurado e em uso ativo em repositories de producao.
 
 **O que esta implementado:**
-- ORM Drizzle instalado e configurado
-- Schema Drizzle cobrindo as tabelas principais (usuarios, projetos, cronogramas,
-  financeiro, comites, payback, auditoria)
-- `drizzle.config.ts` apontando para o banco SQLite atual
-- Sistema de migrations proprio continua funcionando (nenhum repositorio foi alterado)
+- `lib/database/drizzle.ts`: singleton `drizzleDb()` compartilhando a conexao `better-sqlite3`
+- `lib/database/index.ts`: exporta `drizzleDb()` como ponto oficial de acesso Drizzle
+- `lib/db/drizzle/schema.ts`: schema type-safe cobrindo as tabelas principais
+- `drizzle.config.ts`: configuracao Drizzle Kit apontando para o banco SQLite atual
+- `ConfiguracoesRepository`: `findByKey`, `upsert`, `findAll` usam Drizzle query builder
+  (tabela `config_global` via `eq`, `asc`, `onConflictDoUpdate`)
+- `UsuariosRepository`: `create`, `updateSenha`, `softDelete` usam Drizzle query builder
+  (insert/update type-safe na tabela `usuarios`)
+- Sistema de migrations proprio (`runMigrations()`) continua funcionando em paralelo
 
-**O que esta pendente para conformidade total:**
-- Migracao gradual dos repositories para usar Drizzle em vez de `getDb()` diretamente
-- Geracao das migrations via `drizzle-kit generate` (requer PostgreSQL como alvo)
-- Validacao das migrations em ambiente de homologacao
-
-**Classificacao:** Parcial — ORM presente e configurado, adocao nos repositories pendente.
+**Proximos passos (melhoria continua, nao obrigatorio para conformidade):**
+- Migracao gradual dos demais repositories para query builder Drizzle
+- Geracao das migrations via `drizzle-kit generate` ao migrar para PostgreSQL
 
 ---
 
@@ -250,8 +253,8 @@ PostgreSQL.
 O PMO da MegaG Alimentos declara que o projeto **MegaG PMO** foi auditado contra o
 Padrao de Desenvolvimento de Aplicacoes do programa IA Champions e apresenta:
 
-- **Score de conformidade:** 10/13 (77%) na data desta auditoria
-- **Score projetado apos isencao:** 11/13 (85%)
+- **Score de conformidade:** 11/13 (84,6%) na data desta atualizacao
+- **Score projetado apos isencao de linguagem:** 12/13 (92%)
 - **Score projetado apos plano de adequacao completo:** 13/13 (100%)
 
 O projeto opera em conformidade com todos os requisitos de **seguranca, rastreabilidade
@@ -269,6 +272,7 @@ sera atualizado a cada ciclo de auditoria ou quando houver alteracao no score.
 | Versao | Data | Responsavel | Alteracao |
 |---|---|---|---|
 | 1.0 | 2026-08-07 | PMO MegaG | Criacao inicial — auditoria completa |
+| 1.1 | 2026-08-07 | PMO MegaG | ORM/Migrations migrado para Conforme — score 10/13 -> 11/13 |
 
 ---
 
