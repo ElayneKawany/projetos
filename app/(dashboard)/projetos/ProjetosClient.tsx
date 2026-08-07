@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Plus, Search, FolderKanban, TrendingUp, AlertTriangle, Clock } from 'lucide-react'
 import type { Projeto, StatusProjeto, Prioridade, StatusCronograma } from '@/types'
 import { STATUS_LABELS, PRIORIDADE_LABELS } from '@/types'
-import { STATUS_MACRO_ORDER, STATUS_MACRO_LABELS, STATUS_MACRO_BADGES, getStatusOperacionais, getStatusMacro } from '@/lib/status-macro'
+import { STATUS_MACRO_ORDER, STATUS_MACRO_LABELS, STATUS_MACRO_COR, getStatusOperacionais, getStatusMacro } from '@/lib/status-macro'
 import type { SessionUser } from '@/lib/auth'
 import NovoprojetoModal from './NovoProjetoModal'
 import { formatDistanceToNow } from 'date-fns'
@@ -286,7 +286,7 @@ export default function ProjetosClient({ projetos: initial, diretorias, areas, u
                     </td>
                     <td className="text-sm">{p.diretoria_nome || '—'}</td>
                     <td>
-                      <span className={`badge ${STATUS_MACRO_BADGES[macro]}`}>
+                      <span className={`text-sm font-medium ${STATUS_MACRO_COR[macro]}`}>
                         {STATUS_MACRO_LABELS[macro]}
                       </span>
                       {!!p.tem_revisao_pendente && (

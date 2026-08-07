@@ -56,6 +56,18 @@ export function getStatusOperacionais(macro: StatusMacro): StatusProjeto[] {
     .map(([s]) => s)
 }
 
+/** Cor do texto do status macro — sem badge, sem fundo. */
+export const STATUS_MACRO_COR: Record<StatusMacro, string> = {
+  MACRO_PROPOSTA:      'text-gray-500',
+  MACRO_VIABILIDADE:   'text-purple-600',
+  MACRO_ESTRUTURACAO:  'text-orange-500',
+  MACRO_EXECUCAO:      'text-green-600',
+  MACRO_PAUSADO:       'text-amber-500',
+  MACRO_CANCELADO:     'text-red-600',
+  MACRO_CONCLUIDO:     'text-emerald-700',
+  MACRO_PAYBACK:       'text-blue-600',
+}
+
 export const STATUS_MACRO_BADGES: Record<StatusMacro, string> = {
   MACRO_PROPOSTA:      'badge-proposta',
   MACRO_VIABILIDADE:   'badge-viabilidade',
