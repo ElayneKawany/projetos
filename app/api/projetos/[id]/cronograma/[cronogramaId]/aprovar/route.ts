@@ -5,6 +5,7 @@ import { CronogramaRepository, ProjetosRepository } from '@/lib/repositories'
 import { registrarAuditoria } from '@/lib/db/auditoria'
 import { registrarHistoricoAlteracao, atualizarStatusProjeto } from '@/lib/projetos'
 import { registrarEvento } from '@/lib/timeline'
+import { validarCronogramaParaExecucao } from '@/lib/validacoes-cronograma'
 
 function getIp(request: NextRequest): string {
   return (
@@ -92,6 +93,11 @@ export async function POST(
     const projeto = ProjetosRepository.findById(Number(projetoId))
 
     if (projeto && (projeto.status === 'CRONOGRAMA' || projeto.status === 'ESTRUTURACAO')) {
+      const erroExecucao = validarCronogramaParaExecucao(Number(cronogramaId))
+      if (erroExecucao) {
+        return NextResponse.json({ error: erroExecucao }, { status: 422 })
+      }
+
       atualizarStatusProjeto(Number(projetoId), 'EXECUCAO', session.id,
         `Cronograma V${versao} aprovado — projeto avança automaticamente para Execução.`)
 
