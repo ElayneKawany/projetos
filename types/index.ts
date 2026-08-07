@@ -98,7 +98,9 @@ export interface Projeto {
   capex_aprovado: number
   opex_aprovado: number
   data_inicio_prev?: string
+  /** @deprecated LEGADO — NÃO usar para prazo, status ou KPI. Use data_fim_efetiva (cronograma). */
   data_fim_prev?: string
+  /** Fonte oficial: MAX(data_fim) das tarefas do cronograma ativo. */
   data_fim_efetiva?: string
   data_golive?: string
   data_conclusao_real?: string | null
