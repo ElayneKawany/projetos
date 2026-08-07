@@ -1,20 +1,11 @@
-import getDb from './db'
 import { registrarAuditoria } from './db/auditoria'
+import { registrarEvento, type EventoTimeline } from './timeline'
+import { getProjetoVisibility } from './permissoes'
+import { ProjetosRepository, ConfiguracoesRepository, UsuariosRepository, ViabilidadeRepository } from '@/lib/repositories'
 import type { Projeto, StatusProjeto, Prioridade } from '@/types'
 
 export function gerarCodigoProjeto(): string {
-  const db = getDb()
-  const ano = new Date().getFullYear()
-  const row = db.prepare(
-    `SELECT codigo FROM projetos WHERE codigo LIKE 'PRJ-${ano}-%' ORDER BY codigo DESC LIMIT 1`
-  ).get() as { codigo: string } | undefined
-
-  let seq = 1
-  if (row) {
-    const parts = row.codigo.split('-')
-    seq = parseInt(parts[2]) + 1
-  }
-  return `PRJ-${ano}-${String(seq).padStart(4, '0')}`
+  return ProjetosRepository.nextCodigo()
 }
 
 export function buscarProjetos(filtros: {
@@ -27,7 +18,6 @@ export function buscarProjetos(filtros: {
   limit?: number
   offset?: number
 }): Projeto[] {
-  const db = getDb()
   const conditions: string[] = ['p.ativo = 1']
   const params: Record<string, unknown> = {}
 
@@ -48,59 +38,42 @@ export function buscarProjetos(filtros: {
     params.busca = `%${filtros.busca}%`
   }
 
-  // Restrição por perfil
-  if (filtros.perfil === 'DIRETOR' && filtros.usuario_id) {
-    const u = db.prepare('SELECT diretoria_id FROM usuarios WHERE id = ?').get(filtros.usuario_id) as { diretoria_id: number }
-    if (u?.diretoria_id) {
-      conditions.push('p.diretoria_id = @dir_usuario')
-      params.dir_usuario = u.diretoria_id
+  if (filtros.perfil && filtros.usuario_id) {
+    const vis = getProjetoVisibility({ id: filtros.usuario_id, perfil: filtros.perfil })
+    if (vis.where !== '1=1') {
+      conditions.push(`(${vis.where})`)
+      Object.assign(params, vis.params)
     }
-  } else if (filtros.perfil === 'GESTOR' && filtros.usuario_id) {
-    conditions.push('(p.gerente_id = @uid OR p.solicitante_id = @uid OR p.created_by = @uid)')
-    params.uid = filtros.usuario_id
-  } else if (filtros.perfil === 'SOLICITANTE' && filtros.usuario_id) {
-    conditions.push('(p.solicitante_id = @uid2 OR p.created_by = @uid2)')
-    params.uid2 = filtros.usuario_id
   }
 
-  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
   const limit = filtros.limit ?? 100
   const offset = filtros.offset ?? 0
 
-  return db.prepare(`
-    SELECT p.*,
-           us.nome as solicitante_nome,
-           d.nome  as diretoria_nome,
-           a.nome  as area_nome,
-           g.nome  as gerente_nome
-    FROM projetos p
-    LEFT JOIN usuarios us ON p.solicitante_id = us.id
-    LEFT JOIN diretorias d ON p.diretoria_id = d.id
-    LEFT JOIN areas a ON p.area_id = a.id
-    LEFT JOIN usuarios g ON p.gerente_id = g.id
-    ${where}
-    ORDER BY
-      CASE p.prioridade WHEN 'ALTA' THEN 1 WHEN 'MEDIA' THEN 2 ELSE 3 END,
-      p.created_at DESC
-    LIMIT ${limit} OFFSET ${offset}
-  `).all(params) as Projeto[]
+  return ProjetosRepository.findAllComplexo(conditions, params, limit, offset)
 }
 
 export function buscarProjetoPorId(id: number): Projeto | null {
-  const db = getDb()
-  return db.prepare(`
-    SELECT p.*,
-           us.nome as solicitante_nome,
-           d.nome  as diretoria_nome,
-           a.nome  as area_nome,
-           g.nome  as gerente_nome
-    FROM projetos p
-    LEFT JOIN usuarios us ON p.solicitante_id = us.id
-    LEFT JOIN diretorias d ON p.diretoria_id = d.id
-    LEFT JOIN areas a ON p.area_id = a.id
-    LEFT JOIN usuarios g ON p.gerente_id = g.id
-    WHERE p.id = ? AND p.ativo = 1
-  `).get(id) as Projeto | null
+  return ProjetosRepository.findByIdComplexo(id)
+}
+
+export function registrarHistoricoAlteracao(params: {
+  projeto_id: number
+  usuario_id: number
+  usuario_nome?: string | null
+  campo: string
+  valor_anterior?: string | null
+  valor_novo?: string | null
+  acao?: string
+}): void {
+  ProjetosRepository.insertHistoricoAlteracao(params)
+}
+
+export function buscarHistoricoAlteracoes(projeto_id: number) {
+  return ProjetosRepository.findHistoricoAlteracoes(projeto_id)
+}
+
+export function buscarConfigStatus() {
+  return ConfiguracoesRepository.findConfigStatusAll()
 }
 
 export function criarProjeto(dados: {
@@ -111,23 +84,39 @@ export function criarProjeto(dados: {
   ponto_focal?: string
   contato?: string
   objetivo: string
+  justificativa?: string
   descricao?: string
   beneficios?: string
+  gerente_id?: number
+  classificacao?: string
+  prioridade?: string
   created_by: number
 }): Projeto {
-  const db = getDb()
   const codigo = gerarCodigoProjeto()
+  const statusInicial = ConfiguracoesRepository.findStatusInicial()
+  const prioridade = dados.prioridade ?? 'MEDIA'
+  const classificacao = dados.classificacao ?? null
 
-  const result = db.prepare(`
-    INSERT INTO projetos
-      (codigo, nome, solicitante_id, diretoria_id, area_id, ponto_focal, contato,
-       objetivo, descricao, beneficios, status, prioridade, created_by)
-    VALUES
-      (@codigo, @nome, @solicitante_id, @diretoria_id, @area_id, @ponto_focal, @contato,
-       @objetivo, @descricao, @beneficios, 'PROPOSTA', 'MEDIA', @created_by)
-  `).run({ codigo, ...dados })
+  const projetoId = ProjetosRepository.insertProjeto({
+    codigo,
+    nome: dados.nome,
+    solicitante_id: dados.solicitante_id,
+    diretoria_id: dados.diretoria_id,
+    area_id: dados.area_id,
+    ponto_focal: dados.ponto_focal ?? null,
+    contato: dados.contato ?? null,
+    objetivo: dados.objetivo,
+    justificativa: dados.justificativa ?? null,
+    descricao: dados.descricao ?? null,
+    beneficios: dados.beneficios ?? null,
+    status: statusInicial,
+    classificacao,
+    prioridade,
+    gerente_id: dados.gerente_id ?? null,
+    created_by: dados.created_by,
+  })
 
-  const projeto = buscarProjetoPorId(Number(result.lastInsertRowid))!
+  const projeto = buscarProjetoPorId(Number(projetoId))!
 
   registrarAuditoria({
     usuario_id: dados.created_by,
@@ -139,40 +128,21 @@ export function criarProjeto(dados: {
     dados_depois: projeto,
   })
 
-  // Auto-generate TAP V1
-  const tap = db.prepare(`
-    INSERT INTO tap_versoes
-      (projeto_id, versao, label, fase_origem, status, criado_por,
-       escopo_inicial, escopo_fisico, escopo_sistemico, escopo_processo,
-       objetivo_detalhado, situacao_atual, etapas_projeto, setores_envolvidos)
-    VALUES
-      (@projeto_id, 1, 'TAP V1', 'PROPOSTA', 'PENDENTE_APROVACAO', @criado_por,
-       @escopo_inicial, @escopo_fisico, @escopo_sistemico, @escopo_processo,
-       @objetivo_detalhado, @situacao_atual, '[]', '[]')
-  `).run({
+  registrarHistoricoAlteracao({
     projeto_id: projeto.id,
-    criado_por: dados.created_by,
-    escopo_inicial: `Escopo inicial do projeto "${dados.nome}": a ser detalhado pelo gestor.`,
-    escopo_fisico: `Descreva aqui os limites físicos e geográficos do projeto "${dados.nome}".`,
-    escopo_sistemico: `Liste os sistemas que serão afetados ou integrados no projeto "${dados.nome}".`,
-    escopo_processo: `Descreva os processos de negócio impactados pelo projeto "${dados.nome}".`,
-    objetivo_detalhado: dados.objetivo,
-    situacao_atual: 'A ser preenchido pelo gestor',
+    usuario_id: dados.created_by,
+    campo: 'status',
+    valor_anterior: null,
+    valor_novo: statusInicial,
+    acao: 'CREATE',
   })
 
-  db.prepare(`
-    INSERT INTO aprovacoes
-      (projeto_id, tipo, referencia_id, referencia_tipo, status, solicitante_id, observacao_req)
-    VALUES
-      (?, 'TAP', ?, 'tap_versoes', 'PENDENTE', ?, 'TAP V1 gerado automaticamente após cadastro do projeto')
-  `).run(projeto.id, tap.lastInsertRowid, dados.created_by)
-
-  db.prepare(`
-    INSERT INTO documentos
-      (projeto_id, tipo, titulo, versao, status, gerado_auto, criado_por)
-    VALUES
-      (?, 'TAP', ?, 1, 'EM_APROVACAO', 1, ?)
-  `).run(projeto.id, `TAP V1 – ${dados.nome}`, dados.created_by)
+  ProjetosRepository.insertTapV1({
+    projeto_id: projeto.id,
+    criado_por: dados.created_by,
+    objetivo_detalhado: dados.objetivo,
+    nome_projeto: dados.nome,
+  })
 
   return projeto
 }
@@ -183,21 +153,17 @@ export function atualizarStatusProjeto(
   usuario_id: number,
   motivo?: string
 ): void {
-  const db = getDb()
   const projeto = buscarProjetoPorId(projeto_id)
   if (!projeto) throw new Error('Projeto não encontrado.')
 
-  db.prepare(`
-    UPDATE projetos SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
-  `).run(status_para, projeto_id)
+  ProjetosRepository.updateStatus(projeto_id, status_para)
+  ProjetosRepository.insertStatusHistorico(projeto_id, projeto.status, status_para, motivo ?? null, usuario_id)
 
-  db.prepare(`
-    INSERT INTO projeto_status_historico (projeto_id, status_de, status_para, motivo, usuario_id)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(projeto_id, projeto.status, status_para, motivo ?? null, usuario_id)
+  const usuario_nome = ProjetosRepository.findNomeUsuario(usuario_id) ?? 'Sistema'
 
   registrarAuditoria({
     usuario_id,
+    usuario_nome,
     acao: 'STATUS_CHANGE',
     entidade: 'projetos',
     entidade_id: projeto_id,
@@ -207,33 +173,69 @@ export function atualizarStatusProjeto(
     dados_depois: { status: status_para, motivo },
   })
 
-  // Auto-generate Viabilidade when entering VIABILIDADE phase
+  const statusEventoMap: Partial<Record<StatusProjeto, { evento: EventoTimeline; titulo: string }>> = {
+    PAUSADO:           { evento: 'SUSPENSO',  titulo: 'Projeto pausado' },
+    EXECUCAO:          { evento: 'ALTERADO',  titulo: 'Projeto em execução' },
+    PROJETO_CONCLUIDO: { evento: 'CONCLUIDO', titulo: 'Projeto concluído' },
+    CANCELADO:         { evento: 'CANCELADO', titulo: 'Projeto cancelado' },
+    PROJETO_ENCERRADO: { evento: 'ENCERRADO', titulo: 'Projeto encerrado' },
+  }
+  if (projeto.status === 'PAUSADO' && status_para !== 'PAUSADO') {
+    registrarEvento({
+      projeto_id,
+      modulo: 'PROJETO',
+      artefato: 'PROJETO',
+      evento: 'ALTERADO',
+      titulo: 'Projeto retomado',
+      descricao: motivo ? `Retomado: ${motivo}` : 'Projeto retomado após pausa',
+      usuario_id,
+      usuario_nome,
+      referencia_id: projeto_id,
+      referencia_tipo: 'projetos',
+    })
+  } else {
+    const ev = statusEventoMap[status_para]
+    if (ev) {
+      registrarEvento({
+        projeto_id,
+        modulo: 'PROJETO',
+        artefato: 'PROJETO',
+        evento: ev.evento,
+        titulo: ev.titulo,
+        descricao: motivo ? `${ev.titulo}: ${motivo}` : ev.titulo,
+        usuario_id,
+        usuario_nome,
+        referencia_id: projeto_id,
+        referencia_tipo: 'projetos',
+      })
+    }
+  }
+
   if (status_para === 'VIABILIDADE') {
-    const existingVib = db.prepare(
-      `SELECT id FROM viabilidade WHERE projeto_id = ? AND versao = 1`
-    ).get(projeto_id)
+    const existingVib = ViabilidadeRepository.findV1ByProjetoId(projeto_id)
 
     if (!existingVib) {
-      const vib = db.prepare(`
-        INSERT INTO viabilidade
-          (projeto_id, versao, status, criado_por, resumo_executivo, recomendacao)
-        VALUES
-          (?, 1, 'RASCUNHO', ?, 'A preencher: Descreva o objetivo e benefícios esperados do projeto.', NULL)
-      `).run(projeto_id, usuario_id)
+      const vibId = ProjetosRepository.insertViabilidadeRascunho(projeto_id, usuario_id)
 
-      db.prepare(`
-        INSERT INTO aprovacoes
-          (projeto_id, tipo, referencia_id, referencia_tipo, status, solicitante_id, observacao_req)
-        VALUES
-          (?, 'VIABILIDADE', ?, 'viabilidade', 'PENDENTE', ?, 'Estudo de Viabilidade gerado automaticamente ao avançar para fase VIABILIDADE')
-      `).run(projeto_id, vib.lastInsertRowid, usuario_id)
+      ProjetosRepository.insertAprovacao({
+        projeto_id,
+        tipo: 'VIABILIDADE',
+        referencia_id: vibId,
+        referencia_tipo: 'viabilidade',
+        status: 'PENDENTE',
+        solicitante_id: usuario_id,
+        observacao_req: 'Estudo de Viabilidade gerado automaticamente ao avançar para fase VIABILIDADE',
+      })
 
-      db.prepare(`
-        INSERT INTO documentos
-          (projeto_id, tipo, titulo, versao, status, gerado_auto, criado_por)
-        VALUES
-          (?, 'ESTUDO', ?, 1, 'EM_APROVACAO', 1, ?)
-      `).run(projeto_id, `Estudo de Viabilidade – ${projeto.nome}`, usuario_id)
+      ProjetosRepository.insertDocumento({
+        projeto_id,
+        tipo: 'ESTUDO',
+        titulo: `Estudo de Viabilidade – ${projeto.nome}`,
+        versao: 1,
+        status: 'EM_APROVACAO',
+        gerado_auto: 1,
+        criado_por: usuario_id,
+      })
     }
   }
 }
@@ -244,18 +246,17 @@ export function atualizarPrioridadeProjeto(
   usuario_id: number,
   motivo?: string
 ): void {
-  const db = getDb()
   const projeto = buscarProjetoPorId(projeto_id)
   if (!projeto) throw new Error('Projeto não encontrado.')
 
-  db.prepare(`
-    UPDATE projetos SET prioridade = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
-  `).run(prioridade_para, projeto_id)
-
-  db.prepare(`
-    INSERT INTO projeto_prioridade_historico (projeto_id, prioridade_de, prioridade_para, motivo, usuario_id)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(projeto_id, projeto.prioridade, prioridade_para, motivo ?? null, usuario_id)
+  ProjetosRepository.updatePrioridade(projeto_id, prioridade_para)
+  ProjetosRepository.insertPrioridadeHistorico({
+    projeto_id,
+    prioridade_de: projeto.prioridade,
+    prioridade_para,
+    motivo: motivo ?? null,
+    usuario_id,
+  })
 
   registrarAuditoria({
     usuario_id,
@@ -270,52 +271,248 @@ export function atualizarPrioridadeProjeto(
 }
 
 export function buscarHistoricoStatus(projeto_id: number) {
-  const db = getDb()
-  return db.prepare(`
-    SELECT h.*, u.nome as usuario_nome
-    FROM projeto_status_historico h
-    LEFT JOIN usuarios u ON h.usuario_id = u.id
-    WHERE h.projeto_id = ?
-    ORDER BY h.created_at DESC
-  `).all(projeto_id)
+  return ProjetosRepository.findStatusHistoricoComplexo(projeto_id)
 }
 
 export function buscarHistoricoPrioridade(projeto_id: number) {
-  const db = getDb()
-  return db.prepare(`
-    SELECT h.*, u.nome as usuario_nome
-    FROM projeto_prioridade_historico h
-    LEFT JOIN usuarios u ON h.usuario_id = u.id
-    WHERE h.projeto_id = ?
-    ORDER BY h.created_at DESC
-  `).all(projeto_id)
+  return ProjetosRepository.findHistoricoPrioridade(projeto_id)
 }
 
 export function buscarDashboardPMO() {
-  const db = getDb()
   const hoje = new Date().toISOString().split('T')[0]
+  return ProjetosRepository.fetchDashboard(hoje)
+}
 
-  const totalProjetos      = (db.prepare('SELECT COUNT(*) as total FROM projetos WHERE ativo=1').get() as { total: number }).total
-  const projetosAtivos     = (db.prepare(`SELECT COUNT(*) as total FROM projetos WHERE ativo=1 AND status NOT IN ('ENCERRAMENTO','CANCELADO','SUSPENSO')`).get() as { total: number }).total
-  const aprovacoesPendentes = (db.prepare(`SELECT COUNT(*) as total FROM aprovacoes WHERE status='PENDENTE'`).get() as { total: number }).total
-  const porStatus          = db.prepare(`SELECT status, COUNT(*) as total FROM projetos WHERE ativo=1 GROUP BY status`).all()
-  const porPrioridade      = db.prepare(`SELECT prioridade, COUNT(*) as total FROM projetos WHERE ativo=1 GROUP BY prioridade`).all()
-  const investimentoTotal  = (db.prepare(`SELECT COALESCE(SUM(capex_aprovado + opex_aprovado), 0) as total FROM projetos WHERE ativo=1`).get() as { total: number }).total
-  const projetosAtrasados  = (db.prepare(`SELECT COUNT(*) as total FROM projetos WHERE ativo=1 AND data_fim_prev < ? AND status NOT IN ('ENCERRAMENTO','CANCELADO','SUSPENSO','GOLIVE','ROI')`).get(hoje) as { total: number }).total
-  const proximosComites    = db.prepare(`SELECT * FROM comites WHERE status='AGENDADO' AND data_realizacao >= ? ORDER BY data_realizacao LIMIT 5`).all(hoje)
-  const roiMedio           = (db.prepare(`SELECT COALESCE(AVG(roi_previsto),0) as media FROM tap_versoes WHERE roi_previsto IS NOT NULL`).get() as { media: number }).media
-  const paybackMedio       = (db.prepare(`SELECT COALESCE(AVG(payback_meses),0) as media FROM tap_versoes WHERE payback_meses IS NOT NULL`).get() as { media: number }).media
+export interface ConcluirProjetoInput {
+  data_conclusao_real: string
+  hora_conclusao: string
+  responsavel_conclusao: string
+  motivo_conclusao: string
+  checklist_conclusao: string
+}
 
-  return {
-    total_projetos: totalProjetos,
-    projetos_ativos: projetosAtivos,
-    projetos_atrasados: projetosAtrasados,
-    aprovacoes_pendentes: aprovacoesPendentes,
-    roi_medio: roiMedio,
-    payback_medio: paybackMedio,
-    proximos_comites: proximosComites,
-    por_status: porStatus,
-    por_prioridade: porPrioridade,
-    investimento_total: investimentoTotal,
+export function concluirProjeto(
+  projeto_id: number,
+  dados: ConcluirProjetoInput,
+  usuario_id: number,
+  usuario_nome: string,
+): void {
+  const projeto = buscarProjetoPorId(projeto_id)
+  if (!projeto) throw new Error('Projeto não encontrado.')
+  if (projeto.status !== 'EXECUCAO') throw new Error('Projeto deve estar em Execução para ser concluído.')
+
+  const cronograma = ProjetosRepository.findCronogramaLatest(projeto_id)
+
+  const CRONOGRAMA_STATUS_VALIDOS = ['APROVADO', 'EM_EXECUCAO', 'PRONTO_PARA_ENCERRAMENTO']
+  if (!cronograma || !CRONOGRAMA_STATUS_VALIDOS.includes(cronograma.status)) {
+    throw new Error('O Cronograma precisa estar Aprovado ou em Execução para concluir o projeto.')
   }
+
+  ProjetosRepository.updateParaConcluido(projeto_id, dados)
+
+  ProjetosRepository.insertStatusHistorico(
+    projeto_id, projeto.status, 'PROJETO_CONCLUIDO', dados.motivo_conclusao, usuario_id
+  )
+
+  registrarEvento({
+    projeto_id,
+    modulo: 'PROJETO',
+    artefato: 'PROJETO',
+    evento: 'CONCLUIDO',
+    titulo: 'Projeto Concluído',
+    descricao: `Conclusão registrada por ${dados.responsavel_conclusao}. Data real: ${dados.data_conclusao_real}. ${dados.motivo_conclusao}`,
+    usuario_id,
+    usuario_nome,
+    referencia_id: projeto_id,
+    referencia_tipo: 'projetos',
+  })
+
+  const totalTarefas = ProjetosRepository.countTarefasNivel(cronograma.id, 'TAREFA')
+  const concluidasTarefas = ProjetosRepository.countTarefasConcluidasNivel(cronograma.id, 'TAREFA')
+  const pendenteTarefas = totalTarefas - concluidasTarefas
+
+  registrarAuditoria({
+    usuario_id,
+    usuario_nome,
+    acao: 'STATUS_CHANGE',
+    entidade: 'projetos',
+    entidade_id: projeto_id,
+    projeto_id,
+    descricao: pendenteTarefas > 0
+      ? `Projeto concluído com ${pendenteTarefas} tarefa(s) pendente(s) — encerramento antecipado`
+      : 'Projeto concluído oficialmente',
+    dados_antes: { status: projeto.status },
+    dados_depois: {
+      status: 'PROJETO_CONCLUIDO',
+      data_conclusao_real: dados.data_conclusao_real,
+      hora_conclusao: dados.hora_conclusao,
+      responsavel_conclusao: dados.responsavel_conclusao,
+      motivo_conclusao: dados.motivo_conclusao,
+      tarefas_total: totalTarefas,
+      tarefas_concluidas: concluidasTarefas,
+      tarefas_pendentes: pendenteTarefas,
+    },
+  })
+
+  const tap = ProjetosRepository.findTapAprovado(projeto_id)
+  const viab = ViabilidadeRepository.findLatestByProjectId(projeto_id)
+
+  const capexExec = ProjetosRepository.calcCapexExecutado(projeto_id)
+  const opexExec = ProjetosRepository.calcOpexExecutado(projeto_id)
+
+  const cronAprov = ProjetosRepository.findCronogramaAprovado(projeto_id)
+  let dataFimPrevCron: string | null = null
+  if (cronAprov) {
+    dataFimPrevCron = ProjetosRepository.findDataFimCronograma(cronAprov.id)
+  }
+
+  let diasDesvio: number | null = null
+  if (dataFimPrevCron && dados.data_conclusao_real) {
+    diasDesvio = Math.round(
+      (new Date(dados.data_conclusao_real).getTime() - new Date(dataFimPrevCron).getTime()) / 86400000
+    )
+  }
+
+  ProjetosRepository.insertSnapshotFinal({
+    projeto_id,
+    roi_previsto: tap?.roi_previsto ?? null,
+    capex_previsto: viab?.capex ?? null,
+    capex_executado: capexExec,
+    opex_previsto: viab?.opex ?? null,
+    opex_executado: opexExec,
+    economia_prevista: viab?.economia_estimada ?? null,
+    data_fim_prev: dataFimPrevCron,
+    data_conclusao_real: dados.data_conclusao_real,
+    dias_desvio: diasDesvio,
+    responsavel: dados.responsavel_conclusao,
+  })
+
+  registrarEvento({
+    projeto_id,
+    modulo: 'PROJETO',
+    artefato: 'PROJETO',
+    evento: 'CRIADO',
+    titulo: 'Snapshot Final criado',
+    descricao: `Instantâneo imutável gerado na conclusão do projeto por ${dados.responsavel_conclusao}`,
+    usuario_id,
+    usuario_nome,
+    referencia_id: projeto_id,
+    referencia_tipo: 'projeto_snapshot_final',
+  })
+
+  const cronAtivo = ProjetosRepository.findCronogramaAtivo(projeto_id)
+  if (cronAtivo) {
+    ProjetosRepository.updateCronogramaStatus(cronAtivo.id, 'ENCERRADO')
+
+    registrarEvento({
+      projeto_id,
+      modulo:          'CRONOGRAMA',
+      artefato:        'CRONOGRAMA',
+      evento:          'ENCERRADO',
+      titulo:          `Cronograma V${cronAtivo.versao} encerrado`,
+      descricao:       `Cronograma encerrado junto com a conclusão do projeto por ${dados.responsavel_conclusao}.`,
+      usuario_id,
+      usuario_nome,
+      referencia_id:   cronAtivo.id,
+      referencia_tipo: 'cronograma',
+    })
+
+    registrarAuditoria({
+      usuario_id,
+      usuario_nome,
+      acao:         'UPDATE',
+      entidade:     'cronogramas',
+      entidade_id:  cronAtivo.id,
+      projeto_id,
+      descricao:    `Cronograma V${cronAtivo.versao} encerrado junto com o projeto`,
+      dados_antes:  { status: cronograma.status },
+      dados_depois: { status: 'ENCERRADO' },
+    })
+  }
+}
+
+export function iniciarPayback(
+  projeto_id: number,
+  usuario_id: number,
+  usuario_nome: string,
+): void {
+  const projeto = buscarProjetoPorId(projeto_id)
+  if (!projeto) throw new Error('Projeto não encontrado.')
+  if (projeto.status !== 'PROJETO_CONCLUIDO') {
+    throw new Error('O projeto deve estar em "Projeto Concluído" para iniciar o Payback.')
+  }
+
+  ProjetosRepository.updateStatus(projeto_id, 'PAYBACK_ACOMPANHAMENTO')
+  ProjetosRepository.insertStatusHistorico(
+    projeto_id, 'PROJETO_CONCLUIDO', 'PAYBACK_ACOMPANHAMENTO',
+    'Acompanhamento de Payback iniciado manualmente', usuario_id
+  )
+
+  registrarEvento({
+    projeto_id,
+    modulo: 'PROJETO',
+    artefato: 'PROJETO',
+    evento: 'CONCLUIDO',
+    titulo: 'Payback iniciado',
+    descricao: `Acompanhamento de Payback iniciado por ${usuario_nome}`,
+    usuario_id,
+    usuario_nome,
+    referencia_id: projeto_id,
+    referencia_tipo: 'projetos',
+  })
+
+  registrarAuditoria({
+    usuario_id,
+    usuario_nome,
+    acao: 'STATUS_CHANGE',
+    entidade: 'projetos',
+    entidade_id: projeto_id,
+    projeto_id,
+    descricao: 'Payback em acompanhamento iniciado',
+    dados_antes: { status: 'PROJETO_CONCLUIDO' },
+    dados_depois: { status: 'PAYBACK_ACOMPANHAMENTO' },
+  })
+}
+
+export function encerrarProjeto(
+  projeto_id: number,
+  motivo: string,
+  usuario_id: number,
+  usuario_nome: string,
+): void {
+  const projeto = buscarProjetoPorId(projeto_id)
+  if (!projeto) throw new Error('Projeto não encontrado.')
+  if (projeto.status !== 'PAYBACK_ENCERRADO') {
+    throw new Error('O projeto deve estar em "Payback Encerrado" para ser encerrado oficialmente.')
+  }
+
+  ProjetosRepository.updateStatus(projeto_id, 'PROJETO_ENCERRADO')
+  ProjetosRepository.insertStatusHistorico(
+    projeto_id, 'PAYBACK_ENCERRADO', 'PROJETO_ENCERRADO', motivo, usuario_id
+  )
+
+  registrarEvento({
+    projeto_id,
+    modulo: 'PROJETO',
+    artefato: 'PROJETO',
+    evento: 'ENCERRADO',
+    titulo: 'Projeto Encerrado',
+    descricao: `Projeto encerrado oficialmente por ${usuario_nome}. ${motivo}`,
+    usuario_id,
+    usuario_nome,
+    referencia_id: projeto_id,
+    referencia_tipo: 'projetos',
+  })
+
+  registrarAuditoria({
+    usuario_id,
+    usuario_nome,
+    acao: 'STATUS_CHANGE',
+    entidade: 'projetos',
+    entidade_id: projeto_id,
+    projeto_id,
+    descricao: 'Projeto encerrado oficialmente',
+    dados_antes: { status: 'PAYBACK_ENCERRADO' },
+    dados_depois: { status: 'PROJETO_ENCERRADO', motivo },
+  })
 }
