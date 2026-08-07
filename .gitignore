@@ -23,6 +23,7 @@ public/uploads/
 # Misc
 .DS_Store
 *.log
+tsconfig.tsbuildinfo
 logs/
 coverage/
 .next.bkp/
