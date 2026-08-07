@@ -12,44 +12,13 @@ export interface ProjetoFiltros {
   offset?: number
 }
 
+// Data de conclusão = maior data_fim entre todas as tarefas do cronograma ativo.
+// NULL quando não há cronograma cadastrado (exibido como "Sem cronograma" na UI).
 const DATA_FIM_EFETIVA_SQL = `
-  CASE p.status
-    WHEN 'VIABILIDADE' THEN COALESCE(
-      (SELECT v.data_fim_prev FROM viabilidade v WHERE v.projeto_id = p.id ORDER BY v.versao DESC LIMIT 1),
-      p.data_fim_prev)
-    WHEN 'COMPLEMENTACAO_TAP' THEN COALESCE(
-      (SELECT v.data_fim_prev FROM viabilidade v WHERE v.projeto_id = p.id ORDER BY v.versao DESC LIMIT 1),
-      p.data_fim_prev)
-    WHEN 'APROVACAO' THEN COALESCE(
-      (SELECT v.data_fim_prev FROM viabilidade v WHERE v.projeto_id = p.id ORDER BY v.versao DESC LIMIT 1),
-      p.data_fim_prev)
-    WHEN 'ESTRUTURACAO' THEN COALESCE(
-      (SELECT v.data_fim_prev FROM viabilidade v WHERE v.projeto_id = p.id ORDER BY v.versao DESC LIMIT 1),
-      p.data_fim_prev)
-    WHEN 'CRONOGRAMA' THEN COALESCE(
-      (SELECT MAX(ct.data_fim) FROM cronograma_tarefas ct
-       JOIN cronogramas c ON ct.cronograma_id = c.id
-       WHERE c.projeto_id = p.id AND (c.ativo IS NULL OR c.ativo = 1)),
-      p.data_fim_prev)
-    WHEN 'EXECUCAO' THEN COALESCE(
-      (SELECT MAX(ct.data_fim) FROM cronograma_tarefas ct
-       JOIN cronogramas c ON ct.cronograma_id = c.id
-       WHERE c.projeto_id = p.id AND (c.ativo IS NULL OR c.ativo = 1)),
-      p.data_fim_prev)
-    WHEN 'PROJETO_CONCLUIDO' THEN COALESCE(
-      (SELECT MAX(ct.data_fim) FROM cronograma_tarefas ct
-       JOIN cronogramas c ON ct.cronograma_id = c.id
-       WHERE c.projeto_id = p.id AND (c.ativo IS NULL OR c.ativo = 1)),
-      p.data_fim_prev)
-    WHEN 'PAYBACK_ACOMPANHAMENTO' THEN COALESCE(
-      (SELECT MAX(ct.data_fim) FROM cronograma_tarefas ct
-       JOIN cronogramas c ON ct.cronograma_id = c.id
-       WHERE c.projeto_id = p.id AND (c.ativo IS NULL OR c.ativo = 1)),
-      p.data_fim_prev)
-    WHEN 'PAYBACK_ENCERRADO' THEN COALESCE(p.data_conclusao_real, p.data_fim_prev)
-    WHEN 'PROJETO_ENCERRADO' THEN COALESCE(p.data_conclusao_real, p.data_fim_prev)
-    ELSE p.data_fim_prev
-  END AS data_fim_efetiva`
+  (SELECT MAX(ct.data_fim)
+   FROM cronograma_tarefas ct
+   JOIN cronogramas c ON ct.cronograma_id = c.id
+   WHERE c.projeto_id = p.id AND (c.ativo IS NULL OR c.ativo = 1)) AS data_fim_efetiva`
 
 export const ProjetosRepository = {
   // ── Leitura simples ───────────────────────────────────────────────────────

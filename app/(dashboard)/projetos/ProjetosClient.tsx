@@ -48,7 +48,7 @@ const STATUS_DATA_COR: Record<StatusData, string> = {
 }
 
 function calcularStatusData(p: Projeto): StatusData {
-  const dataRef = p.data_fim_efetiva ?? p.data_fim_prev
+  const dataRef = p.data_fim_efetiva
   if (!dataRef) return 'SEM_DATA'
   if (['CANCELADO','SUSPENSO','PAUSADO','PROJETO_CONCLUIDO','PROJETO_ENCERRADO','PAYBACK_ENCERRADO','PAYBACK_ACOMPANHAMENTO','ROI','ENCERRAMENTO'].includes(p.status)) return 'SEM_DATA'
   const hoje = new Date(); hoje.setHours(0, 0, 0, 0)
@@ -117,7 +117,7 @@ export default function ProjetosClient({ projetos: initial, diretorias, areas, u
 
   const hoje = new Date()
   const atrasados = projetos.filter(p =>
-    p.data_fim_prev && new Date(p.data_fim_prev) < hoje &&
+    p.data_fim_efetiva && new Date(p.data_fim_efetiva) < hoje &&
     !['ENCERRAMENTO','CANCELADO','SUSPENSO','PAUSADO','PROJETO_CONCLUIDO','PAYBACK_ENCERRADO','PROJETO_ENCERRADO'].includes(p.status)
   ).length
 
@@ -213,7 +213,7 @@ export default function ProjetosClient({ projetos: initial, diretorias, areas, u
             <option value="NO_PRAZO">🟢 No Prazo</option>
             <option value="ATENCAO">🟡 Atenção</option>
             <option value="ATRASADO">🔴 Atrasado</option>
-            <option value="SEM_DATA">⚪ Sem Data</option>
+            <option value="SEM_DATA">⚪ Sem cronograma</option>
           </select>
 
           {gerentesUnicos.length > 0 && (
@@ -302,9 +302,13 @@ export default function ProjetosClient({ projetos: initial, diretorias, areas, u
                     </td>
                     <td className="text-sm">{p.gerente_nome || <span className="text-megag-cinza-texto text-xs">Não definido</span>}</td>
                     <td className="text-sm">
-                      <span className={STATUS_DATA_COR[statusData]}>
-                        {fmtDataBR(p.data_fim_efetiva ?? p.data_fim_prev)}
-                      </span>
+                      {p.data_fim_efetiva ? (
+                        <span className={STATUS_DATA_COR[statusData]}>
+                          {fmtDataBR(p.data_fim_efetiva)}
+                        </span>
+                      ) : (
+                        <span className="text-gray-400 text-xs">Sem cronograma</span>
+                      )}
                     </td>
                     <td className="text-xs text-megag-cinza-texto">
                       {formatDistanceToNow(new Date(p.created_at), { locale: ptBR, addSuffix: true })}
