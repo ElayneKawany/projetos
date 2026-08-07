@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
-import { buscarProjetoPorId, atualizarStatusProjeto, atualizarPrioridadeProjeto, buscarHistoricoStatus, buscarHistoricoPrioridade } from '@/lib/projetos'
-import getDb from '@/lib/db'
+import { buscarProjetoPorId, atualizarStatusProjeto, atualizarPrioridadeProjeto, buscarHistoricoStatus, buscarHistoricoPrioridade, registrarHistoricoAlteracao } from '@/lib/projetos'
+import { TapRepository, ProjetosRepository } from '@/lib/repositories'
 import { registrarAuditoria } from '@/lib/db/auditoria'
 import type { StatusProjeto, Prioridade } from '@/types'
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await getSession()
+  const session = await getSession(request)
   if (!session) return NextResponse.json({ error: 'Não autenticado.' }, { status: 401 })
   const { id } = await params
   const projeto = buscarProjetoPorId(Number(id))
@@ -14,18 +14,13 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
   const historicoStatus = buscarHistoricoStatus(projeto.id)
   const historicoPrioridade = buscarHistoricoPrioridade(projeto.id)
-
-  // TAP versões
-  const db = getDb()
-  const tapVersoes = db.prepare(
-    'SELECT * FROM tap_versoes WHERE projeto_id = ? ORDER BY versao DESC'
-  ).all(projeto.id)
+  const tapVersoes = TapRepository.findAllByProjectId(projeto.id)
 
   return NextResponse.json({ projeto, historicoStatus, historicoPrioridade, tapVersoes })
 }
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await getSession()
+  const session = await getSession(request)
   if (!session) return NextResponse.json({ error: 'Não autenticado.' }, { status: 401 })
   const { id } = await params
   const body = await request.json()
@@ -34,37 +29,46 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   if (!projeto) return NextResponse.json({ error: 'Projeto não encontrado.' }, { status: 404 })
 
   try {
-    // Mudança de status
     if (body.status && body.status !== projeto.status) {
       atualizarStatusProjeto(projeto.id, body.status as StatusProjeto, session.id, body.motivo)
     }
 
-    // Mudança de prioridade
     if (body.prioridade && body.prioridade !== projeto.prioridade) {
       atualizarPrioridadeProjeto(projeto.id, body.prioridade as Prioridade, session.id, body.motivo)
     }
 
-    // Outros campos editáveis
     const camposEditaveis = [
-      'nome','ponto_focal','contato','objetivo','descricao','beneficios',
-      'gerente_id','capex_aprovado','opex_aprovado','data_inicio_prev','data_fim_prev',
-      'classificacao','complexidade',
+      'nome','ponto_focal','contato','objetivo','justificativa','descricao','beneficios',
+      'gerente_id','pmo_responsavel_id','capex_aprovado','opex_aprovado','data_inicio_prev','data_fim_prev',
+      'classificacao','complexidade','prioridade',
     ]
-    const updates: string[] = []
-    const updateParams: Record<string, unknown> = {}
 
+    const dadosParaAtualizar: Record<string, unknown> = {}
     for (const campo of camposEditaveis) {
       if (body[campo] !== undefined) {
-        updates.push(`${campo} = @${campo}`)
-        updateParams[campo] = body[campo]
+        dadosParaAtualizar[campo] = body[campo]
       }
     }
 
-    if (updates.length) {
-      updates.push('updated_at = CURRENT_TIMESTAMP')
-      updateParams.id = projeto.id
-      const db = getDb()
-      db.prepare(`UPDATE projetos SET ${updates.join(', ')} WHERE id = @id`).run(updateParams)
+    if (Object.keys(dadosParaAtualizar).length) {
+      ProjetosRepository.update(projeto.id, dadosParaAtualizar as Parameters<typeof ProjetosRepository.update>[1])
+
+      for (const campo of camposEditaveis) {
+        if (body[campo] !== undefined) {
+          const valorAnterior = String(projeto[campo as keyof typeof projeto] ?? '')
+          const valorNovo     = String(body[campo])
+          if (valorAnterior !== valorNovo) {
+            registrarHistoricoAlteracao({
+              projeto_id: projeto.id,
+              usuario_id: session.id,
+              usuario_nome: session.nome,
+              campo,
+              valor_anterior: valorAnterior || null,
+              valor_novo: valorNovo || null,
+            })
+          }
+        }
+      }
 
       registrarAuditoria({
         usuario_id: session.id,
@@ -80,8 +84,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     }
 
     return NextResponse.json({ success: true })
-  } catch (e) {
-    console.error(e)
+  } catch {
     return NextResponse.json({ error: 'Erro ao atualizar projeto.' }, { status: 500 })
   }
 }

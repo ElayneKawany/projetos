@@ -5,7 +5,7 @@ import { registrarAuditoria } from '@/lib/db/auditoria'
 const COOKIE_NAME = 'megag_pmo_session'
 
 export async function POST(request: NextRequest) {
-  const session = await getSession()
+  const session = await getSession(request)
   if (session) {
     registrarAuditoria({
       usuario_id: session.id,

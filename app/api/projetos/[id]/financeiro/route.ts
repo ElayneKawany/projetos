@@ -1,25 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
-import getDb from '@/lib/db'
+import { FinanceiroRepository } from '@/lib/repositories'
 import { registrarAuditoria } from '@/lib/db/auditoria'
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await getSession()
+  const session = await getSession(request)
   if (!session) return NextResponse.json({ error: 'Não autenticado.' }, { status: 401 })
   const { id } = await params
-  const db = getDb()
-  const lancamentos = db
-    .prepare(
-      `SELECT fl.*, u.nome as criador_nome
-       FROM financeiro_lancamentos fl
-       LEFT JOIN usuarios u ON fl.criado_por = u.id
-       WHERE fl.projeto_id = ?
-       ORDER BY fl.created_at DESC`
-    )
-    .all(Number(id))
+  const lancamentos = FinanceiroRepository.findLancamentos(Number(id))
   return NextResponse.json({ lancamentos })
 }
 
@@ -27,10 +18,9 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await getSession()
+  const session = await getSession(request)
   if (!session) return NextResponse.json({ error: 'Não autenticado.' }, { status: 401 })
   const { id } = await params
-  const db = getDb()
 
   let tipo: string,
     categoria: string,
@@ -94,39 +84,23 @@ export async function POST(
     return NextResponse.json({ error: 'Campos obrigatórios não preenchidos.' }, { status: 400 })
   }
 
-  const result = db
-    .prepare(
-      `INSERT INTO financeiro_lancamentos
-         (projeto_id, tipo, categoria, descricao, fornecedor, numero_doc,
-          valor, data_lancamento, competencia, observacoes, arquivo_nf,
-          status, criado_por)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDENTE', ?)`
-    )
-    .run(
-      Number(id),
-      tipo,
-      categoria,
-      descricao,
-      fornecedor,
-      numero_doc,
-      valor,
-      data_lancamento,
-      competencia,
-      observacoes,
-      arquivo_nf,
-      session.id
-    )
+  const newId = FinanceiroRepository.insertLancamentoRoute({
+    projeto_id: Number(id),
+    tipo, categoria, descricao, fornecedor, numero_doc,
+    valor, data_lancamento, competencia, observacoes,
+    arquivo_nf, criado_por: session.id,
+  })
 
   registrarAuditoria({
     usuario_id: session.id,
     usuario_nome: session.nome,
     acao: 'CREATE',
     entidade: 'financeiro_lancamentos',
-    entidade_id: result.lastInsertRowid as number,
+    entidade_id: Number(newId),
     projeto_id: Number(id),
     descricao: `Lançamento ${tipo} criado: ${descricao} (R$ ${valor})`,
     dados_depois: { tipo, categoria, descricao, valor, data_lancamento },
   })
 
-  return NextResponse.json({ ok: true, id: result.lastInsertRowid })
+  return NextResponse.json({ ok: true, id: newId })
 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { login } from '@/lib/auth'
 import { registrarAuditoria } from '@/lib/db/auditoria'
+import { authLogger } from '@/lib/logger'
 
 const COOKIE_NAME = 'megag_pmo_session'
 
@@ -39,7 +40,7 @@ export async function POST(request: NextRequest) {
     })
     return response
   } catch (e) {
-    console.error('Login error:', e)
+    authLogger.error({ err: e }, 'Login error')
     return NextResponse.json({ error: 'Erro interno.' }, { status: 500 })
   }
 }

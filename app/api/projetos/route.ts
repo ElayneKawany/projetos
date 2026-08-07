@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
 import { buscarProjetos, criarProjeto } from '@/lib/projetos'
+import { apiLogger } from '@/lib/logger'
 
 export async function GET(request: NextRequest) {
-  const session = await getSession()
+  const session = await getSession(request)
   if (!session) return NextResponse.json({ error: 'Não autenticado.' }, { status: 401 })
 
   const { searchParams } = new URL(request.url)
@@ -22,15 +23,19 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const session = await getSession()
+  const session = await getSession(request)
   if (!session) return NextResponse.json({ error: 'Não autenticado.' }, { status: 401 })
 
   try {
     const body = await request.json()
-    const { nome, diretoria_id, area_id, ponto_focal, contato, objetivo, descricao, beneficios, solicitante_id } = body
+    const {
+      nome, diretoria_id, area_id, ponto_focal, contato,
+      objetivo, justificativa, descricao, beneficios,
+      solicitante_id, gerente_id, classificacao, prioridade,
+    } = body
 
-    if (!nome || !diretoria_id || !area_id || !objetivo) {
-      return NextResponse.json({ error: 'Campos obrigatórios: nome, diretoria, área, objetivo.' }, { status: 400 })
+    if (!nome || !diretoria_id || !area_id || !objetivo || !justificativa) {
+      return NextResponse.json({ error: 'Campos obrigatórios: nome, diretoria, área, objetivo e justificativa.' }, { status: 400 })
     }
 
     const projeto = criarProjeto({
@@ -41,14 +46,18 @@ export async function POST(request: NextRequest) {
       ponto_focal,
       contato,
       objetivo,
+      justificativa,
       descricao,
       beneficios,
+      gerente_id: gerente_id ? Number(gerente_id) : undefined,
+      classificacao,
+      prioridade,
       created_by: session.id,
     })
 
     return NextResponse.json({ projeto }, { status: 201 })
   } catch (e) {
-    console.error(e)
+    apiLogger.error({ err: e }, 'Erro não tratado')
     return NextResponse.json({ error: 'Erro ao criar projeto.' }, { status: 500 })
   }
 }

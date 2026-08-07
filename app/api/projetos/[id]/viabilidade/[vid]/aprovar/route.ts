@@ -1,39 +1,105 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
-import getDb from '@/lib/db'
+import { ViabilidadeRepository, ProjetosRepository } from '@/lib/repositories'
+import { buscarWorkflow, processarResposta } from '@/lib/workflow'
 import { registrarAuditoria } from '@/lib/db/auditoria'
+import { buscarProjetoPorId, atualizarStatusProjeto, registrarHistoricoAlteracao } from '@/lib/projetos'
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string; vid: string }> }
 ) {
-  const session = await getSession()
+  const session = await getSession(request)
   if (!session) return NextResponse.json({ error: 'Não autenticado.' }, { status: 401 })
-  const { id, vid } = await params
-  const db = getDb()
-  const viabilidade = db
-    .prepare('SELECT * FROM viabilidade_versoes WHERE id = ? AND projeto_id = ?')
-    .get(Number(vid), Number(id))
-  if (!viabilidade) return NextResponse.json({ error: 'Viabilidade não encontrada.' }, { status: 404 })
-  const body = await request.json()
-  const acao: string = body.acao // 'APROVAR' | 'REVISAO'
-  const novoStatusVib = acao === 'APROVAR' ? 'APROVADO' : 'RASCUNHO'
-  const novoStatusAprov = acao === 'APROVAR' ? 'APROVADO' : 'REJEITADO'
-  db.prepare(
-    `UPDATE viabilidade_versoes SET status = ?, aprovado_por = ?, aprovado_em = datetime('now') WHERE id = ? AND projeto_id = ?`
-  ).run(novoStatusVib, session.id, Number(vid), Number(id))
-  db.prepare(
-    `UPDATE aprovacoes SET status = ?, aprovador_id = ?, aprovado_em = datetime('now'), observacao_apr = ? WHERE referencia_id = ? AND tipo = 'VIABILIDADE'`
-  ).run(novoStatusAprov, session.id, body.observacao || null, Number(vid))
-  registrarAuditoria({
-    usuario_id: session.id,
-    usuario_nome: session.nome,
-    acao: acao === 'APROVAR' ? 'APPROVE' : 'REJECT',
-    entidade: 'viabilidade_versoes',
-    entidade_id: Number(vid),
-    projeto_id: Number(id),
-    descricao: `Viabilidade ${acao === 'APROVAR' ? 'aprovada' : 'enviada para revisão'} por ${session.nome}`,
-    dados_depois: { acao, observacao: body.observacao },
-  })
-  return NextResponse.json({ ok: true })
+
+  const { id: projetoId, vid } = await params
+
+  const viabilidade = ViabilidadeRepository.findByIdAndProjetoId(Number(vid), Number(projetoId))
+  if (!viabilidade) return NextResponse.json({ error: 'Estudo de Viabilidade não encontrado.' }, { status: 404 })
+  if (viabilidade.status !== 'PENDENTE_APROVACAO') {
+    return NextResponse.json({ error: 'Apenas estudos pendentes de aprovação podem ser processados.' }, { status: 400 })
+  }
+
+  const workflow = buscarWorkflow(Number(vid), 'VIABILIDADE')
+  if (!workflow) {
+    return NextResponse.json({ error: 'Nenhum workflow ativo encontrado para este Estudo de Viabilidade.' }, { status: 400 })
+  }
+
+  const etapaAtual = workflow.etapas.find(e => e.ordem === workflow.etapa_atual)
+  if (!etapaAtual) {
+    return NextResponse.json({ error: 'Etapa atual do workflow não encontrada.' }, { status: 400 })
+  }
+  if (etapaAtual.usuario_id !== session.id) {
+    return NextResponse.json({ error: 'Você não é o responsável pela etapa atual do workflow.' }, { status: 403 })
+  }
+
+  const acao = etapaAtual.tipo === 'CIENCIA' ? 'CIENTE' : 'APROVAR'
+  const resultado = processarResposta({ workflow, acao })
+
+  if (resultado === 'ADVANCED') {
+    registrarAuditoria({
+      usuario_id: session.id,
+      usuario_nome: session.nome,
+      acao: acao === 'CIENTE' ? 'CIENCIA' : 'APPROVE_STEP',
+      entidade: 'viabilidade',
+      entidade_id: Number(vid),
+      projeto_id: Number(projetoId),
+      descricao: `${session.nome} ${acao === 'CIENTE' ? 'confirmou ciência' : 'aprovou'} a etapa ${etapaAtual.ordem} do workflow do Estudo de Viabilidade.`,
+      dados_depois: { etapa: etapaAtual.ordem, tipo: etapaAtual.tipo },
+    })
+    return NextResponse.json({ ok: true, resultado })
+  }
+
+  if (resultado === 'COMPLETED') {
+    ViabilidadeRepository.updateStatus(Number(vid), 'APROVADO', session.id)
+
+    ProjetosRepository.updateAprovacao({
+      referencia_id: Number(vid),
+      tipo: 'VIABILIDADE',
+      novo_status: 'APROVADO',
+      aprovador_id: session.id,
+    })
+
+    registrarHistoricoAlteracao({
+      projeto_id: Number(projetoId),
+      usuario_id: session.id,
+      usuario_nome: session.nome,
+      campo: 'viabilidade_status',
+      valor_anterior: 'PENDENTE_APROVACAO',
+      valor_novo: 'APROVADO',
+      acao: 'APPROVE',
+    })
+
+    const projeto = buscarProjetoPorId(Number(projetoId))
+    if (projeto && projeto.status !== 'ESTRUTURACAO') {
+      atualizarStatusProjeto(
+        Number(projetoId),
+        'ESTRUTURACAO',
+        session.id,
+        'Estudo de Viabilidade aprovado — início da Estruturação'
+      )
+      registrarHistoricoAlteracao({
+        projeto_id: Number(projetoId),
+        usuario_id: session.id,
+        usuario_nome: session.nome,
+        campo: 'status',
+        valor_anterior: projeto.status,
+        valor_novo: 'ESTRUTURACAO',
+        acao: 'STATUS_CHANGE',
+      })
+    }
+
+    registrarAuditoria({
+      usuario_id: session.id,
+      usuario_nome: session.nome,
+      acao: 'APPROVE',
+      entidade: 'viabilidade',
+      entidade_id: Number(vid),
+      projeto_id: Number(projetoId),
+      descricao: `Estudo de Viabilidade aprovado por ${session.nome}. Workflow concluído. Projeto avançado para Estruturação.`,
+      dados_depois: { viabilidade_status: 'APROVADO', projeto_status: 'ESTRUTURACAO' },
+    })
+  }
+
+  return NextResponse.json({ ok: true, resultado })
 }

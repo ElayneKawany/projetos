@@ -4,7 +4,7 @@ import getDb from '@/lib/db'
 import { registrarAuditoria } from '@/lib/db/auditoria'
 
 export async function PATCH(request: NextRequest) {
-  const session = await getSession()
+  const session = await getSession(request)
   if (!session) return NextResponse.json({ error: 'Não autenticado.' }, { status: 401 })
   if (!['ADMIN', 'PMO'].includes(session.perfil)) {
     return NextResponse.json({ error: 'Sem permissão.' }, { status: 403 })
