@@ -340,9 +340,12 @@ export async function POST(
           const statusFinal   = t.status_tarefa ?? 'PENDENTE'
           const prazoFinal    = t.prazo_status  ?? null
           const nowISO        = new Date().toISOString().replace('T', ' ').slice(0, 19)
-          // Usa data_conclusao da planilha quando disponível; senão usa timestamp do import
+          const tParsed       = t as { data_conclusao?: string | null }
+          // Prioridade: (1) data real da planilha, (2) data_fim planejada (assume no prazo),
+          // (3) timestamp do import como último recurso. Usar nowISO quando sem data real
+          // faz calcStatusAuto comparar hoje > data_fim passada e marcar como ATRASADO.
           const dataConclusao = statusFinal === 'CONCLUIDA'
-            ? ((t as { data_conclusao?: string | null }).data_conclusao ?? nowISO)
+            ? (tParsed.data_conclusao ?? t.data_fim ?? nowISO)
             : null
 
           const tarefaDbId = Number(CronogramaRepository.insertTarefa({
