@@ -340,7 +340,10 @@ export async function POST(
           const statusFinal   = t.status_tarefa ?? 'PENDENTE'
           const prazoFinal    = t.prazo_status  ?? null
           const nowISO        = new Date().toISOString().replace('T', ' ').slice(0, 19)
-          const dataConclusao = statusFinal === 'CONCLUIDA' ? nowISO : null
+          // Usa data_conclusao da planilha quando disponível; senão usa timestamp do import
+          const dataConclusao = statusFinal === 'CONCLUIDA'
+            ? ((t as { data_conclusao?: string | null }).data_conclusao ?? nowISO)
+            : null
 
           const tarefaDbId = Number(CronogramaRepository.insertTarefa({
             cronograma_id:        cronogramaId,

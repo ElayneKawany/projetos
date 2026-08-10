@@ -46,6 +46,8 @@ export interface TarefaParseada {
   tipo_macro: string
   data_inicio: string | null
   data_fim: string | null
+  /** Data real de conclusão (coluna "Data Conclusão" — opcional na planilha). */
+  data_conclusao: string | null
   duracao_dias: number | null
   responsavel_id: number | null
   responsavel_nome_ext: string | null
@@ -53,8 +55,12 @@ export interface TarefaParseada {
   executor_nome_ext: string | null
   percentual: number
   status_tarefa: string
-  /** 'NO_PRAZO' quando importado como CONCLUIDA; null caso contrário. */
-  prazo_status: 'NO_PRAZO' | null
+  /**
+   * 'NO_PRAZO'     — CONCLUIDA com data_conclusao ≤ data_fim (ou sem data_conclusao).
+   * 'FORA_DO_PRAZO'— CONCLUIDA com data_conclusao > data_fim.
+   * null           — tarefa não concluída.
+   */
+  prazo_status: 'NO_PRAZO' | 'FORA_DO_PRAZO' | null
   observacoes: string | null
   ordem: number
   /**
@@ -118,20 +124,21 @@ function normChave(s: string): string {
 }
 
 const COLUNAS_OFICIAIS: Record<string, string> = {
-  wbs:         'wbs',
-  nivel:       'nivel',
-  nome:        'nome',
-  descricao:   'descricao',
-  tipo:        'tipo',
-  criticidade: 'criticidade',
-  responsavel: 'responsavel',
-  executor:    'executor',
-  datainicio:  'data_inicio',
-  datafim:     'data_fim',
-  percentual:  'percentual',
-  status:      'status',
-  observacoes: 'observacoes',
-  tipomacro:   'tipo_macro',
+  wbs:              'wbs',
+  nivel:            'nivel',
+  nome:             'nome',
+  descricao:        'descricao',
+  tipo:             'tipo',
+  criticidade:      'criticidade',
+  responsavel:      'responsavel',
+  executor:         'executor',
+  datainicio:       'data_inicio',
+  datafim:          'data_fim',
+  dataconclusao:    'data_conclusao',  // opcional — data real de conclusão
+  percentual:       'percentual',
+  status:           'status',
+  observacoes:      'observacoes',
+  tipomacro:        'tipo_macro',
 }
 
 // Apenas Nome e Nível são verdadeiramente obrigatórios como colunas.
@@ -234,6 +241,25 @@ function normalizarCriticidade(valor: unknown): string {
   if (s === 'alta' || s === 'high')        return 'ALTA'
   if (s === 'baixa' || s === 'low')        return 'BAIXA'
   return 'NORMAL'
+}
+
+/**
+ * Calcula prazo_status de uma tarefa importada.
+ *
+ * Regras:
+ *  - Tarefa não concluída → null
+ *  - CONCLUIDA sem data_conclusao → 'NO_PRAZO' (conservador, compatibilidade)
+ *  - CONCLUIDA com data_conclusao ≤ data_fim → 'NO_PRAZO'
+ *  - CONCLUIDA com data_conclusao > data_fim → 'FORA_DO_PRAZO'
+ */
+function calcularPrazoStatusImportacao(
+  statusTarefa: string,
+  dataFim: string | null,
+  dataConclusao: string | null,
+): 'NO_PRAZO' | 'FORA_DO_PRAZO' | null {
+  if (statusTarefa !== 'CONCLUIDA') return null
+  if (!dataConclusao || !dataFim) return 'NO_PRAZO'
+  return dataConclusao <= dataFim ? 'NO_PRAZO' : 'FORA_DO_PRAZO'
 }
 
 function normalizarStatus(valor: unknown): string {
@@ -407,8 +433,9 @@ export function parsearExcelCronograma(
     }
 
     // ── Datas (opcionais — NULL quando vazio ou inválido) ────────────────────
-    const dataInicio = parsearDataExcel(getCol('data_inicio'))
-    const dataFim    = parsearDataExcel(getCol('data_fim'))
+    const dataInicio    = parsearDataExcel(getCol('data_inicio'))
+    const dataFim       = parsearDataExcel(getCol('data_fim'))
+    const dataConclusao = parsearDataExcel(getCol('data_conclusao'))
 
     // Avisa (não bloqueia) quando a data veio preenchida mas não foi reconhecida
     const rawInicio = getCol('data_inicio')
@@ -418,6 +445,10 @@ export function parsearExcelCronograma(
     const rawFim = getCol('data_fim')
     if (rawFim != null && rawFim !== '' && !dataFim) {
       warnings.push(`Linha ${numLinha}: Data Fim "${rawFim}" não reconhecida — gravado como NULL.`)
+    }
+    const rawConclusao = getCol('data_conclusao')
+    if (rawConclusao != null && rawConclusao !== '' && !dataConclusao) {
+      warnings.push(`Linha ${numLinha}: Data Conclusão "${rawConclusao}" não reconhecida — gravado como NULL.`)
     }
 
     // ── Executor (opcional) ──────────────────────────────────────────────────
@@ -474,6 +505,7 @@ export function parsearExcelCronograma(
       tipo_macro:           tipoMacro,
       data_inicio:          dataInicio,
       data_fim:             dataFim,
+      data_conclusao:       dataConclusao,
       duracao_dias:         duracaoDias,
       responsavel_id:       responsavelId,
       responsavel_nome_ext: respNome || null,
@@ -481,7 +513,7 @@ export function parsearExcelCronograma(
       executor_nome_ext:    executorNomeExt,
       percentual:           statusTarefa === 'CONCLUIDA' ? 100 : percentual,
       status_tarefa:        statusTarefa,
-      prazo_status:         statusTarefa === 'CONCLUIDA' ? 'NO_PRAZO' : null,
+      prazo_status:         calcularPrazoStatusImportacao(statusTarefa, dataFim, dataConclusao),
       observacoes,
       ordem:                ordemAtual,
       parentOrdinal,
