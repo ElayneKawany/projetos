@@ -244,29 +244,42 @@ function normalizarCriticidade(valor: unknown): string {
 }
 
 /**
+ * Extrai hint de prazo a partir do texto bruto da célula Status.
+ * Usado quando a planilha codifica status detalhado como texto livre,
+ * ex.: "CONCLUÍDO DENTRO DO PRAZO" ou "CONCLUÍDO ATRASADO".
+ */
+function extrairPrazoHint(statusRaw: unknown): 'NO_PRAZO' | 'FORA_DO_PRAZO' | null {
+  if (!statusRaw) return null
+  const s = normChave(String(statusRaw))
+  if (s.includes('noprazo') || s.includes('dentrodoprazo') || s.includes('noprazo')) return 'NO_PRAZO'
+  if (s.includes('atrasado') || s.includes('atraso') || s.includes('foradoprazo'))    return 'FORA_DO_PRAZO'
+  return null
+}
+
+/**
  * Calcula prazo_status de uma tarefa importada.
  *
- * Regras:
- *  - Tarefa não concluída → null
- *  - CONCLUIDA sem data_conclusao → 'NO_PRAZO' (conservador, compatibilidade)
- *  - CONCLUIDA com data_conclusao ≤ data_fim → 'NO_PRAZO'
- *  - CONCLUIDA com data_conclusao > data_fim → 'FORA_DO_PRAZO'
+ * Prioridade: (1) comparação date_conclusao vs data_fim, (2) hint do texto de status,
+ * (3) conservador NO_PRAZO para tarefas concluídas sem data real.
  */
 function calcularPrazoStatusImportacao(
   statusTarefa: string,
   dataFim: string | null,
   dataConclusao: string | null,
+  prazoHint?: 'NO_PRAZO' | 'FORA_DO_PRAZO' | null,
 ): 'NO_PRAZO' | 'FORA_DO_PRAZO' | null {
   if (statusTarefa !== 'CONCLUIDA') return null
-  if (!dataConclusao || !dataFim) return 'NO_PRAZO'
-  return dataConclusao <= dataFim ? 'NO_PRAZO' : 'FORA_DO_PRAZO'
+  if (dataConclusao && dataFim) return dataConclusao <= dataFim ? 'NO_PRAZO' : 'FORA_DO_PRAZO'
+  return prazoHint ?? 'NO_PRAZO'
 }
 
 function normalizarStatus(valor: unknown): string {
   if (!valor) return 'PENDENTE'
   const s = normChave(String(valor))
   if (s === 'emandamento' || s === 'iniciada' || s === 'emexecucao') return 'EM_ANDAMENTO'
-  if (s === 'concluida' || s === 'concluido' || s === 'finalizada')  return 'CONCLUIDA'
+  // startsWith cobre variantes: "concluida", "concluido", "concluidentrodoprazo", "concluidoatrasado" etc.
+  if (s.startsWith('concluida') || s.startsWith('concluido') || s === 'finalizada') return 'CONCLUIDA'
+  if (s === 'pendente') return 'PENDENTE'
   return 'PENDENTE'
 }
 
@@ -465,7 +478,9 @@ export function parsearExcelCronograma(
     const descricao    = getCol('descricao')   != null ? String(getCol('descricao')).trim()   || null : null
     const observacoes  = getCol('observacoes') != null ? String(getCol('observacoes')).trim() || null : null
     const percentual   = normalizarPercentual(getCol('percentual'))
-    const statusTarefa = normalizarStatus(getCol('status'))
+    const statusRaw    = getCol('status')
+    const statusTarefa = normalizarStatus(statusRaw)
+    const prazoHint    = extrairPrazoHint(statusRaw)
     const tipo         = normalizarTipo(getCol('tipo'))
     const criticidade  = normalizarCriticidade(getCol('criticidade'))
     const duracaoDias  = calcularDuracao(dataInicio, dataFim)
@@ -513,7 +528,7 @@ export function parsearExcelCronograma(
       executor_nome_ext:    executorNomeExt,
       percentual:           statusTarefa === 'CONCLUIDA' ? 100 : percentual,
       status_tarefa:        statusTarefa,
-      prazo_status:         calcularPrazoStatusImportacao(statusTarefa, dataFim, dataConclusao),
+      prazo_status:         calcularPrazoStatusImportacao(statusTarefa, dataFim, dataConclusao, prazoHint),
       observacoes,
       ordem:                ordemAtual,
       parentOrdinal,
