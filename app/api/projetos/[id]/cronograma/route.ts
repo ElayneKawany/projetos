@@ -337,15 +337,28 @@ export async function POST(
             ? (ordemToId.get(t.parentOrdinal) ?? null)
             : null
 
-          const statusFinal   = t.status_tarefa ?? 'PENDENTE'
-          const prazoFinal    = t.prazo_status  ?? null
-          const nowISO        = new Date().toISOString().replace('T', ' ').slice(0, 19)
-          const tParsed       = t as { data_conclusao?: string | null }
-          // Prioridade: (1) data real da planilha, (2) data_fim planejada (assume no prazo),
-          // (3) timestamp do import como último recurso. Usar nowISO quando sem data real
-          // faz calcStatusAuto comparar hoje > data_fim passada e marcar como ATRASADO.
-          const dataConclusao = statusFinal === 'CONCLUIDA'
-            ? (tParsed.data_conclusao ?? t.data_fim ?? nowISO)
+          const nowISO   = new Date().toISOString().replace('T', ' ').slice(0, 19)
+          const today    = nowISO.slice(0, 10)   // 'YYYY-MM-DD'
+          const tParsed  = t as { data_conclusao?: string | null }
+
+          // Tarefa com data_fim futura e sem data real de conclusão não pode ser
+          // considerada concluída — rebaixar para EM_ANDAMENTO evita que planilhas
+          // com datas planejadas no futuro apareçam como "Concluída no prazo".
+          const temDataRealConclusao = !!tParsed.data_conclusao
+          const dataFimFutura        = !!t.data_fim && t.data_fim > today
+          const statusRaw            = t.status_tarefa ?? 'PENDENTE'
+          const statusFinal          = statusRaw === 'CONCLUIDA' && dataFimFutura && !temDataRealConclusao
+            ? 'EM_ANDAMENTO'
+            : statusRaw
+
+          const prazoFinal = statusFinal === 'CONCLUIDA' ? (t.prazo_status ?? null) : null
+
+          // Prioridade: (1) data real da planilha, (2) data_fim planejada se for passada
+          // (assume concluída no prazo), (3) nowISO como último recurso.
+          // Não usar data_fim futura como data_conclusao: task ainda não foi concluída.
+          const dataFimPassada = t.data_fim && t.data_fim <= today ? t.data_fim : null
+          const dataConclusao  = statusFinal === 'CONCLUIDA'
+            ? (tParsed.data_conclusao ?? dataFimPassada ?? nowISO)
             : null
 
           const tarefaDbId = Number(CronogramaRepository.insertTarefa({
