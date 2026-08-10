@@ -500,12 +500,22 @@ function calcFaseSummaryFromList(
     data_inicio: '—', data_fim: '—', dias: '—', percentual: 0, status: 'PENDENTE', totalFilhos: 0,
   }
 
+  const fase = lista[faseIdx]
   const filhos: CronogramaTarefa[] = []
   for (let i = faseIdx + 1; i < lista.length; i++) {
     if (lista[i].nivel === 'FASE') break
     if (lista[i].nivel === 'TAREFA') filhos.push(lista[i])
   }
-  if (!filhos.length) return EMPTY
+  if (!filhos.length) {
+    // Fase sem filhos visíveis: usa status gravado no DB em vez de forçar PENDENTE.
+    // Cobre o caso de fases cujas tarefas foram removidas mas a fase já foi concluída.
+    const dbStatus = fase?.status?.toUpperCase()
+    const faseStatus: FaseStatus = dbStatus === 'CONCLUIDA' ? 'CONCLUIDA'
+      : dbStatus === 'EM_ANDAMENTO'                         ? 'EM_ANDAMENTO'
+      : dbStatus === 'ATRASADA'                             ? 'ATRASADA'
+      : 'PENDENTE'
+    return { ...EMPTY, status: faseStatus }
+  }
 
   // Converter datas para ISO
   const toISO = (d: string | undefined): string | null => {
