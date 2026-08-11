@@ -119,54 +119,56 @@ interface Props {
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const SLIDES = [
-  { id: 'abertura',      label: 'Abertura',                       icon: Presentation },
-  { id: 'resumo',        label: 'Resumo Executivo',                icon: TrendingUp },
-  { id: 'propostas',     label: 'Proposta / Ideia',                icon: FileText },
-  { id: 'viabilidade',   label: 'Estudo de Viabilidade',           icon: BarChart2 },
-  { id: 'execucao',      label: 'Em Execução',                     icon: Play },
-  { id: 'payback',       label: 'Acomp. de Payback',               icon: TrendingUp },
-  { id: 'pausados',      label: 'Pausados',                        icon: Pause },
-  { id: 'concluidos',    label: 'Concluídos',                      icon: Check },
-  { id: 'decisoes',      label: 'Decisões',                        icon: CheckCircle },
-  { id: 'pendencias',    label: 'Pendências',                      icon: Clock },
-  { id: 'ata',           label: 'Ata Automática',                  icon: FileCheck },
-  { id: 'historico',     label: 'Histórico',                       icon: History },
+  { id: 'abertura',    label: 'Abertura',            icon: Presentation },
+  { id: 'resumo',      label: 'Resumo Executivo',    icon: TrendingUp },
+  { id: 'financeira',  label: 'Dir. Financeira',     icon: Building2 },
+  { id: 'comercial',   label: 'Dir. Comercial',      icon: Building2 },
+  { id: 'marketing',   label: 'MKT e Novos Neg.',    icon: Building2 },
+  { id: 'logistica',   label: 'Dir. Logística',      icon: Building2 },
+  { id: 'decisoes',    label: 'Decisões',            icon: CheckCircle },
+  { id: 'pendencias',  label: 'Pendências',          icon: Clock },
+  { id: 'ata',         label: 'Ata Automática',      icon: FileCheck },
+  { id: 'historico',   label: 'Histórico',           icon: History },
 ] as const
 
 type SlideId = (typeof SLIDES)[number]['id']
 
 type CapaId =
-  | 'capa_propostas' | 'capa_viabilidade' | 'capa_execucao'
-  | 'capa_payback'   | 'capa_pausados'    | 'capa_concluidos'
+  | 'capa_financeira' | 'capa_comercial'
+  | 'capa_marketing'  | 'capa_logistica'
 
 type AnySlideId = SlideId | CapaId
 
 const CAPA_PARA_SLIDE: Record<CapaId, SlideId> = {
-  capa_propostas:    'propostas',
-  capa_viabilidade:  'viabilidade',
-  capa_execucao:     'execucao',
-  capa_payback:      'payback',
-  capa_pausados:     'pausados',
-  capa_concluidos:   'concluidos',
+  capa_financeira: 'financeira',
+  capa_comercial:  'comercial',
+  capa_marketing:  'marketing',
+  capa_logistica:  'logistica',
 }
 
 interface CapaConfig {
   capaId: CapaId
   titulo: string
   subtitulo: string
+  rotulo?: string
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   icon: React.ComponentType<any>
   cor: string
 }
 
 const CAPA_CONFIGS: CapaConfig[] = [
-  { capaId: 'capa_propostas',    titulo: 'Proposta / Ideia',       subtitulo: 'Análise e aprovação de novas ideias',         icon: FileText,   cor: '#2563EB' },
-  { capaId: 'capa_viabilidade',  titulo: 'Estudo de Viabilidade',  subtitulo: 'Análise financeira e técnica dos projetos',   icon: BarChart2,  cor: '#7C3AED' },
-  { capaId: 'capa_execucao',     titulo: 'Em Execução',            subtitulo: 'Projetos em andamento',                      icon: Play,       cor: '#059669' },
-  { capaId: 'capa_payback',      titulo: 'Acomp. de Payback',      subtitulo: 'Projetos em fase de retorno do investimento', icon: TrendingUp, cor: '#0891B2' },
-  { capaId: 'capa_pausados',     titulo: 'Projetos Pausados',      subtitulo: 'Projetos temporariamente suspensos',         icon: Pause,      cor: '#6B7280' },
-  { capaId: 'capa_concluidos',   titulo: 'Projetos Concluídos',    subtitulo: 'Projetos finalizados com sucesso',           icon: Check,      cor: '#15803D' },
+  { capaId: 'capa_financeira', titulo: 'Diretoria Financeira',    subtitulo: 'Projetos da Diretoria Financeira',       rotulo: 'Diretoria', icon: Building2, cor: '#003087' },
+  { capaId: 'capa_comercial',  titulo: 'Diretoria Comercial',     subtitulo: 'Projetos da Diretoria Comercial',        rotulo: 'Diretoria', icon: Building2, cor: '#0891B2' },
+  { capaId: 'capa_marketing',  titulo: 'MKT e Novos Negócios',    subtitulo: 'Projetos de Marketing e Novos Negócios', rotulo: 'Diretoria', icon: Building2, cor: '#7C3AED' },
+  { capaId: 'capa_logistica',  titulo: 'Diretoria Logística',     subtitulo: 'Projetos da Diretoria Logística',        rotulo: 'Diretoria', icon: Building2, cor: '#059669' },
 ]
+
+const DIRETORIA_NOMES: Record<'financeira' | 'comercial' | 'marketing' | 'logistica', string> = {
+  financeira: 'Diretoria Financeira',
+  comercial:  'Diretoria Comercial',
+  marketing:  'MKT e Novos Negócios',
+  logistica:  'Diretoria Logística',
+}
 
 function getAnySlideLabel(id?: AnySlideId): string | undefined {
   if (!id) return undefined
@@ -331,53 +333,34 @@ export default function ComiteDetalheClient({
   }
 
   // ── Grouped project stats ────────────────────────────────────────────────
-  const porStatus = todosProjetos.reduce<Record<string, ProjetoResumo[]>>((acc, p) => {
-    acc[p.status] = [...(acc[p.status] || []), p]
-    return acc
-  }, {})
-
   const porDiretoria = todosProjetos.reduce<Record<string, ProjetoResumo[]>>((acc, p) => {
     const dir = p.diretoria || 'Sem Diretoria'
     acc[dir] = [...(acc[dir] || []), p]
     return acc
   }, {})
 
-  const propostas = [...(porStatus['PROPOSTA'] || []), ...(porStatus['TRIAGEM'] || []), ...(porStatus['COMITE_IDEIAS'] || [])]
-  const emViabilidade = [...(porStatus['VIABILIDADE'] || []), ...(porStatus['COMPLEMENTACAO_TAP'] || []), ...(porStatus['APROVACAO'] || [])]
-  const emEstruturacao = [...(porStatus['ESTRUTURACAO'] || []), ...(porStatus['CRONOGRAMA'] || [])]
-  const emExecucao = [...(porStatus['EXECUCAO'] || []), ...(porStatus['GOLIVE'] || [])]
-  const emPayback = porStatus['ROI'] || []
-  const pausados = porStatus['SUSPENSO'] || []
-  const concluidos = porStatus['ENCERRAMENTO'] || []
-
   // Map de slide → lista de projetos para calcular capas
   const slideProjetosMap: Record<SlideId, ProjetoResumo[]> = {
-    abertura: [], resumo: [], decisoes: [], pendencias: [], ata: [], historico: [],
-    propostas: propostas,
-    viabilidade: emViabilidade,
-    execucao: emExecucao,
-    payback: emPayback,
-    pausados: pausados,
-    concluidos: concluidos,
+    abertura:   [],
+    resumo:     [],
+    financeira: porDiretoria['Diretoria Financeira'] || [],
+    comercial:  porDiretoria['Diretoria Comercial']  || [],
+    marketing:  porDiretoria['MKT e Novos Negócios']  || [],
+    logistica:  porDiretoria['Diretoria Logística']  || [],
+    decisoes:   [],
+    pendencias: [],
+    ata:        [],
+    historico:  [],
   }
 
-  // Lista dinâmica de slides com capas inseridas antes de cada etapa que tem projetos
+  // Lista dinâmica de slides com capas inseridas antes de cada diretoria que tem projetos
   const computedSlides = React.useMemo(() => {
     const list: AnySlideId[] = []
     for (const slide of SLIDES) {
-      // Inserir capa antes do slide se houver uma configurada e a etapa tiver projetos
-      const capaEntry = CAPA_CONFIGS.find(c => CAPA_PARA_SLIDE[c.capaId] === slide.id)
-      if (capaEntry && slideProjetosMap[slide.id]?.length > 0) {
-        list.push(capaEntry.capaId)
-      }
       list.push(slide.id)
     }
     return list
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    propostas.length, emViabilidade.length,
-    emExecucao.length, emPayback.length, pausados.length, concluidos.length,
-  ])
+  }, [])
 
   const computedSlideIdx = computedSlides.indexOf(activeSlide)
   // O slide "pai" da capa ou do próprio slide (para highlight da sidebar)
@@ -451,55 +434,26 @@ export default function ComiteDetalheClient({
           onRefresh={refresh}
         />
       )
-      case 'propostas': {
+      case 'financeira':
+      case 'comercial':
+      case 'marketing':
+      case 'logistica': {
+        const dirNome = DIRETORIA_NOMES[slideId as keyof typeof DIRETORIA_NOMES]
         const nextIdx = computedSlideIdx + 1
         const nextId = computedSlides[nextIdx]
         const nextLabel = nextId ? getAnySlideLabel(nextId) : undefined
         return (
-          <SlidePropostasDetalhe
-            projetos={propostas}
-            detalhe={projetosPropostaDetalhe}
+          <SlideDiretoria
+            diretoriaNome={dirNome}
+            projetos={slideProjetosMap[slideId]}
+            projetosPropostaDetalhe={projetosPropostaDetalhe}
+            projetosViabilidadeDetalhe={projetosViabilidadeDetalhe}
+            projetosExecucaoDetalhe={projetosExecucaoDetalhe}
+            macroTarefasExecucao={macroTarefasExecucao}
             diretorias={diretorias}
-            comiteId={comite.id}
-            decisoes={decisoes}
-            podeGerenciar={podeGerenciar}
-            onRefresh={refresh}
-            onNextSlide={nextId ? () => setActiveSlide(nextId) : undefined}
-            nextSlideLabel={nextLabel}
-          />
-        )
-      }
-      case 'viabilidade': {
-        const nextIdx = computedSlideIdx + 1
-        const nextId = computedSlides[nextIdx]
-        const nextLabel = nextId ? getAnySlideLabel(nextId) : undefined
-        return (
-          <SlideViabilidadeDetalhe
-            projetos={emViabilidade}
-            detalhe={projetosViabilidadeDetalhe}
-            diretorias={diretorias}
-            comiteId={comite.id}
-            decisoes={decisoes}
-            podeGerenciar={podeGerenciar}
-            onRefresh={refresh}
-            onNextSlide={nextId ? () => setActiveSlide(nextId) : undefined}
-            nextSlideLabel={nextLabel}
-          />
-        )
-      }
-      case 'execucao': {
-        const nextIdx = computedSlideIdx + 1
-        const nextId = computedSlides[nextIdx]
-        const nextLabel = nextId ? getAnySlideLabel(nextId) : undefined
-        return (
-          <SlideExecucaoDetalhe
-            projetos={emExecucao}
-            detalhe={projetosExecucaoDetalhe}
-            tarefas={macroTarefasExecucao}
             pendencias={pendencias}
-            diretorias={diretorias}
-            comiteId={comite.id}
             decisoes={decisoes}
+            comiteId={comite.id}
             podeGerenciar={podeGerenciar}
             onRefresh={refresh}
             onNextSlide={nextId ? () => setActiveSlide(nextId) : undefined}
@@ -507,9 +461,6 @@ export default function ComiteDetalheClient({
           />
         )
       }
-      case 'payback': return <SlideProjetosPorDiretoria titulo="Acompanhamento de Payback" projetos={emPayback} cor="#0891B2" diretorias={diretorias} />
-      case 'pausados': return <SlideProjetosPorDiretoria titulo="Projetos Pausados" projetos={pausados} cor="#6B7280" diretorias={diretorias} />
-      case 'concluidos': return <SlideProjetosPorDiretoria titulo="Projetos Concluídos" projetos={concluidos} cor="#15803D" diretorias={diretorias} />
       case 'pendencias': return (
         <SlidePendencias
           pendencias={pendencias} podeGerenciar={podeGerenciar}
@@ -675,10 +626,7 @@ export default function ComiteDetalheClient({
           <nav className="flex flex-col gap-0.5">
             {SLIDES.map((slide) => {
               const Icon = slide.icon
-              // Se há capa para este slide e a etapa tem projetos, navegar para a capa
-              const capaEntry = CAPA_CONFIGS.find(c => CAPA_PARA_SLIDE[c.capaId] === slide.id)
-              const temCapa = capaEntry && (slideProjetosMap[slide.id]?.length ?? 0) > 0
-              const destino: AnySlideId = temCapa ? capaEntry.capaId : slide.id
+              const destino: AnySlideId = slide.id
               return (
                 <button
                   key={slide.id}
@@ -1778,6 +1726,8 @@ function SlidePropostasDetalhe({
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (modalTipo) return
+      const t = e.target as HTMLElement
+      if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable) return
       if (e.key === 'ArrowRight') {
         e.stopPropagation()
         setCurrentIdx(i => Math.min(pages.length - 1, i + 1))
@@ -2371,6 +2321,8 @@ function SlideViabilidadeDetalhe({
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (modalTipo) return
+      const t = e.target as HTMLElement
+      if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable) return
       if (e.key === 'ArrowRight') { e.stopPropagation(); setCurrentIdx(i => Math.min(pages.length - 1, i + 1)) }
       else if (e.key === 'ArrowLeft') { e.stopPropagation(); setCurrentIdx(i => Math.max(0, i - 1)) }
     }
@@ -3268,6 +3220,18 @@ function SlideExecucaoDetalhe({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projetos, diretorias])
 
+  // Keyboard navigation — capture phase, same pattern as SlidePropostasDetalhe
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement
+      if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable) return
+      if (e.key === 'ArrowRight') { e.stopPropagation(); setIdx(i => Math.min(pages.length - 1, i + 1)) }
+      else if (e.key === 'ArrowLeft') { e.stopPropagation(); setIdx(i => Math.max(0, i - 1)) }
+    }
+    window.addEventListener('keydown', handler, true)
+    return () => window.removeEventListener('keydown', handler, true)
+  }, [pages.length])
+
   if (projetos.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-gray-400">
@@ -3770,6 +3734,212 @@ function SlideExecucaoDetalhe({
   )
 }
 
+// ─── Slide: Diretoria (agrupa todos os status-macro de uma diretoria) ─────────
+
+const MACRO_GRUPOS_DIRETORIA = [
+  { macro: 'MACRO_PROPOSTA',     label: 'Proposta / Ideia',       cor: '#6B7280', statuses: ['PROPOSTA','TRIAGEM','COMITE_IDEIAS'] },
+  { macro: 'MACRO_VIABILIDADE',  label: 'Estudo de Viabilidade',  cor: '#7C3AED', statuses: ['VIABILIDADE','COMPLEMENTACAO_TAP','APROVACAO'] },
+  { macro: 'MACRO_ESTRUTURACAO', label: 'Estruturação',           cor: '#EA580C', statuses: ['ESTRUTURACAO','CRONOGRAMA'] },
+  { macro: 'MACRO_EXECUCAO',     label: 'Execução',               cor: '#16A34A', statuses: ['EXECUCAO','GOLIVE'] },
+  { macro: 'MACRO_PAUSADO',      label: 'Pausado',                cor: '#D97706', statuses: ['PAUSADO','SUSPENSO'] },
+  { macro: 'MACRO_CANCELADO',    label: 'Cancelado',              cor: '#DC2626', statuses: ['CANCELADO'] },
+  { macro: 'MACRO_CONCLUIDO',    label: 'Concluído',              cor: '#059669', statuses: ['ENCERRAMENTO','PROJETO_CONCLUIDO','PROJETO_ENCERRADO'] },
+  { macro: 'MACRO_PAYBACK',      label: 'Payback',                cor: '#0891B2', statuses: ['ROI','PAYBACK_ACOMPANHAMENTO','PAYBACK_ENCERRADO'] },
+] as const
+
+function SlideDiretoria({
+  diretoriaNome, projetos, projetosPropostaDetalhe, projetosViabilidadeDetalhe,
+  projetosExecucaoDetalhe, macroTarefasExecucao, diretorias, pendencias,
+  decisoes, comiteId, podeGerenciar, onRefresh, onNextSlide, nextSlideLabel,
+}: {
+  diretoriaNome: string
+  projetos: ProjetoResumo[]
+  projetosPropostaDetalhe: ProjetoPropostaDetalhe[]
+  projetosViabilidadeDetalhe: ProjetoViabilidadeDetalhe[]
+  projetosExecucaoDetalhe: ProjetoExecucaoDetalhe[]
+  macroTarefasExecucao: MacroTarefa[]
+  diretorias: { id: number; nome: string }[]
+  pendencias: ComitePendencia[]
+  decisoes: ComiteDecisao[]
+  comiteId: number
+  podeGerenciar: boolean
+  onRefresh: () => Promise<void>
+  onNextSlide?: () => void
+  nextSlideLabel?: string
+}) {
+  const sigla = getSigla(diretoriaNome)
+
+  // Nível 2: macro selecionado (null = visão macro da diretoria)
+  const [selectedMacro, setSelectedMacro] = useState<string | null>(null)
+
+  // ── Cabeçalho comum ──────────────────────────────────────────────────────
+  const header = (
+    <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 rounded-xl bg-[#003087] flex items-center justify-center shrink-0">
+          <span className="text-white text-xs font-bold">{sigla}</span>
+        </div>
+        <div>
+          <h2 className="text-xl font-bold text-[#003087]">{diretoriaNome}</h2>
+          <p className="text-sm text-gray-500">
+            {projetos.length} {projetos.length === 1 ? 'projeto' : 'projetos'}
+          </p>
+        </div>
+      </div>
+      {!selectedMacro && onNextSlide && (
+        <button
+          onClick={onNextSlide}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white bg-[#003087] hover:bg-[#00246b] transition"
+        >
+          {nextSlideLabel || 'Próxima Diretoria'} <ChevronRight size={16} />
+        </button>
+      )}
+    </div>
+  )
+
+  // ── NÍVEL 2: Visão macro — fase + contagem ───────────────────────────────
+  if (!selectedMacro) {
+    if (projetos.length === 0) {
+      return (
+        <div>
+          {header}
+          <div className="text-center py-16 text-gray-400">
+            <Building2 size={40} className="mx-auto mb-3 opacity-30" />
+            <p className="text-sm">Nenhum projeto nesta diretoria</p>
+          </div>
+        </div>
+      )
+    }
+
+    return (
+      <div>
+        {header}
+        <div className="divide-y divide-gray-100 rounded-2xl border border-gray-200 overflow-hidden">
+          {MACRO_GRUPOS_DIRETORIA.map(grupo => {
+            const count = projetos.filter(p =>
+              (grupo.statuses as readonly string[]).includes(p.status)
+            ).length
+            const clicavel = count > 0
+
+            return (
+              <button
+                key={grupo.macro}
+                onClick={() => clicavel && setSelectedMacro(grupo.macro)}
+                disabled={!clicavel}
+                className={`w-full flex items-center justify-between px-5 py-4 text-left transition
+                  ${clicavel
+                    ? 'bg-white hover:bg-gray-50 cursor-pointer'
+                    : 'bg-white/60 cursor-default opacity-40'
+                  }`}
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: grupo.cor }} />
+                  <span className="font-medium text-gray-800">{grupo.label}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={`text-sm font-semibold ${clicavel ? 'text-gray-700' : 'text-gray-400'}`}>
+                    {count} {count === 1 ? 'projeto' : 'projetos'}
+                  </span>
+                  {clicavel && <ChevronRight size={16} className="text-gray-400" />}
+                </div>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    )
+  }
+
+  // ── NÍVEL 3: Apresentação projeto-a-projeto da fase selecionada ─────────
+  const grupoAtual = MACRO_GRUPOS_DIRETORIA.find(g => g.macro === selectedMacro)!
+  const projetosGrupo = projetos.filter(p =>
+    (grupoAtual.statuses as readonly string[]).includes(p.status)
+  )
+
+  // Dados de detalhe filtrados para os projetos desta diretoria/fase
+  const propostaDetalheFiltrado   = projetosPropostaDetalhe.filter(d => projetosGrupo.some(p => p.id === d.id))
+  const viabilidadeDetalheFiltrado = projetosViabilidadeDetalhe.filter(d => projetosGrupo.some(p => p.id === d.id))
+  const execucaoDetalheFiltrado   = projetosExecucaoDetalhe.filter(d => projetosGrupo.some(p => p.id === d.id))
+  const tarefasFiltradas          = macroTarefasExecucao.filter(t => projetosGrupo.some(p => p.id === t.projeto_id))
+
+  // Botão "← Fases" injetado como onNextSlide com label diferente
+  // Os componentes existentes já têm navegação interna projeto-a-projeto
+  const voltarFases = () => setSelectedMacro(null)
+
+  return (
+    <div>
+      {header}
+
+      {/* Botão voltar para fases */}
+      <div className="flex items-center gap-2 mb-4 -mt-2">
+        <button
+          onClick={voltarFases}
+          className="flex items-center gap-1 text-sm text-[#003087] hover:underline font-medium"
+        >
+          <ChevronLeft size={15} /> Fases
+        </button>
+        <span className="text-gray-300">/</span>
+        <div className="flex items-center gap-2">
+          <div className="w-2 h-2 rounded-full" style={{ background: grupoAtual.cor }} />
+          <span className="text-sm font-semibold text-gray-700">{grupoAtual.label}</span>
+          <span className="text-xs text-gray-400">— {projetosGrupo.length} {projetosGrupo.length === 1 ? 'projeto' : 'projetos'}</span>
+        </div>
+      </div>
+
+      {/* Apresentação projeto-a-projeto usando os componentes existentes */}
+      {selectedMacro === 'MACRO_PROPOSTA' && (
+        <SlidePropostasDetalhe
+          projetos={projetosGrupo}
+          detalhe={propostaDetalheFiltrado}
+          diretorias={diretorias}
+          comiteId={comiteId}
+          decisoes={decisoes}
+          podeGerenciar={podeGerenciar}
+          onRefresh={onRefresh}
+        />
+      )}
+      {selectedMacro === 'MACRO_VIABILIDADE' && (
+        <SlideViabilidadeDetalhe
+          projetos={projetosGrupo}
+          detalhe={viabilidadeDetalheFiltrado}
+          diretorias={diretorias}
+          comiteId={comiteId}
+          decisoes={decisoes}
+          podeGerenciar={podeGerenciar}
+          onRefresh={onRefresh}
+        />
+      )}
+      {selectedMacro === 'MACRO_EXECUCAO' && (
+        <SlideExecucaoDetalhe
+          projetos={projetosGrupo}
+          detalhe={execucaoDetalheFiltrado}
+          tarefas={tarefasFiltradas}
+          pendencias={pendencias}
+          diretorias={diretorias}
+          comiteId={comiteId}
+          decisoes={decisoes}
+          podeGerenciar={podeGerenciar}
+          onRefresh={onRefresh}
+        />
+      )}
+      {selectedMacro === 'MACRO_PAYBACK' && (
+        <SlidePayback projetos={projetosGrupo} />
+      )}
+      {(selectedMacro === 'MACRO_ESTRUTURACAO' ||
+        selectedMacro === 'MACRO_PAUSADO' ||
+        selectedMacro === 'MACRO_CANCELADO' ||
+        selectedMacro === 'MACRO_CONCLUIDO') && (
+        <SlideProjetosPorDiretoria
+          titulo={grupoAtual.label}
+          projetos={projetosGrupo}
+          cor={grupoAtual.cor}
+          diretorias={diretorias}
+        />
+      )}
+    </div>
+  )
+}
+
 function SlideCapa({
   cfg, projetosCount, diretoriasCount, comiteData, onNext,
 }: {
@@ -3797,7 +3967,7 @@ function SlideCapa({
 
         {/* Title */}
         <div>
-          <p className="text-sm font-semibold uppercase tracking-widest mb-2" style={{ color: cfg.cor }}>Etapa</p>
+          <p className="text-sm font-semibold uppercase tracking-widest mb-2" style={{ color: cfg.cor }}>{cfg.rotulo ?? 'Etapa'}</p>
           <h1 className="font-black text-gray-900 leading-tight" style={{ fontSize: '42px' }}>{cfg.titulo}</h1>
           <p className="text-gray-500 mt-2 text-lg">{cfg.subtitulo}</p>
         </div>

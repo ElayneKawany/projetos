@@ -226,21 +226,5 @@ export function validarCronograma(tarefas: TarefaParaValidar[]): ErroValidacao[]
     return erros
   }
 
-  const semInicio = tarefas.filter(t => t.nome?.trim() && !t.data_inicio?.trim())
-  const semFim    = tarefas.filter(t => t.nome?.trim() && !t.data_fim?.trim())
-
-  if (semInicio.length) {
-    erros.push({
-      campo: 'data_inicio',
-      label: `${semInicio.length} tarefa(s) sem data de início`,
-    })
-  }
-  if (semFim.length) {
-    erros.push({
-      campo: 'data_fim',
-      label: `${semFim.length} tarefa(s) sem data de fim`,
-    })
-  }
-
   return erros
 }

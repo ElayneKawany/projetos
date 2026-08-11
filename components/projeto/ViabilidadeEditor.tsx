@@ -9,6 +9,7 @@ import WorkflowStatusPanel, { type WorkflowInfo } from './WorkflowStatusPanel'
 import EnviarAprovacaoModal, { type EtapaInput } from './EnviarAprovacaoModal'
 import { TIPO_INVESTIMENTO_LABELS, TIPO_INVESTIMENTO_CORES, type TipoInvestimento, type OrcamentoGrupo } from '@/lib/orcamento-types'
 import ImportacaoModal from './ImportacaoModal'
+import ArtefatoEditarDropdown from './ArtefatoEditarDropdown'
 import type { ViabilidadeImportada } from '@/lib/importadores/viabilidade-modelo'
 import { useDownload } from './useDownload'
 
@@ -821,48 +822,15 @@ export default function ViabilidadeEditor({ viabilidade, projetoId, canEdit, can
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <StatusBadge status={viabilidade.status} />
-            {/* Exportar/Importar + Salvar/Cancelar — apenas em modo de edição */}
-            {editing && (
+            {erroDownload && (
+              <span className="text-xs text-red-600">{erroDownload}
+                <button className="ml-1 underline" onClick={() => setErroDownload(null)}>✕</button>
+              </span>
+            )}
+
+            {/* Modo edição: Salvar + Cancelar */}
+            {editing ? (
               <>
-                {viabilidade.status !== 'APROVADO' && (
-                  <>
-                    <button
-                      className="btn-secondary text-xs px-2.5 py-1.5 inline-flex items-center gap-1 disabled:opacity-50"
-                      disabled={!!baixando}
-                      title="Exportar modelo Excel com dados atuais"
-                      onClick={() => baixar(
-                        `/api/projetos/${projetoId}/viabilidade/${viabilidade.id}/exportar-modelo?formato=xlsx`,
-                        `Viabilidade_Projeto${projetoId}_v${viabilidade.versao}.xlsx`,
-                      )}
-                    >
-                      {baixando ? '⏳ Gerando…' : '📤 Exportar Modelo'}
-                    </button>
-                    <button
-                      className="btn-secondary text-xs px-2.5 py-1.5 inline-flex items-center gap-1"
-                      title="Importar arquivo modelo preenchido"
-                      onClick={() => {
-                        const temDados = Object.values(form).some(v =>
-                          v !== null && v !== undefined &&
-                          (Array.isArray(v) ? v.length > 0 : String(v).trim().length > 0)
-                        )
-                        if (
-                          temDados &&
-                          !window.confirm(
-                            'Este documento já possui informações preenchidas. Deseja substituir os dados pelos dados do arquivo importado?'
-                          )
-                        ) return
-                        setShowImportModal(true)
-                      }}
-                    >
-                      📥 Importar Estudo
-                    </button>
-                  </>
-                )}
-                {erroDownload && (
-                  <span className="text-xs text-red-600">{erroDownload}
-                    <button className="ml-1 underline" onClick={() => setErroDownload(null)}>✕</button>
-                  </span>
-                )}
                 <button className="btn-primary text-sm" onClick={handleSave} disabled={saving}>
                   {saving ? 'Salvando…' : 'Salvar'}
                 </button>
@@ -870,35 +838,51 @@ export default function ViabilidadeEditor({ viabilidade, projetoId, canEdit, can
                   Cancelar
                 </button>
               </>
-            )}
-
-            {/* RASCUNHO — Editar + Enviar para Aprovação */}
-            {!editing && viabilidade.status === 'RASCUNHO' && (
+            ) : (
               <>
-                {isEditable && (
-                  <button className="btn-secondary text-sm" onClick={() => { setEditing(true); limparValidacao() }}>
-                    Editar
-                  </button>
+                {/* RASCUNHO: dropdown Editar com 3 opções */}
+                {isEditable && viabilidade.status === 'RASCUNHO' && (
+                  <ArtefatoEditarDropdown
+                    exportando={!!baixando}
+                    onEditarManual={() => { limparValidacao(); setEditing(true) }}
+                    onImportar={() => {
+                      const temDados = Object.values(form).some(v =>
+                        v !== null && v !== undefined &&
+                        (Array.isArray(v) ? v.length > 0 : String(v).trim().length > 0)
+                      )
+                      if (
+                        temDados &&
+                        !window.confirm(
+                          'Este documento já possui informações preenchidas. Deseja substituir os dados pelos dados do arquivo importado?'
+                        )
+                      ) return
+                      setShowImportModal(true)
+                    }}
+                    onExportar={() => baixar(
+                      `/api/projetos/${projetoId}/viabilidade/${viabilidade.id}/exportar-modelo?formato=xlsx`,
+                      `Viabilidade_Projeto${projetoId}_v${viabilidade.versao}.xlsx`,
+                    )}
+                  />
                 )}
-                {canSubmit && (
+                {canSubmit && viabilidade.status === 'RASCUNHO' && (
                   <button className="btn-primary text-sm" onClick={handleEnviarParaAprovacao}>
                     Enviar para Aprovação
                   </button>
                 )}
-              </>
-            )}
 
-            {/* APROVADO — Editar V1 (regularização histórica) ou Nova Versão */}
-            {!editing && viabilidade.status === 'APROVADO' && canEdit && (
-              <>
-                {isV1Aprovada && (
-                  <button className="btn-secondary text-sm" onClick={() => { setEditing(true); limparValidacao() }}>
-                    Editar
-                  </button>
+                {/* APROVADO — Editar V1 (regularização histórica) ou Nova Versão */}
+                {viabilidade.status === 'APROVADO' && canEdit && (
+                  <>
+                    {isV1Aprovada && (
+                      <button className="btn-secondary text-sm" onClick={() => { limparValidacao(); setEditing(true) }}>
+                        Editar
+                      </button>
+                    )}
+                    <button className="btn-secondary text-sm" disabled={approving} onClick={handleNovaVersao}>
+                      {approving ? 'Criando…' : 'Nova Versão'}
+                    </button>
+                  </>
                 )}
-                <button className="btn-secondary text-sm" disabled={approving} onClick={handleNovaVersao}>
-                  {approving ? 'Criando…' : 'Nova Versão'}
-                </button>
               </>
             )}
           </div>

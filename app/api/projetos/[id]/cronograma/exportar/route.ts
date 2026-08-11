@@ -6,7 +6,9 @@ import { CronogramaRepository } from '@/lib/repositories'
 // Cabeçalho oficial — ordem fixa, nomes exatos
 const CABECALHO = [
   'WBS', 'Nível', 'Nome', 'Descrição', 'Tipo', 'Criticidade',
-  'Responsável', 'Executor', 'Data Início', 'Data Fim',
+  'Responsável', 'Executor',
+  'Data Início', 'Nova Data Início',
+  'Data Fim', 'Nova Data',
   'Percentual', 'Status', 'Observações', 'Tipo Macro',
 ]
 
@@ -19,8 +21,10 @@ const COL_WIDTHS = [
   { wch: 12 },  // Criticidade
   { wch: 28 },  // Responsável
   { wch: 28 },  // Executor
-  { wch: 13 },  // Data Início
-  { wch: 13 },  // Data Fim
+  { wch: 13 },  // Data Início   (linha de base / original)
+  { wch: 15 },  // Nova Data Início (reprogramação, se houver)
+  { wch: 13 },  // Data Fim      (linha de base / original)
+  { wch: 13 },  // Nova Data     (data de reprogramação, se houver)
   { wch: 10 },  // Percentual
   { wch: 14 },  // Status
   { wch: 25 },  // Observações
@@ -72,7 +76,9 @@ export async function GET(
       responsavel_nome: string | null
       executor_nome: string | null
       data_inicio: string | null
+      data_inicio_baseline: string | null
       data_fim: string | null
+      data_fim_baseline: string | null
       percentual: number | null
       status: string | null
       observacoes: string | null
@@ -80,11 +86,21 @@ export async function GET(
     }[]
 
   // Montar AOA — datas como objetos Date para células nativas Excel
+  // Quando há reprogramação:
+  //   "Data Fim"  → data_fim_baseline (linha de base / original)
+  //   "Nova Data" → data_fim (nova data vigente)
+  // Sem reprogramação:
+  //   "Data Fim"  → data_fim
+  //   "Nova Data" → vazio
   const aoa: unknown[][] = [CABECALHO]
 
   for (const t of tarefas) {
-    const dInicio = isoParaDate(t.data_inicio)
-    const dFim    = isoParaDate(t.data_fim)
+    const reprogramadaInicio = !!t.data_inicio_baseline
+    const reprogramadaFim    = !!t.data_fim_baseline
+    const dInicioBase  = isoParaDate(reprogramadaInicio ? t.data_inicio_baseline : t.data_inicio)
+    const dInicioNova  = reprogramadaInicio ? isoParaDate(t.data_inicio) : null
+    const dFimBase     = isoParaDate(reprogramadaFim ? t.data_fim_baseline : t.data_fim)
+    const dFimNova     = reprogramadaFim ? isoParaDate(t.data_fim) : null
     aoa.push([
       t.codigo ?? '',
       t.nivel ?? 'TAREFA',
@@ -94,8 +110,10 @@ export async function GET(
       CRIT_DISPLAY[t.criticidade ?? ''] ?? (t.criticidade ?? 'Normal'),
       t.responsavel_nome ?? '',
       t.executor_nome    ?? '',
-      dInicio,           // Date object → célula date nativa no Excel
-      dFim,              // idem
+      dInicioBase,   // Data Início (original/linha de base)
+      dInicioNova,   // Nova Data Início (só preenchida quando reprogramada)
+      dFimBase,      // Data Fim (original/linha de base)
+      dFimNova,      // Nova Data (só preenchida quando reprogramada)
       t.percentual ?? 0,
       t.status ?? 'PENDENTE',
       t.observacoes ?? '',
@@ -107,10 +125,10 @@ export async function GET(
   const ws = XLSX.utils.aoa_to_sheet(aoa, { cellDates: true })
   ws['!cols'] = COL_WIDTHS
 
-  // Formatar colunas de data (I=8, J=9) como DD/MM/YYYY
+  // Formatar colunas de data (I=8, J=9, K=10, L=11) como DD/MM/YYYY
   const range = XLSX.utils.decode_range(ws['!ref'] ?? 'A1')
   for (let R = 1; R <= range.e.r; R++) {
-    for (const C of [8, 9]) {
+    for (const C of [8, 9, 10, 11]) {
       const addr = XLSX.utils.encode_cell({ r: R, c: C })
       const cell = ws[addr]
       if (cell) ws[addr] = { ...cell, z: 'DD/MM/YYYY' }

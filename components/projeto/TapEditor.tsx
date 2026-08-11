@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { StatusBadge, SectionBlock, TextValue, TextAreaField } from './ArtefatoShared'
 import ArtefatoActions from './ArtefatoActions'
+import ArtefatoEditarDropdown from './ArtefatoEditarDropdown'
 import AlertaValidacao from './AlertaValidacao'
 import { validarTap, type ErroValidacao } from '@/lib/validacoes-artefatos'
 import WorkflowStatusPanel, { type WorkflowInfo } from './WorkflowStatusPanel'
@@ -289,63 +290,62 @@ export default function TapEditor({
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <StatusBadge status={tap.status} />
-            {/* Exportar/Importar — apenas em modo de edição */}
-            {editing && tap.status !== 'APROVADO' && (
-              <>
-                <button
-                  className="btn-secondary text-xs px-2.5 py-1.5 inline-flex items-center gap-1 disabled:opacity-50"
-                  disabled={!!baixando}
-                  title="Exportar modelo Excel com os dados atuais"
-                  onClick={() => baixar(
-                    `/api/projetos/${projetoId}/tap/${tap.id}/exportar-modelo`,
-                    `TAP_${projetoCodigo}_${tap.label ?? `v${tap.versao}`}.xlsx`,
-                  )}
-                >
-                  {baixando ? '⏳ Gerando…' : '📤 Exportar Modelo'}
-                </button>
-                <button
-                  className="btn-secondary text-xs px-2.5 py-1.5 inline-flex items-center gap-1"
-                  title="Importar arquivo modelo preenchido"
-                  onClick={() => {
-                    const temDados = Object.values(form).some(v =>
-                      Array.isArray(v) ? v.length > 0 : String(v ?? '').trim().length > 0
-                    )
-                    if (
-                      temDados &&
-                      !window.confirm(
-                        'Este documento já possui informações preenchidas. Deseja substituir os dados pelos dados do arquivo importado?'
-                      )
-                    ) return
-                    setShowImportModal(true)
-                  }}
-                >
-                  📥 Importar TAP
-                </button>
-              </>
-            )}
             {erroDownload && (
               <span className="text-xs text-red-600">{erroDownload}
                 <button className="ml-1 underline" onClick={() => setErroDownload(null)}>✕</button>
               </span>
             )}
-            <ArtefatoActions
-              artefatoStatus={tap.status}
-              canEdit={isEditable}
-              canSubmit={canSubmit}
-              editing={editing}
-              saving={saving}
-              onEditar={() => {
-                if (tap.status === 'APROVADO' && !isAdmin) {
-                  setError('Este documento foi aprovado e não pode ser alterado.')
-                  return
-                }
-                setEditing(true)
-                limparValidacao()
-              }}
-              onEnviarParaAprovacao={handleEnviarParaAprovacao}
-              onSalvar={handleSave}
-              onCancelar={() => setEditing(false)}
-            />
+            {/* Modo edição: Salvar + Cancelar */}
+            {editing ? (
+              <>
+                <button className="btn-primary text-sm" onClick={handleSave} disabled={saving}>
+                  {saving ? 'Salvando…' : 'Salvar'}
+                </button>
+                <button className="btn-secondary text-sm" onClick={() => setEditing(false)} disabled={saving}>
+                  Cancelar
+                </button>
+              </>
+            ) : (
+              <>
+                {/* RASCUNHO: dropdown Editar com 3 opções */}
+                {isEditable && tap.status === 'RASCUNHO' && (
+                  <ArtefatoEditarDropdown
+                    exportando={!!baixando}
+                    onEditarManual={() => { limparValidacao(); setEditing(true) }}
+                    onImportar={() => {
+                      const temDados = Object.values(form).some(v =>
+                        Array.isArray(v) ? v.length > 0 : String(v ?? '').trim().length > 0
+                      )
+                      if (
+                        temDados &&
+                        !window.confirm(
+                          'Este documento já possui informações preenchidas. Deseja substituir os dados pelos dados do arquivo importado?'
+                        )
+                      ) return
+                      setShowImportModal(true)
+                    }}
+                    onExportar={() => baixar(
+                      `/api/projetos/${projetoId}/tap/${tap.id}/exportar-modelo`,
+                      `TAP_${projetoCodigo}_${tap.label ?? `v${tap.versao}`}.xlsx`,
+                    )}
+                  />
+                )}
+                {/* APROVADO: apenas o botão simples (isAdmin pode editar, outros veem mensagem) */}
+                {isEditable && tap.status === 'APROVADO' && (
+                  <button className="btn-secondary text-sm" onClick={() => {
+                    if (!isAdmin) { setError('Este documento foi aprovado e não pode ser alterado.'); return }
+                    limparValidacao(); setEditing(true)
+                  }}>
+                    Editar
+                  </button>
+                )}
+                {canSubmit && tap.status === 'RASCUNHO' && (
+                  <button className="btn-primary text-sm" onClick={handleEnviarParaAprovacao}>
+                    Enviar para Aprovação
+                  </button>
+                )}
+              </>
+            )}
           </div>
         </div>
       </div>

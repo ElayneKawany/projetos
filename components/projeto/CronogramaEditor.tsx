@@ -47,6 +47,10 @@ interface CronogramaTarefa {
   data_conclusao?: string | null
   concluido_por?: number | null
   prazo_status?: string | null
+  /** Data início original preservada quando a tarefa é reprogramada. null = sem reprogramação. */
+  data_inicio_baseline?: string | null
+  /** Data fim original preservada quando a tarefa é reprogramada. null = sem reprogramação. */
+  data_fim_baseline?: string | null
   /** Múltiplos responsáveis — preenchido pelo GET (tabela cronograma_responsaveis) */
   responsaveis?: ResponsavelItem[] | null
 }
@@ -721,6 +725,12 @@ export default function CronogramaEditor({
   const [concluindoId, setConcluindoId]   = useState<number | null>(null)
   const [editandoTarefas, setEditandoTarefas] = useState<CronogramaTarefa[]>([])
 
+  // Reprogramação de data por tarefa (modo view)
+  const [reprogramarId, setReprogramarId]           = useState<number | null>(null)
+  const [novaDataInicioRepr, setNovaDataInicioRepr] = useState('')
+  const [novaDataRepr, setNovaDataRepr]             = useState('')
+  const [salvandoRepr, setSalvandoRepr]             = useState(false)
+
   // Erros detalhados por tarefa — recalculado dinamicamente conforme campos são preenchidos
   const tarefasComErroDetalhado = useMemo(() => {
     if (!validacaoErros.length) return []
@@ -999,6 +1009,31 @@ export default function CronogramaEditor({
     } finally { setConcluindoId(null) }
   }
 
+  // ── Reprogramação de data por tarefa ────────────────────────────────────────
+
+  async function handleReprogramar(tarefaId: number) {
+    const isoFim    = novaDataRepr       ? normalizarData(novaDataRepr)       : null
+    const isoInicio = novaDataInicioRepr ? normalizarData(novaDataInicioRepr) : null
+    if (novaDataRepr && !isoFim)          { setError('Nova data de término inválida. Use DD/MM/AAAA.'); return }
+    if (novaDataInicioRepr && !isoInicio) { setError('Nova data de início inválida. Use DD/MM/AAAA.'); return }
+    if (!isoFim && !isoInicio)            { setError('Informe pelo menos uma das datas no formato DD/MM/AAAA.'); return }
+    setSalvandoRepr(true); setError(null)
+    try {
+      const body: Record<string, string> = {}
+      if (isoFim)    body.nova_data        = isoFim
+      if (isoInicio) body.nova_data_inicio = isoInicio
+      const res = await fetch(
+        `/api/projetos/${projetoId}/cronograma/${cronograma!.id}/tarefas/${tarefaId}/reprogramar`,
+        { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+      )
+      if (!res.ok) { const d = await res.json(); throw new Error(d.error ?? 'Erro ao reprogramar.') }
+      setReprogramarId(null); setNovaDataRepr(''); setNovaDataInicioRepr('')
+      await fetchCronograma()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Erro ao reprogramar.')
+    } finally { setSalvandoRepr(false) }
+  }
+
   // ── Edição inline ──────────────────────────────────────────────────────────
 
   function recalcWBSInline(lista: CronogramaTarefa[]): CronogramaTarefa[] {
@@ -1008,8 +1043,10 @@ export default function CronogramaEditor({
   function handleIniciarEdicao() {
     setEditandoTarefas(tarefas.map(t => ({
       ...t,
-      data_inicio: isoToDisplayEdit(t.data_inicio),
-      data_fim:    isoToDisplayEdit(t.data_fim),
+      data_inicio:            isoToDisplayEdit(t.data_inicio),
+      data_inicio_baseline:   t.data_inicio_baseline ?? null,
+      data_fim:               isoToDisplayEdit(t.data_fim),
+      data_fim_baseline:      t.data_fim_baseline ?? null,
     })))
     setUndoStack([])
     setRedoStack([])
@@ -1042,7 +1079,9 @@ export default function CronogramaEditor({
         executor_id:          t.executor_id           ?? null,
         executor_nome_ext:    t.executor_nome         ?? null,
         data_inicio:          normalizarData(t.data_inicio),
+        data_inicio_baseline: t.data_inicio_baseline ?? null,
         data_fim:             normalizarData(t.data_fim),
+        data_fim_baseline:    t.data_fim_baseline    ?? null,
         tipo:                 t.tipo                 ?? 'TAREFA',
         criticidade:          t.criticidade          ?? 'NORMAL',
         observacoes:          t.observacoes          ?? null,
@@ -1845,17 +1884,41 @@ export default function CronogramaEditor({
                               <td className="px-3 py-1.5 text-xs w-32 text-gray-400">—</td>
                               <td className="px-3 py-1.5 text-gray-500 text-xs w-24">
                                 {editando ? (
-                                  <input type="text" className="input text-xs py-1 w-full" value={t.data_inicio ?? ''}
-                                    placeholder="DD/MM/AAAA" maxLength={10}
-                                    onChange={e => handleAtualizarCampoInline(i, 'data_inicio', e.target.value)} />
-                                ) : formatDate(t.data_inicio)}
+                                  <div>
+                                    <input type="text" className="input text-xs py-1 w-full" value={t.data_inicio ?? ''}
+                                      placeholder="DD/MM/AAAA" maxLength={10}
+                                      onChange={e => handleAtualizarCampoInline(i, 'data_inicio', e.target.value)} />
+                                    {t.data_inicio_baseline && (
+                                      <p className="text-[10px] text-gray-400 mt-0.5 leading-tight">Base: {formatDate(t.data_inicio_baseline)}</p>
+                                    )}
+                                  </div>
+                                ) : (
+                                  t.data_inicio_baseline ? (
+                                    <>
+                                      <span className="text-gray-700">{formatDate(t.data_inicio)}</span>
+                                      <p className="text-[10px] text-gray-400 leading-tight mt-0.5">Base: {formatDate(t.data_inicio_baseline)}</p>
+                                    </>
+                                  ) : formatDate(t.data_inicio)
+                                )}
                               </td>
                               <td className="px-3 py-1.5 text-gray-500 text-xs w-24">
                                 {editando ? (
-                                  <input type="text" className="input text-xs py-1 w-full" value={t.data_fim ?? ''}
-                                    placeholder="DD/MM/AAAA" maxLength={10}
-                                    onChange={e => handleAtualizarCampoInline(i, 'data_fim', e.target.value)} />
-                                ) : formatDate(t.data_fim)}
+                                  <div>
+                                    <input type="text" className="input text-xs py-1 w-full" value={t.data_fim ?? ''}
+                                      placeholder="DD/MM/AAAA" maxLength={10}
+                                      onChange={e => handleAtualizarCampoInline(i, 'data_fim', e.target.value)} />
+                                    {t.data_fim_baseline && (
+                                      <p className="text-[10px] text-gray-400 mt-0.5 leading-tight">Base: {formatDate(t.data_fim_baseline)}</p>
+                                    )}
+                                  </div>
+                                ) : (
+                                  t.data_fim_baseline ? (
+                                    <>
+                                      <span className="text-gray-700">{formatDate(t.data_fim)}</span>
+                                      <p className="text-[10px] text-gray-400 leading-tight mt-0.5">Base: {formatDate(t.data_fim_baseline)}</p>
+                                    </>
+                                  ) : formatDate(t.data_fim)
+                                )}
                               </td>
                               {/* Dias — vazio para subtarefas */}
                               <td className="px-3 py-1.5 text-right text-xs w-16 text-gray-400">—</td>
@@ -1873,13 +1936,23 @@ export default function CronogramaEditor({
                                     onClick={() => handleRemoverItem(i)}>✕</button>
                                 ) : (
                                   !subConcluida && (
-                                    <button
-                                      className="text-xs text-green-700 border border-green-200 rounded px-2 py-0.5 hover:bg-green-50 disabled:opacity-50"
-                                      disabled={isConcluindoSub || !t.id}
-                                      onClick={() => t.id && handleConcluirTarefa(t.id)}
-                                    >
-                                      {isConcluindoSub ? '…' : 'Concluir'}
-                                    </button>
+                                    <div className="flex flex-col items-end gap-1">
+                                      <button
+                                        className="text-xs text-green-700 border border-green-200 rounded px-2 py-0.5 hover:bg-green-50 disabled:opacity-50"
+                                        disabled={isConcluindoSub || !t.id}
+                                        onClick={() => t.id && handleConcluirTarefa(t.id)}
+                                      >
+                                        {isConcluindoSub ? '…' : 'Concluir'}
+                                      </button>
+                                      {canEdit && t.id && reprogramarId !== t.id && (
+                                        <button
+                                          type="button"
+                                          className="text-[10px] text-orange-600 border border-orange-200 rounded px-1.5 py-0.5 hover:bg-orange-50"
+                                          title="Informar nova data de entrega"
+                                          onClick={() => { setReprogramarId(t.id!); setNovaDataRepr('') }}
+                                        >Reprog.</button>
+                                      )}
+                                    </div>
                                   )
                                 )}
                               </td>
@@ -1985,29 +2058,105 @@ export default function CronogramaEditor({
                             {/* Início */}
                             <td className="px-3 py-2 text-gray-600 text-xs w-24">
                               {editando ? (
-                                <input
-                                  type="text"
-                                  className="input text-xs py-1 w-full"
-                                  value={t.data_inicio ?? ''}
-                                  placeholder="DD/MM/AAAA"
-                                  maxLength={10}
-                                  onChange={e => handleAtualizarCampoInline(i, 'data_inicio', e.target.value)}
-                                />
-                              ) : formatDate(t.data_inicio)}
+                                <div>
+                                  <input
+                                    type="text"
+                                    className="input text-xs py-1 w-full"
+                                    value={t.data_inicio ?? ''}
+                                    placeholder="DD/MM/AAAA"
+                                    maxLength={10}
+                                    onChange={e => handleAtualizarCampoInline(i, 'data_inicio', e.target.value)}
+                                  />
+                                  {t.data_inicio_baseline && (
+                                    <p className="text-[10px] text-gray-400 mt-0.5 leading-tight">
+                                      Base: {formatDate(t.data_inicio_baseline)}
+                                    </p>
+                                  )}
+                                </div>
+                              ) : (
+                                t.data_inicio_baseline ? (
+                                  <div>
+                                    <span className="text-gray-700">{formatDate(t.data_inicio)}</span>
+                                    <p className="text-[10px] text-gray-400 leading-tight mt-0.5">
+                                      Base: {formatDate(t.data_inicio_baseline)}
+                                    </p>
+                                  </div>
+                                ) : formatDate(t.data_inicio)
+                              )}
                             </td>
 
                             {/* Fim */}
                             <td className="px-3 py-2 text-gray-600 text-xs w-24">
                               {editando ? (
-                                <input
-                                  type="text"
-                                  className="input text-xs py-1 w-full"
-                                  value={t.data_fim ?? ''}
-                                  placeholder="DD/MM/AAAA"
-                                  maxLength={10}
-                                  onChange={e => handleAtualizarCampoInline(i, 'data_fim', e.target.value)}
-                                />
-                              ) : formatDate(t.data_fim)}
+                                <div>
+                                  <input
+                                    type="text"
+                                    className="input text-xs py-1 w-full"
+                                    value={t.data_fim ?? ''}
+                                    placeholder="DD/MM/AAAA"
+                                    maxLength={10}
+                                    onChange={e => handleAtualizarCampoInline(i, 'data_fim', e.target.value)}
+                                  />
+                                  {t.data_fim_baseline && (
+                                    <p className="text-[10px] text-gray-400 mt-0.5 leading-tight">
+                                      Base: {formatDate(t.data_fim_baseline)}
+                                    </p>
+                                  )}
+                                </div>
+                              ) : (
+                                <div>
+                                  {reprogramarId === t.id ? (
+                                    <div className="flex flex-col gap-1">
+                                      <p className="text-[10px] text-gray-400 font-medium">Nova data início:</p>
+                                      <input
+                                        type="text"
+                                        className="input text-xs py-0.5 w-full"
+                                        value={novaDataInicioRepr}
+                                        placeholder="DD/MM/AAAA"
+                                        maxLength={10}
+                                        onChange={e => setNovaDataInicioRepr(e.target.value)}
+                                        onKeyDown={e => {
+                                          if (e.key === 'Escape') { setReprogramarId(null); setNovaDataRepr(''); setNovaDataInicioRepr('') }
+                                        }}
+                                      />
+                                      <p className="text-[10px] text-gray-400 font-medium">Nova data término:</p>
+                                      <input
+                                        type="text"
+                                        className="input text-xs py-0.5 w-full"
+                                        value={novaDataRepr}
+                                        placeholder="DD/MM/AAAA"
+                                        maxLength={10}
+                                        autoFocus
+                                        onChange={e => setNovaDataRepr(e.target.value)}
+                                        onKeyDown={e => {
+                                          if (e.key === 'Enter') handleReprogramar(t.id!)
+                                          if (e.key === 'Escape') { setReprogramarId(null); setNovaDataRepr(''); setNovaDataInicioRepr('') }
+                                        }}
+                                      />
+                                      <div className="flex gap-1">
+                                        <button
+                                          type="button"
+                                          className="text-[10px] text-blue-600 border border-blue-200 rounded px-1.5 py-0.5 hover:bg-blue-50 disabled:opacity-50"
+                                          disabled={salvandoRepr}
+                                          onClick={() => handleReprogramar(t.id!)}
+                                        >{salvandoRepr ? '…' : 'OK'}</button>
+                                        <button
+                                          type="button"
+                                          className="text-[10px] text-gray-400 border border-gray-200 rounded px-1.5 py-0.5 hover:bg-gray-50"
+                                          onClick={() => { setReprogramarId(null); setNovaDataRepr(''); setNovaDataInicioRepr('') }}
+                                        >✕</button>
+                                      </div>
+                                    </div>
+                                  ) : t.data_fim_baseline ? (
+                                    <>
+                                      <span className="text-gray-700">{formatDate(t.data_fim)}</span>
+                                      <p className="text-[10px] text-gray-400 leading-tight mt-0.5">
+                                        Base: {formatDate(t.data_fim_baseline)}
+                                      </p>
+                                    </>
+                                  ) : formatDate(t.data_fim)}
+                                </div>
+                              )}
                             </td>
 
                             {/* Dias */}
@@ -2052,13 +2201,25 @@ export default function CronogramaEditor({
                                 </div>
                               ) : (
                                 !concluida && (
-                                  <button
-                                    className="text-xs text-green-700 border border-green-200 rounded px-2 py-0.5 hover:bg-green-50 disabled:opacity-50"
-                                    disabled={isConcluindo || !t.id}
-                                    onClick={() => t.id && handleConcluirTarefa(t.id)}
-                                  >
-                                    {isConcluindo ? '…' : 'Concluir'}
-                                  </button>
+                                  <div className="flex flex-col items-end gap-1">
+                                    <button
+                                      className="text-xs text-green-700 border border-green-200 rounded px-2 py-0.5 hover:bg-green-50 disabled:opacity-50"
+                                      disabled={isConcluindo || !t.id}
+                                      onClick={() => t.id && handleConcluirTarefa(t.id)}
+                                    >
+                                      {isConcluindo ? '…' : 'Concluir'}
+                                    </button>
+                                    {canEdit && t.id && reprogramarId !== t.id && (
+                                      <button
+                                        type="button"
+                                        className="text-[10px] text-orange-600 border border-orange-200 rounded px-1.5 py-0.5 hover:bg-orange-50"
+                                        title="Informar nova data de entrega (mantém linha de base)"
+                                        onClick={() => { setReprogramarId(t.id!); setNovaDataRepr('') }}
+                                      >
+                                        Reprog.
+                                      </button>
+                                    )}
+                                  </div>
                                 )
                               )}
                             </td>

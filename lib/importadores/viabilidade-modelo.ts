@@ -73,37 +73,36 @@ const COLUNAS_QUANT: Array<{ label: string; chave: keyof ViabilidadeImportada; t
   { label: 'Condições de Aprovação',          chave: 'condicoes_aprovacao'       },
 ]
 
-// ── Labels qualitativos (label XLSX → campo DB) ───────────────────────────────
+// ── Labels qualitativos — ordem e labels exatos do modelo oficial MegaG PMO ──
 
 const COLUNAS_QUAL: Array<{ label: string; chave: keyof ViabilidadeImportada | null; tipo?: 'num' }> = [
-  { label: 'Nome do Projeto',          chave: null                           }, // contexto
-  { label: 'Diretoria',               chave: null                           }, // contexto
-  { label: 'Área Solicitante',        chave: null                           }, // contexto
-  { label: 'Gerente do Projeto',      chave: null                           }, // contexto
-  { label: 'Patrocinador',            chave: null                           }, // contexto
-  { label: 'Objetivo',                chave: null                           }, // contexto
-  { label: 'Cenário Atual',           chave: 'resumo_executivo'             },
-  { label: 'Problema/Oportunidade',   chave: 'impactos'                     },
-  { label: 'Solução Proposta',        chave: 'sistemas_envolvidos'          },
-  { label: 'Benefícios Esperados',    chave: 'beneficios_esperados'         },
-  { label: 'Impactos Operacionais',   chave: 'impacto_operacional'          },
-  { label: 'Impactos Estratégicos',   chave: null                           }, // informativo
-  { label: 'Impactos Organizacionais', chave: 'mudanca_processo'            },
-  { label: 'Premissas',               chave: 'complexidade_tecnica'         },
-  { label: 'Restrições',              chave: 'dependencia_fornecedores'     },
-  { label: 'Dependências',            chave: null                           }, // informativo
-  { label: 'Riscos',                  chave: 'riscos'                       },
-  { label: 'Plano de Mitigação',      chave: null                           }, // informativo
-  { label: 'Stakeholders',            chave: null                           }, // informativo
-  { label: 'Recursos Necessários',    chave: 'recursos_necessarios'         },
-  { label: 'Cronograma Macro',        chave: 'marcos'                       },
-  { label: 'CAPEX',                   chave: 'capex',            tipo: 'num' },
-  { label: 'OPEX',                    chave: 'opex',             tipo: 'num' },
-  { label: 'Investimento Total',      chave: null                           }, // calculado
-  { label: 'Critérios de Sucesso',    chave: 'condicoes_aprovacao'          },
-  { label: 'Indicadores Qualitativos', chave: 'tipo_indicador'              },
-  { label: 'Alinhamento Estratégico', chave: 'justificativa_recomendacao'   },
-  { label: 'Parecer Final',           chave: 'recomendacao'                 },
+  { label: 'Nome do Projeto',            chave: null                          }, // contexto
+  { label: 'Diretoria Responsável',      chave: null                          }, // contexto
+  { label: 'Área Solicitante',           chave: null                          }, // contexto
+  { label: 'Gerente do Projeto',         chave: null                          }, // contexto
+  { label: 'Patrocinador',               chave: null                          }, // contexto
+  { label: 'Objetivo',                   chave: null                          }, // contexto
+  { label: 'Cenário Atual',              chave: 'resumo_executivo'            },
+  { label: 'Problema / Oportunidade',    chave: 'impactos'                    },
+  { label: 'Solução Proposta',           chave: 'sistemas_envolvidos'         },
+  { label: 'Escopo',                     chave: null                          }, // informativo
+  { label: 'Premissas',                  chave: 'complexidade_tecnica'        },
+  { label: 'Restrições',                 chave: 'dependencia_fornecedores'    },
+  { label: 'Benefícios Esperados',       chave: 'beneficios_esperados'        },
+  { label: 'Impactos Operacionais',      chave: 'impacto_operacional'         },
+  { label: 'Impactos Organizacionais',   chave: 'mudanca_processo'            },
+  { label: 'Impactos Estratégicos',      chave: null                          }, // informativo
+  { label: 'Riscos',                     chave: 'riscos'                      },
+  { label: 'Plano de Mitigação',         chave: null                          }, // informativo
+  { label: 'CAPEX (R$)',                 chave: 'capex',           tipo: 'num' },
+  { label: 'OPEX (R$)',                  chave: 'opex',            tipo: 'num' },
+  { label: 'Stakeholders',              chave: null                          }, // informativo
+  { label: 'Recursos Necessários',      chave: 'recursos_necessarios'        },
+  { label: 'Cronograma Macro',           chave: 'marcos'                      },
+  { label: 'Critérios de Sucesso',       chave: 'condicoes_aprovacao'         },
+  { label: 'Indicadores Qualitativos',   chave: 'tipo_indicador'              },
+  { label: 'Alinhamento Estratégico',    chave: 'justificativa_recomendacao'  },
+  { label: 'Parecer Final',              chave: 'recomendacao'                },
 ]
 
 // ── Exportar XLSX Quantitativo (template vazio, horizontal) ──────────────────
@@ -112,11 +111,79 @@ export function gerarXlsxViabilidade(): Buffer {
   return gerarTemplate(COLUNAS_QUANT.map(c => c.label), 'Viabilidade')
 }
 
-// ── Exportar XLSX Qualitativo (template vazio, horizontal) ───────────────────
+// ── Exportar XLSX Qualitativo — formato vertical, modelo oficial MegaG PMO ───
 
 export function gerarXlsxViabilidadeQualitativo(): Buffer {
-  return gerarTemplate(COLUNAS_QUAL.map(c => c.label), 'Viabilidade Qualitativa')
+  const wb = XLSX.utils.book_new()
+
+  // Estrutura exata do Modelo viabilidade.xlsx oficial
+  const linhas: (string | null)[][] = [
+    ['MegaG PMO – Estudo de Viabilidade Qualitativo', null],
+    ['INSTRUÇÕES: Preencha os valores na coluna B. Não altere os textos da coluna A.', null],
+    [null, null],
+    ['── INFORMAÇÕES DO PROJETO ──', null],
+    ['Nome do Projeto',         null],
+    ['Diretoria Responsável',   null],
+    ['Área Solicitante',        null],
+    ['Gerente do Projeto',      null],
+    ['Patrocinador',            null],
+    ['Objetivo',                null],
+    [null, null],
+    ['── CONTEXTO ──', null],
+    ['Cenário Atual',           null],
+    ['Problema / Oportunidade', null],
+    ['Solução Proposta',        null],
+    [null, null],
+    ['── ESCOPO E PLANEJAMENTO ──', null],
+    ['Escopo',                  null],
+    ['Premissas',               null],
+    ['Restrições',              null],
+    [null, null],
+    ['── BENEFÍCIOS E IMPACTOS ──', null],
+    ['Benefícios Esperados',       null],
+    ['Impactos Operacionais',      null],
+    ['Impactos Organizacionais',   null],
+    ['Impactos Estratégicos',      null],
+    [null, null],
+    ['── RISCOS ──', null],
+    ['Riscos',              null],
+    ['Plano de Mitigação',  null],
+    [null, null],
+    ['── INVESTIMENTO (se aplicável) ──', null],
+    ['CAPEX (R$)', null],
+    ['OPEX (R$)',  null],
+    [null, null],
+    ['── EXECUÇÃO ──', null],
+    ['Stakeholders',        null],
+    ['Recursos Necessários',null],
+    ['Cronograma Macro',    null],
+    [null, null],
+    ['── RESULTADO ESPERADO ──', null],
+    ['Critérios de Sucesso',     null],
+    ['Indicadores Qualitativos', null],
+    ['Alinhamento Estratégico',  null],
+    ['Parecer Final',            null],
+  ]
+
+  const ws = XLSX.utils.aoa_to_sheet(linhas)
+
+  // Mesclar título e instrução na linha inteira (A1:B1 e A2:B2)
+  ws['!merges'] = [
+    { s: { r: 0, c: 0 }, e: { r: 0, c: 1 } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: 1 } },
+  ]
+
+  // Largura das colunas conforme referência
+  ws['!cols'] = [
+    { wch: 40 }, // Coluna A — campo
+    { wch: 80 }, // Coluna B — valor
+  ]
+
+  XLSX.utils.book_append_sheet(wb, ws, 'Viabilidade Qualitativa')
+  return Buffer.from(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }))
 }
+
+// ── Exportar XLSX Quantitativo (template horizontal — não alterado) ───────────
 
 function gerarTemplate(headers: string[], nomePlanilha: string): Buffer {
   const wb = XLSX.utils.book_new()
@@ -157,6 +224,19 @@ export function parsearXlsxViabilidade(buffer: Buffer): ResultadoImportacaoViabi
     }
   }
 
+  // Aliases: compatibilidade com labels de versões anteriores do template
+  const ALIASES_QUAL: Record<string, string> = {
+    'Diretoria':               'Diretoria Responsável',
+    'Problema/Oportunidade':   'Problema / Oportunidade',
+    'CAPEX':                   'CAPEX (R$)',
+    'OPEX':                    'OPEX (R$)',
+    'Dependências':            'Escopo',
+    'Investimento Total':      'CAPEX (R$)', // histórico — mapeado para evitar erro
+  }
+  for (const [antigo, canônico] of Object.entries(ALIASES_QUAL)) {
+    if (antigo in mapa && !(canônico in mapa)) mapa[canônico] = mapa[antigo]
+  }
+
   const isQual = !!mapa['Cenário Atual'] || !!mapa['Parecer Final'] || !!mapa['Cronograma Macro']
   const colunas = isQual ? COLUNAS_QUAL : COLUNAS_QUANT
 
@@ -185,35 +265,35 @@ export function parsearXlsxViabilidade(buffer: Buffer): ResultadoImportacaoViabi
   }
 
   const dados: ViabilidadeImportada = {
-    resumo_executivo:          parcial.resumo_executivo          ?? obter('Resumo Executivo', 'Cenário Atual'),
-    capex:                     parcial.capex                     ?? num('CAPEX (R$)', 'CAPEX'),
-    opex:                      parcial.opex                      ?? num('OPEX (R$)', 'OPEX'),
-    opex_periodicidade:        parcial.opex_periodicidade        ?? (obter('Periodicidade OPEX') || 'MENSAL'),
-    economia_estimada:         parcial.economia_estimada         ?? num('Economia Estimada (R$)'),
-    economia_periodicidade:    parcial.economia_periodicidade    ?? (obter('Periodicidade Economia') || 'MENSAL'),
-    tipo_payback:              parcial.tipo_payback              ?? (obter('Tipo Payback') || (isQual ? 'QUALITATIVO' : 'QUANTITATIVO')),
-    payback_informado:         parcial.payback_informado         ?? num('Payback Estimado (meses)'),
-    payback_unidade:           'MESES',
-    sistemas_envolvidos:       parcial.sistemas_envolvidos       ?? obter('Sistemas Envolvidos', 'Solução Proposta'),
-    complexidade_tecnica:      parcial.complexidade_tecnica      ?? obter('Complexidade Técnica', 'Premissas'),
-    dependencia_fornecedores:  parcial.dependencia_fornecedores  ?? obter('Dependência de Fornecedores', 'Restrições'),
-    infraestrutura:            parcial.infraestrutura            ?? obter('Infraestrutura'),
-    impacto_operacional:       parcial.impacto_operacional       ?? obter('Impacto Operacional', 'Impactos Operacionais'),
-    mudanca_processo:          parcial.mudanca_processo          ?? obter('Mudança de Processo', 'Impactos Organizacionais'),
-    recursos_necessarios:      parcial.recursos_necessarios      ?? obter('Recursos Necessários'),
-    impactos:                  parcial.impactos                  ?? obter('Impactos', 'Problema/Oportunidade'),
-    beneficios_esperados:      parcial.beneficios_esperados      ?? obter('Benefícios Esperados'),
-    riscos:                    parcial.riscos                    ?? obter('Riscos'),
-    data_inicio_prev:          parcial.data_inicio_prev          ?? obter('Data Início Prevista'),
-    data_fim_prev:             parcial.data_fim_prev             ?? obter('Data Término Prevista'),
-    marcos:                    parcial.marcos                    ?? obter('Marcos Principais', 'Cronograma Macro'),
-    recomendacao:              parcial.recomendacao              ?? obter('Recomendação', 'Parecer Final'),
+    resumo_executivo:           parcial.resumo_executivo           ?? obter('Resumo Executivo', 'Cenário Atual'),
+    capex:                      parcial.capex                      ?? num('CAPEX (R$)', 'CAPEX'),
+    opex:                       parcial.opex                       ?? num('OPEX (R$)', 'OPEX'),
+    opex_periodicidade:         parcial.opex_periodicidade         ?? (obter('Periodicidade OPEX') || 'MENSAL'),
+    economia_estimada:          parcial.economia_estimada          ?? num('Economia Estimada (R$)'),
+    economia_periodicidade:     parcial.economia_periodicidade     ?? (obter('Periodicidade Economia') || 'MENSAL'),
+    tipo_payback:               parcial.tipo_payback               ?? (obter('Tipo Payback') || (isQual ? 'QUALITATIVO' : 'QUANTITATIVO')),
+    payback_informado:          parcial.payback_informado          ?? num('Payback Estimado (meses)'),
+    payback_unidade:            'MESES',
+    sistemas_envolvidos:        parcial.sistemas_envolvidos        ?? obter('Sistemas Envolvidos', 'Solução Proposta'),
+    complexidade_tecnica:       parcial.complexidade_tecnica       ?? obter('Complexidade Técnica', 'Premissas'),
+    dependencia_fornecedores:   parcial.dependencia_fornecedores   ?? obter('Dependência de Fornecedores', 'Restrições'),
+    infraestrutura:             parcial.infraestrutura             ?? obter('Infraestrutura'),
+    impacto_operacional:        parcial.impacto_operacional        ?? obter('Impacto Operacional', 'Impactos Operacionais'),
+    mudanca_processo:           parcial.mudanca_processo           ?? obter('Mudança de Processo', 'Impactos Organizacionais'),
+    recursos_necessarios:       parcial.recursos_necessarios       ?? obter('Recursos Necessários'),
+    impactos:                   parcial.impactos                   ?? obter('Impactos', 'Problema / Oportunidade', 'Problema/Oportunidade'),
+    beneficios_esperados:       parcial.beneficios_esperados       ?? obter('Benefícios Esperados'),
+    riscos:                     parcial.riscos                     ?? obter('Riscos'),
+    data_inicio_prev:           parcial.data_inicio_prev           ?? obter('Data Início Prevista'),
+    data_fim_prev:              parcial.data_fim_prev              ?? obter('Data Término Prevista'),
+    marcos:                     parcial.marcos                     ?? obter('Marcos Principais', 'Cronograma Macro'),
+    recomendacao:               parcial.recomendacao               ?? obter('Recomendação', 'Parecer Final'),
     justificativa_recomendacao: parcial.justificativa_recomendacao ?? obter('Justificativa da Recomendação', 'Alinhamento Estratégico'),
-    condicoes_aprovacao:       parcial.condicoes_aprovacao       ?? obter('Condições de Aprovação', 'Critérios de Sucesso'),
-    tipo_indicador:            parcial.tipo_indicador            ?? obter('Indicadores Qualitativos'),
-    baseline_valor:            null,
-    meta_valor:                null,
-    economia_mensal_esperada:  null,
+    condicoes_aprovacao:        parcial.condicoes_aprovacao        ?? obter('Condições de Aprovação', 'Critérios de Sucesso'),
+    tipo_indicador:             parcial.tipo_indicador             ?? obter('Indicadores Qualitativos'),
+    baseline_valor:             null,
+    meta_valor:                 null,
+    economia_mensal_esperada:   null,
   }
 
   return montarResultado(dados, isQual)

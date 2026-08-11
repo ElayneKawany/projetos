@@ -19,7 +19,7 @@ interface Stage {
 }
 
 const STAGES: Stage[] = [
-  { label: 'TAP',               icon: '📄', doneFromStatus: 'COMPLEMENTACAO_TAP',    activeStatus: 'TRIAGEM',                triggerStatus: 'COMPLEMENTACAO_TAP' },
+  { label: 'TAP',               icon: '📄', doneFromStatus: 'COMITE_IDEIAS',         activeStatus: 'TRIAGEM',                triggerStatus: 'COMITE_IDEIAS' },
   { label: 'Viabilidade',       icon: '📊', doneFromStatus: 'APROVACAO',             activeStatus: 'VIABILIDADE',            triggerStatus: 'APROVACAO' },
   { label: 'Cronograma',        icon: '📅', doneFromStatus: 'EXECUCAO',              activeStatus: 'CRONOGRAMA',             triggerStatus: 'EXECUCAO' },
   { label: 'Execução',          icon: '🚀', doneFromStatus: 'PROJETO_CONCLUIDO',     activeStatus: 'EXECUCAO',               triggerStatus: 'PROJETO_CONCLUIDO' },
@@ -38,6 +38,8 @@ interface HistoricoItem {
 interface Props {
   statusAtual: string
   historicoStatus?: HistoricoItem[]
+  temViabilidadeAprovada?: boolean
+  temCronogramaAprovado?: boolean
 }
 
 function formatDate(iso: string): string {
@@ -52,7 +54,7 @@ function formatTime(iso: string): string {
   } catch { return '' }
 }
 
-export default function CicloVidaTimeline({ statusAtual, historicoStatus = [] }: Props) {
+export default function CicloVidaTimeline({ statusAtual, historicoStatus = [], temViabilidadeAprovada, temCronogramaAprovado }: Props) {
   const currentIdx = LIFECYCLE_ORDER.indexOf(statusAtual as StatusProjeto)
 
   // Para cada etapa, encontra a entrada histórica que marcou sua conclusão
@@ -76,8 +78,11 @@ export default function CicloVidaTimeline({ statusAtual, historicoStatus = [] }:
         <div className="flex items-start min-w-max gap-0">
           {STAGES.map((stage, i) => {
             const doneIdx   = LIFECYCLE_ORDER.indexOf(stage.doneFromStatus)
-            const isDone    = currentIdx >= doneIdx
-            const isActive  = statusAtual === stage.activeStatus
+            const artefatoAprovado =
+              (stage.activeStatus === 'VIABILIDADE' && !!temViabilidadeAprovada) ||
+              (stage.activeStatus === 'CRONOGRAMA'  && !!temCronogramaAprovado)
+            const isDone    = currentIdx >= doneIdx || artefatoAprovado
+            const isActive  = !isDone && statusAtual === stage.activeStatus
             const info      = isDone ? getStageInfo(stage) : null
 
             let dotBg     = 'bg-gray-200'

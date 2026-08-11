@@ -277,6 +277,12 @@ export default function ProjetoDetalheClient(props: Props) {
     saude = '🟡'; saudeLabel = 'Atenção'; saudeColor = 'text-amber-700 bg-amber-50 border-amber-200'
   }
 
+  // Prazo: usa data_fim_efetiva (campo oficial per lib/guards/data-fim-prev.guard.ts)
+  // null = sem cronograma, não exibir badge
+  const prazoAtrasado: boolean | null = projeto.data_fim_efetiva
+    ? projeto.data_fim_efetiva < hoje
+    : null
+
   // ── KPIs de progresso ──────────────────────────────────────────────────────
   const cronogramaPct = dashData ? dashData.cronograma.pct : (totalTasks > 0 ? Math.round((concludedTasks / totalTasks) * 100) : 0)
   const financeiroPct = dashData ? dashData.financeiro.total_pct : (totalAprovado > 0 ? Math.min(100, Math.round((totalRealizado / totalAprovado) * 100)) : 0)
@@ -448,6 +454,19 @@ export default function ProjetoDetalheClient(props: Props) {
             </p>
           </div>
 
+          {/* Badge NO PRAZO / ATRASADO — exibido quando há data de conclusão no cronograma */}
+          {prazoAtrasado !== null && (
+            <div className="shrink-0 self-start">
+              <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold border ${
+                prazoAtrasado
+                  ? 'bg-red-50 text-red-700 border-red-200'
+                  : 'bg-green-50 text-green-700 border-green-200'
+              }`}>
+                {prazoAtrasado ? '⚠ ATRASADO' : '✓ NO PRAZO'}
+              </span>
+            </div>
+          )}
+
           {/* Botão Concluir Projeto — visível apenas em EXECUCAO + cronograma aprovado */}
           {podeGerenciar && projeto.status === 'EXECUCAO' && cronogramaAprovado && (
             <div className="shrink-0">
@@ -545,7 +564,12 @@ export default function ProjetoDetalheClient(props: Props) {
       </div>
 
       {/* ── Linha do Ciclo de Vida ───────────────────────── */}
-      <CicloVidaTimeline statusAtual={projeto.status} historicoStatus={historicoStatus as never[]} />
+      <CicloVidaTimeline
+        statusAtual={projeto.status}
+        historicoStatus={historicoStatus as never[]}
+        temViabilidadeAprovada={viabilidadeAtual?.status === 'APROVADO'}
+        temCronogramaAprovado={cronogramaAprovado}
+      />
 
       {/* ── Banner de Revisão Pendente ──────────────────── */}
       {(() => {

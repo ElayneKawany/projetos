@@ -48,6 +48,13 @@ export interface TarefaParseada {
   data_fim: string | null
   /** Data real de conclusão (coluna "Data Conclusão" — opcional na planilha). */
   data_conclusao: string | null
+  /**
+   * Data original / linha de base — preenchida quando a coluna "Nova Data" está presente.
+   * Neste caso data_fim = nova data vigente e data_fim_baseline = data original preservada.
+   * null quando não houve reprogramação.
+   */
+  data_inicio_baseline: string | null
+  data_fim_baseline: string | null
   duracao_dias: number | null
   responsavel_id: number | null
   responsavel_nome_ext: string | null
@@ -134,6 +141,12 @@ const COLUNAS_OFICIAIS: Record<string, string> = {
   executor:         'executor',
   datainicio:       'data_inicio',
   datafim:          'data_fim',
+  novadata:             'data_nova',         // Nova data de entrega (reprogramação) — mantém Data Fim como baseline
+  novaentrega:          'data_nova',         // alias
+  novadataentrega:      'data_nova',         // alias
+  novadatainicio:       'data_nova_inicio',  // Nova data de início (reprogramação)
+  novoinicio:           'data_nova_inicio',  // alias
+  novadatadeinicio:     'data_nova_inicio',  // alias
   dataconclusao:    'data_conclusao',  // opcional — data real de conclusão
   percentual:       'percentual',
   status:           'status',
@@ -446,18 +459,38 @@ export function parsearExcelCronograma(
     }
 
     // ── Datas (opcionais — NULL quando vazio ou inválido) ────────────────────
-    const dataInicio    = parsearDataExcel(getCol('data_inicio'))
-    const dataFim       = parsearDataExcel(getCol('data_fim'))
+    const dataInicioRaw = parsearDataExcel(getCol('data_inicio'))
+    const dataNovaInicio = parsearDataExcel(getCol('data_nova_inicio'))
+    const dataFimRaw    = parsearDataExcel(getCol('data_fim'))
+    const dataNova      = parsearDataExcel(getCol('data_nova'))
     const dataConclusao = parsearDataExcel(getCol('data_conclusao'))
+
+    // Quando "Nova Data Início" está preenchida: data_inicio passa a ser a nova data vigente
+    // e a data original ("Data Início") é preservada como data_inicio_baseline.
+    const dataInicio         = dataNovaInicio ?? dataInicioRaw
+    const dataInicioBaseline = dataNovaInicio ? dataInicioRaw : null
+
+    // Quando "Nova Data" está preenchida: data_fim passa a ser a nova data vigente
+    // e a data original ("Data Fim") é preservada como data_fim_baseline.
+    const dataFim          = dataNova ?? dataFimRaw
+    const dataFimBaseline  = dataNova ? dataFimRaw : null
 
     // Avisa (não bloqueia) quando a data veio preenchida mas não foi reconhecida
     const rawInicio = getCol('data_inicio')
-    if (rawInicio != null && rawInicio !== '' && !dataInicio) {
+    if (rawInicio != null && rawInicio !== '' && !dataInicioRaw) {
       warnings.push(`Linha ${numLinha}: Data Início "${rawInicio}" não reconhecida — gravado como NULL.`)
     }
+    const rawNovaInicio = getCol('data_nova_inicio')
+    if (rawNovaInicio != null && rawNovaInicio !== '' && !dataNovaInicio) {
+      warnings.push(`Linha ${numLinha}: Nova Data Início "${rawNovaInicio}" não reconhecida — gravado como NULL.`)
+    }
     const rawFim = getCol('data_fim')
-    if (rawFim != null && rawFim !== '' && !dataFim) {
+    if (rawFim != null && rawFim !== '' && !dataFimRaw) {
       warnings.push(`Linha ${numLinha}: Data Fim "${rawFim}" não reconhecida — gravado como NULL.`)
+    }
+    const rawNova = getCol('data_nova')
+    if (rawNova != null && rawNova !== '' && !dataNova) {
+      warnings.push(`Linha ${numLinha}: Nova Data "${rawNova}" não reconhecida — gravado como NULL.`)
     }
     const rawConclusao = getCol('data_conclusao')
     if (rawConclusao != null && rawConclusao !== '' && !dataConclusao) {
@@ -519,7 +552,9 @@ export function parsearExcelCronograma(
       criticidade,
       tipo_macro:           tipoMacro,
       data_inicio:          dataInicio,
+      data_inicio_baseline: dataInicioBaseline,
       data_fim:             dataFim,
+      data_fim_baseline:    dataFimBaseline,
       data_conclusao:       dataConclusao,
       duracao_dias:         duracaoDias,
       responsavel_id:       responsavelId,

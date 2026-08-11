@@ -372,6 +372,8 @@ export async function POST(
             criticidade:          t.criticidade ?? 'NORMAL',
             data_inicio:          t.data_inicio ?? null,
             data_fim:             t.data_fim ?? null,
+            data_inicio_baseline: (t as { data_inicio_baseline?: string | null }).data_inicio_baseline ?? null,
+            data_fim_baseline:    (t as { data_fim_baseline?: string | null }).data_fim_baseline ?? null,
             duracao_dias:         duracao,
             responsavel_id:       t.responsavel_id ?? null,
             responsavel_nome_ext: (t as TarefaInput).responsavel_nome_ext ?? null,

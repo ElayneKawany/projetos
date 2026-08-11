@@ -18,6 +18,8 @@ function runMigrations(db: Database.Database) {
   const addCol = (table: string, col: string, def = 'TEXT') => {
     try { db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`) } catch { /* já existe */ }
   }
+  // TAP – coluna de controle de atualização
+  addCol('tap_versoes', 'updated_at', 'DATETIME')
   // TAP V2 – campos do template de Escopo de Projeto
   addCol('tap_versoes', 'situacao_atual')
   addCol('tap_versoes', 'escopo_fisico')
@@ -733,6 +735,10 @@ function runMigrations(db: Database.Database) {
     usuario_nome_ext     TEXT,
     created_at           TEXT DEFAULT (datetime('now'))
   )`)
+
+  // Cronograma — Linha de Base: datas originais antes de reprogramação
+  addCol('cronograma_tarefas', 'data_fim_baseline', 'TEXT')
+  addCol('cronograma_tarefas', 'data_inicio_baseline', 'TEXT')
 
   // Seed: popula config_status_projeto com os status padrão se ainda estiver vazio
   const count = (db.prepare('SELECT COUNT(*) as c FROM config_status_projeto').get() as { c: number }).c

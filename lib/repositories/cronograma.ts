@@ -242,7 +242,7 @@ export const CronogramaRepository = {
       `SELECT ct.codigo, ct.nivel, ct.nome, ct.descricao, ct.tipo, ct.criticidade,
               COALESCE(ct.responsavel_nome_ext, ur.nome) AS responsavel_nome,
               COALESCE(ct.executor_nome_ext,    ue.nome) AS executor_nome,
-              ct.data_inicio, ct.data_fim,
+              ct.data_inicio, ct.data_inicio_baseline, ct.data_fim, ct.data_fim_baseline,
               ct.percentual, ct.status, ct.observacoes, ct.tipo_macro
        FROM cronograma_tarefas ct
        LEFT JOIN usuarios ur ON ct.responsavel_id = ur.id
@@ -310,6 +310,8 @@ export const CronogramaRepository = {
     data_conclusao?: string | null
     observacoes?: string | null
     tipo_macro?: string | null
+    data_fim_baseline?: string | null
+    data_inicio_baseline?: string | null
     ativo?: number
     criado_por?: number | null
     alterado_por?: number | null
@@ -317,11 +319,11 @@ export const CronogramaRepository = {
     const result = db.execute(
       `INSERT INTO cronograma_tarefas
          (cronograma_id, parent_id, codigo, nome, descricao, nivel, tipo, criticidade,
-          data_inicio, data_fim, duracao_dias,
+          data_inicio, data_inicio_baseline, data_fim, data_fim_baseline, duracao_dias,
           responsavel_id, responsavel_nome_ext, executor_id, executor_nome_ext,
           area_id, peso, ordem, percentual, status, prazo_status, data_conclusao,
           observacoes, tipo_macro, ativo, criado_por, alterado_por, alterado_em)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
       [
         params.cronograma_id,
         params.parent_id ?? null,
@@ -332,7 +334,9 @@ export const CronogramaRepository = {
         params.tipo ?? 'TAREFA',
         params.criticidade ?? 'NORMAL',
         params.data_inicio ?? null,
+        params.data_inicio_baseline ?? null,
         params.data_fim ?? null,
+        params.data_fim_baseline ?? null,
         params.duracao_dias ?? null,
         params.responsavel_id ?? null,
         params.responsavel_nome_ext ?? null,
@@ -359,7 +363,8 @@ export const CronogramaRepository = {
     nome: string; nivel: string; codigo: string; ordem: number; parent_id: number | null
     responsavel_id: number | null; responsavel_nome_ext: string | null
     executor_id: number | null; executor_nome_ext: string | null
-    data_inicio: string | null; data_fim: string | null; duracao_dias: number | null
+    data_inicio: string | null; data_inicio_baseline?: string | null
+    data_fim: string | null; data_fim_baseline?: string | null; duracao_dias: number | null
     tipo: string; criticidade: string; observacoes: string | null; descricao: string | null
     tipo_macro: string | null; alterado_por: number
   }): void {
@@ -368,7 +373,7 @@ export const CronogramaRepository = {
        SET nome = ?, nivel = ?, codigo = ?, ordem = ?, parent_id = ?,
            responsavel_id = ?, responsavel_nome_ext = ?,
            executor_id = ?,   executor_nome_ext = ?,
-           data_inicio = ?, data_fim = ?, duracao_dias = ?,
+           data_inicio = ?, data_inicio_baseline = ?, data_fim = ?, data_fim_baseline = ?, duracao_dias = ?,
            tipo = ?, criticidade = ?, observacoes = ?, descricao = ?,
            tipo_macro = ?,
            ativo = 1,
@@ -378,7 +383,8 @@ export const CronogramaRepository = {
         params.nome, params.nivel, params.codigo, params.ordem, params.parent_id,
         params.responsavel_id, params.responsavel_nome_ext,
         params.executor_id, params.executor_nome_ext,
-        params.data_inicio, params.data_fim, params.duracao_dias,
+        params.data_inicio, params.data_inicio_baseline ?? null,
+        params.data_fim, params.data_fim_baseline ?? null, params.duracao_dias,
         params.tipo, params.criticidade, params.observacoes, params.descricao,
         params.tipo_macro, params.alterado_por, id, cronogramaId,
       ]

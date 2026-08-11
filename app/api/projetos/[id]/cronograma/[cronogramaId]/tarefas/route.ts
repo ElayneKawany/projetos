@@ -16,7 +16,9 @@ interface TarefaInput {
   executor_id?: number | null
   executor_nome_ext?: string | null
   data_inicio?: string | null
+  data_inicio_baseline?: string | null
   data_fim?: string | null
+  data_fim_baseline?: string | null
   tipo?: string
   criticidade?: string
   observacoes?: string | null
@@ -123,7 +125,9 @@ export async function PUT(
             nome, nivel: t.nivel, codigo, ordem, parent_id,
             responsavel_id: primaryRespId, responsavel_nome_ext: primaryRespNomeExt,
             executor_id: exec_id, executor_nome_ext: t.executor_nome_ext ?? null,
-            data_inicio: t.data_inicio ?? null, data_fim: t.data_fim ?? null, duracao_dias: durDias,
+            data_inicio: t.data_inicio ?? null, data_inicio_baseline: t.data_inicio_baseline ?? null,
+            data_fim: t.data_fim ?? null, data_fim_baseline: t.data_fim_baseline ?? null,
+            duracao_dias: durDias,
             tipo: t.tipo ?? 'TAREFA', criticidade: t.criticidade ?? 'NORMAL',
             observacoes: t.observacoes ?? null, descricao: t.descricao ?? null,
             tipo_macro: tipoMacro, alterado_por: session.id,
@@ -133,13 +137,15 @@ export async function PUT(
         } else {
           itemId = Number(CronogramaRepository.insertTarefa({
             cronograma_id, codigo, nome,
-            descricao:    t.descricao ?? null,
-            nivel:        t.nivel,
-            tipo:         t.tipo ?? 'TAREFA',
-            criticidade:  t.criticidade ?? 'NORMAL',
-            data_inicio:  t.data_inicio ?? null,
-            data_fim:     t.data_fim ?? null,
-            duracao_dias: durDias,
+            descricao:         t.descricao ?? null,
+            nivel:             t.nivel,
+            tipo:              t.tipo ?? 'TAREFA',
+            criticidade:       t.criticidade ?? 'NORMAL',
+            data_inicio:            t.data_inicio ?? null,
+            data_inicio_baseline:   t.data_inicio_baseline ?? null,
+            data_fim:               t.data_fim ?? null,
+            data_fim_baseline:      t.data_fim_baseline ?? null,
+            duracao_dias:      durDias,
             responsavel_id:    primaryRespId,
             responsavel_nome_ext: primaryRespNomeExt,
             executor_id:   exec_id,
