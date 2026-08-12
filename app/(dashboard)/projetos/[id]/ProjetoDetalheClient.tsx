@@ -227,7 +227,7 @@ export default function ProjetoDetalheClient(props: Props) {
   const tapAtual         = tapVersoes[0] ?? null
   const viabilidadeAtual = viabilidadeData as { status?: string } | null
   const cronogramaAtual  = cronogramaData  as { status?: string } | null
-  const cronogramaAprovado = cronogramaAtual?.status === 'APROVADO'
+  const cronogramaAprovado = cronogramaAprovadoData != null || ['APROVADO','EM_EXECUCAO','PRONTO_PARA_ENCERRAMENTO','ENCERRADO'].includes(cronogramaAtual?.status ?? '')
 
   // Validação: verifica se o status atual existe e está ativo na configuração
   const statusConfig = configStatus.find(s => s.codigo === projeto.status)
@@ -436,13 +436,13 @@ export default function ProjetoDetalheClient(props: Props) {
               )}
               {cronogramaAtual && (
                 <span className={`badge text-xs ${
-                  cronogramaAtual.status === 'APROVADO'
+                  cronogramaAprovado
                     ? 'bg-green-100 text-green-700'
                     : cronogramaAtual.status === 'PENDENTE_APROVACAO'
                     ? 'bg-amber-100 text-amber-700'
                     : 'bg-gray-100 text-gray-600'
                 }`}>
-                  Cronograma {cronogramaAtual.status === 'APROVADO' ? '✓' : cronogramaAtual.status === 'PENDENTE_APROVACAO' ? '⏳' : '—'}
+                  Cronograma {cronogramaAprovado ? '✓' : cronogramaAtual.status === 'PENDENTE_APROVACAO' ? '⏳' : '—'}
                 </span>
               )}
             </div>

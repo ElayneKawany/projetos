@@ -3517,9 +3517,9 @@ function SlideExecucaoDetalhe({
                 <span className="text-base">🟢</span>
                 <span className="text-xs font-bold text-green-700">EM EXECUÇÃO</span>
               </div>
-              <div className="flex items-center gap-2 px-3 py-2 rounded-lg border" style={{ background: `${prazo.color}10`, borderColor: `${prazo.color}30` }}>
-                <span className="text-base">{prazo.dot}</span>
-                <span className="text-xs font-bold" style={{ color: prazo.color }}>{prazo.label}</span>
+              <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg" style={{ background: prazo.color }}>
+                <span className="text-lg leading-none">{prazo.dot}</span>
+                <span className="text-sm font-black text-white tracking-wide uppercase">{prazo.label}</span>
               </div>
             </div>
           </div>

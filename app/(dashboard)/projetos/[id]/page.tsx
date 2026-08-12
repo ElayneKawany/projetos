@@ -48,7 +48,7 @@ export default async function ProjetoDetalhePage({
 
   // Cronograma aprovado — data prevista calculada via MAX(data_fim) das tarefas
   const cronAprovRow = db.prepare(
-    `SELECT id FROM cronogramas WHERE projeto_id = ? AND status = 'APROVADO' AND (ativo IS NULL OR ativo = 1) ORDER BY versao DESC LIMIT 1`
+    `SELECT id FROM cronogramas WHERE projeto_id = ? AND status IN ('APROVADO','EM_EXECUCAO','PRONTO_PARA_ENCERRAMENTO','ENCERRADO') AND (ativo IS NULL OR ativo = 1) ORDER BY versao DESC LIMIT 1`
   ).get(projeto.id) as { id: number } | undefined
   const cronogramaAprovadoData = cronAprovRow
     ? (db.prepare(
