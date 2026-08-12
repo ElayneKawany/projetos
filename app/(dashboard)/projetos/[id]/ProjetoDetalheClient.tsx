@@ -166,6 +166,9 @@ export default function ProjetoDetalheClient(props: Props) {
   const [modalConcluir, setModalConcluir] = useState(false)
   const [iniciandoPayback, setIniciandoPayback] = useState(false)
   const [encerrando, setEncerrando] = useState(false)
+  const [modalCancelar, setModalCancelar] = useState(false)
+  const [cancelando, setCancelando] = useState(false)
+  const [motivoCancelamento, setMotivoCancelamento] = useState('')
 
   // Visão Geral — edição
   const [editandoVG, setEditandoVG] = useState(false)
@@ -532,6 +535,18 @@ export default function ProjetoDetalheClient(props: Props) {
                 }}
               >
                 {encerrando ? 'Encerrando…' : '■ Encerrar Projeto'}
+              </button>
+            </div>
+          )}
+
+          {/* Botão Cancelar Projeto — disponível em qualquer fase, exceto CANCELADO e PROJETO_ENCERRADO */}
+          {podeSubmeter && !['CANCELADO', 'PROJETO_ENCERRADO'].includes(projeto.status) && (
+            <div className="shrink-0">
+              <button
+                className="flex items-center gap-2 text-sm px-4 py-2 rounded-lg border border-red-300 text-red-600 bg-white hover:bg-red-50 transition-colors font-semibold"
+                onClick={() => { setMotivoCancelamento(''); setModalCancelar(true) }}
+              >
+                ✕ Cancelar Projeto
               </button>
             </div>
           )}
@@ -1474,6 +1489,66 @@ export default function ProjetoDetalheClient(props: Props) {
             router.refresh()
           }}
         />
+      )}
+
+      {/* Modal Cancelar Projeto */}
+      {modalCancelar && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6">
+            <h2 className="text-xl font-bold text-red-700 mb-1">Cancelar Projeto</h2>
+            <p className="text-sm text-gray-600 mb-4">
+              Tem certeza que deseja cancelar o projeto <strong>{projeto.nome}</strong>?
+              <br />
+              O projeto e todos os seus dados serão preservados para consulta histórica.
+            </p>
+            <label className="block text-sm font-semibold text-gray-700 mb-1">
+              Motivo do cancelamento <span className="font-normal text-gray-400">(opcional)</span>
+            </label>
+            <textarea
+              className="input w-full mb-5"
+              rows={3}
+              placeholder="Descreva o motivo do cancelamento…"
+              value={motivoCancelamento}
+              onChange={e => setMotivoCancelamento(e.target.value)}
+            />
+            <div className="flex gap-3 justify-end">
+              <button
+                className="btn-ghost"
+                disabled={cancelando}
+                onClick={() => setModalCancelar(false)}
+              >
+                Voltar
+              </button>
+              <button
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white font-semibold text-sm transition-colors disabled:opacity-60"
+                disabled={cancelando}
+                onClick={async () => {
+                  setCancelando(true)
+                  try {
+                    const res = await fetch(`/api/projetos/${projeto.id}/cancelar`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ motivo: motivoCancelamento }),
+                    })
+                    if (!res.ok) {
+                      const d = await res.json()
+                      alert(d.error ?? 'Erro ao cancelar projeto.')
+                    } else {
+                      setModalCancelar(false)
+                      router.refresh()
+                    }
+                  } catch {
+                    alert('Falha na comunicação com o servidor.')
+                  } finally {
+                    setCancelando(false)
+                  }
+                }}
+              >
+                {cancelando ? 'Cancelando…' : 'Confirmar cancelamento'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>
