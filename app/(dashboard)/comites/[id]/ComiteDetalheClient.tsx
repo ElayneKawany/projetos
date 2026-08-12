@@ -77,7 +77,8 @@ interface MacroTarefa {
   cronograma_id: number
   projeto_id: number
   nome: string
-  nivel?: number
+  nivel?: string
+  codigo?: string
   percentual?: number
   data_inicio?: string
   data_fim?: string
@@ -414,6 +415,7 @@ export default function ComiteDetalheClient({
           comite={comite}
           participantes={participantes}
           todosProjetos={todosProjetos}
+          comiteProjetos={comiteProjetos}
           diretorias={diretorias}
           presentMode={presentMode}
           onIniciarApresentacao={() => setPresentMode(true)}
@@ -700,10 +702,11 @@ function Modal({ title, children, onClose }: { title: string; children: React.Re
 
 // ─── Slide: Abertura ──────────────────────────────────────────────────────────
 
-function SlideAbertura({ comite, participantes, todosProjetos, diretorias, presentMode, onIniciarApresentacao }: {
+function SlideAbertura({ comite, participantes, todosProjetos, comiteProjetos, diretorias, presentMode, onIniciarApresentacao }: {
   comite: Comite & { criador_nome?: string }
   participantes: any[]
   todosProjetos: ProjetoResumo[]
+  comiteProjetos: ComiteProjetoItem[]
   diretorias: any[]
   presentMode: boolean
   onIniciarApresentacao: () => void
@@ -716,7 +719,7 @@ function SlideAbertura({ comite, participantes, todosProjetos, diretorias, prese
   // ── KPIs ──────────────────────────────────────────────────────
   const totalProjetos     = todosProjetos.length
   const diretoriasSet     = new Set(todosProjetos.map(p => p.diretoria).filter(Boolean))
-  const emExecucao        = todosProjetos.filter(p => ['EXECUCAO','GOLIVE'].includes(p.status)).length
+  const emExecucao        = todosProjetos.filter(p => p.status === 'EXECUCAO').length
   const exigemDecisao     = todosProjetos.filter(p => ['APROVACAO','VIABILIDADE','COMPLEMENTACAO_TAP'].includes(p.status)).length
 
   // ── Período formatado ──────────────────────────────────────────
@@ -821,12 +824,11 @@ function SlideAbertura({ comite, participantes, todosProjetos, diretorias, prese
         </div>
 
         {/* ── KPIs ── */}
-        <div className="grid grid-cols-4 gap-3 mb-6">
+        <div className="grid grid-cols-3 gap-3 mb-6">
           {[
-            { label: 'Total de Projetos',       valor: totalProjetos,      icon: Briefcase,   cor: '#60A5FA' },
-            { label: 'Diretorias Participantes', valor: diretoriasSet.size, icon: Building2,   cor: OURO_CLR  },
-            { label: 'Em Execução',              valor: emExecucao,         icon: Play,        cor: '#34D399' },
-            { label: 'Exigem Decisão',           valor: exigemDecisao,      icon: ShieldAlert, cor: '#F87171' },
+            { label: 'Total de Projetos',       valor: totalProjetos,      icon: Briefcase, cor: '#60A5FA' },
+            { label: 'Diretorias Participantes', valor: diretoriasSet.size, icon: Building2, cor: OURO_CLR  },
+            { label: 'Em Execução',              valor: emExecucao,         icon: Play,      cor: '#34D399' },
           ].map(({ label, valor, icon: Icon, cor }) => (
             <div key={label} className="rounded-xl p-4 text-center"
               style={{ background: 'rgba(255,255,255,0.09)', border: '1px solid rgba(255,255,255,0.15)', backdropFilter: 'blur(4px)' }}>
@@ -2151,6 +2153,27 @@ function SlidePropostasDetalhe({
             <button onClick={() => abrirModal('REJEITAR')} className="flex items-center gap-2 px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg font-semibold text-sm transition-colors shadow-sm">
               <Ban size={15} /> Rejeitar Proposta
             </button>
+            <button
+              disabled={saving}
+              onClick={async () => {
+                if (!confirm('Pausar este projeto por decisão do Comitê? O projeto poderá ser retomado posteriormente.')) return
+                setSaving(true)
+                try {
+                  await fetch(`/api/comites/${comiteId}/decisoes`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ projeto_id: proj.id, tipo: 'SUSPENSO', descricao: 'Projeto pausado por decisão do Comitê' }),
+                  })
+                  await fetch(`/api/projetos/${proj.id}`, {
+                    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status: 'PAUSADO', motivo: 'Projeto pausado por decisão do Comitê' }),
+                  })
+                  await onRefresh()
+                } finally { setSaving(false) }
+              }}
+              className="flex items-center gap-2 px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-semibold text-sm transition-colors shadow-sm disabled:opacity-60"
+            >
+              ⏸ Pausar Projeto
+            </button>
           </div>
         </div>
       )}
@@ -2730,6 +2753,27 @@ function SlideViabilidadeDetalhe({
             </button>
             <button onClick={() => abrirModal('REJEITAR')} className="flex items-center gap-2 px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg font-semibold text-sm transition-colors shadow-sm">
               <Ban size={15} /> Reprovar Viabilidade
+            </button>
+            <button
+              disabled={saving}
+              onClick={async () => {
+                if (!confirm('Pausar este projeto por decisão do Comitê? O projeto poderá ser retomado posteriormente.')) return
+                setSaving(true)
+                try {
+                  await fetch(`/api/comites/${comiteId}/decisoes`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ projeto_id: proj.id, tipo: 'SUSPENSO', descricao: 'Projeto pausado por decisão do Comitê' }),
+                  })
+                  await fetch(`/api/projetos/${proj.id}`, {
+                    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status: 'PAUSADO', motivo: 'Projeto pausado por decisão do Comitê' }),
+                  })
+                  await onRefresh()
+                } finally { setSaving(false) }
+              }}
+              className="flex items-center gap-2 px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-semibold text-sm transition-colors shadow-sm disabled:opacity-60"
+            >
+              ⏸ Pausar Projeto
             </button>
           </div>
         </div>
@@ -3358,8 +3402,23 @@ function SlideExecucaoDetalhe({
   // ── Projeto page ─────────────────────────────────────────────────
   const { projeto } = page
   const det = detalhe.find(d => d.id === projeto.id) || ({} as ProjetoExecucaoDetalhe)
-  const macros = tarefas.filter(t => t.projeto_id === projeto.id)
   const pendsProjeto = pendencias.filter(p => p.projeto_id === projeto.id)
+
+  // Expand FASEs: if a FASE has direct TAREFA children (identified by WBS prefix), show those
+  // children instead of the FASE itself. FASEs without child tasks are kept as-is.
+  const todasTarefasProjeto = tarefas.filter(t => t.projeto_id === projeto.id)
+  const fases = todasTarefasProjeto.filter(t => t.nivel === 'FASE')
+  const tarefasFilhas = todasTarefasProjeto.filter(t => t.nivel === 'TAREFA')
+  const macros: MacroTarefa[] = fases.flatMap(fase => {
+    if (!fase.codigo) return [fase]
+    const prefix = fase.codigo + '.'
+    const filhos = tarefasFilhas.filter(t => {
+      if (!t.codigo?.startsWith(prefix)) return false
+      // Direct child only — no additional dot after the prefix
+      return !t.codigo.slice(prefix.length).includes('.')
+    })
+    return filhos.length > 0 ? filhos : [fase]
+  })
 
   // Progress
   const percConcluido = macros.length > 0
@@ -3564,6 +3623,7 @@ function SlideExecucaoDetalhe({
                     <th className="px-4 py-2.5 text-left">Responsável</th>
                     <th className="px-4 py-2.5 text-center whitespace-nowrap">Previsão</th>
                     <th className="px-4 py-2.5 text-center whitespace-nowrap">Dias Rest.</th>
+                    <th className="px-4 py-2.5 text-left">Observação</th>
                     <th className="px-4 py-2.5 text-center">Avanço</th>
                   </tr>
                 </thead>
@@ -3594,6 +3654,9 @@ function SlideExecucaoDetalhe({
                                 {dias}d
                               </span>}
                         </td>
+                        <td className="px-4 py-3 text-xs text-gray-500 max-w-[180px]">
+                          {t.observacoes || '—'}
+                        </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
                             <div className="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden" style={{ minWidth: '48px' }}>
@@ -3617,6 +3680,7 @@ function SlideExecucaoDetalhe({
                     <th className="px-4 py-2.5 text-left">Responsável</th>
                     <th className="px-4 py-2.5 text-center whitespace-nowrap">Data Original</th>
                     <th className="px-4 py-2.5 text-center whitespace-nowrap">Dias Atraso</th>
+                    <th className="px-4 py-2.5 text-left">Observação</th>
                     <th className="px-4 py-2.5 text-center">Avanço</th>
                     <th className="px-4 py-2.5 text-center">Ação</th>
                   </tr>
@@ -3643,6 +3707,9 @@ function SlideExecucaoDetalhe({
                               ? <span className="font-bold text-red-600">{dias}d</span>
                               : '—'}
                           </td>
+                          <td className="px-4 py-3 text-xs text-gray-500 max-w-[180px]">
+                            {t.observacoes || '—'}
+                          </td>
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-2">
                               <div className="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden" style={{ minWidth: '48px' }}>
@@ -3664,7 +3731,7 @@ function SlideExecucaoDetalhe({
                         </tr>
                         {isReprog && (
                           <tr className="border-t border-amber-100 bg-amber-50/60">
-                            <td colSpan={6} className="px-4 py-3">
+                            <td colSpan={7} className="px-4 py-3">
                               <div className="flex items-center gap-3 flex-wrap">
                                 <span className="text-xs text-gray-600 font-medium">Nova data de entrega:</span>
                                 <input

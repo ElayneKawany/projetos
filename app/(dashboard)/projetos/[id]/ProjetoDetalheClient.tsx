@@ -505,6 +505,36 @@ export default function ProjetoDetalheClient(props: Props) {
             </div>
           )}
 
+          {/* Botão Encerrar Payback — visível apenas em PAYBACK_ACOMPANHAMENTO */}
+          {podeGerenciar && projeto.status === 'PAYBACK_ACOMPANHAMENTO' && (
+            <div className="shrink-0">
+              <button
+                className="btn-primary flex items-center gap-2 text-sm"
+                onClick={async () => {
+                  const motivo = prompt('Motivo do encerramento do payback (opcional):') ?? ''
+                  if (!confirm('Encerrar o acompanhamento de Payback? O projeto avançará para "Payback Encerrado".')) return
+                  try {
+                    const res = await fetch(`/api/projetos/${projeto.id}/payback/encerrar`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ motivo }),
+                    })
+                    if (!res.ok) {
+                      const d = await res.json()
+                      alert(d.error ?? 'Erro ao encerrar payback.')
+                    } else {
+                      router.refresh()
+                    }
+                  } catch {
+                    alert('Falha na comunicação com o servidor.')
+                  }
+                }}
+              >
+                ✓ Encerrar Payback
+              </button>
+            </div>
+          )}
+
           {/* Botão Encerrar Projeto — visível apenas em PAYBACK_ENCERRADO para PMO/ADMIN */}
           {['ADMIN','PMO'].includes(session.perfil) && projeto.status === 'PAYBACK_ENCERRADO' && (
             <div className="shrink-0">
@@ -535,6 +565,35 @@ export default function ProjetoDetalheClient(props: Props) {
                 }}
               >
                 {encerrando ? 'Encerrando…' : '■ Encerrar Projeto'}
+              </button>
+            </div>
+          )}
+
+          {/* Botão Pausar Projeto — disponível em todas as fases ativas */}
+          {podeGerenciar && !['PAUSADO', 'CANCELADO', 'PROJETO_ENCERRADO'].includes(projeto.status) && (
+            <div className="shrink-0">
+              <button
+                className="flex items-center gap-2 text-sm px-4 py-2 rounded-lg border border-amber-300 text-amber-700 bg-white hover:bg-amber-50 transition-colors font-semibold"
+                onClick={async () => {
+                  if (!confirm('Pausar o projeto? Todos os dados serão preservados e o projeto poderá ser retomado posteriormente.')) return
+                  try {
+                    const res = await fetch(`/api/projetos/${projeto.id}`, {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ status: 'PAUSADO', motivo: 'Projeto pausado' }),
+                    })
+                    if (!res.ok) {
+                      const d = await res.json()
+                      alert(d.error ?? 'Erro ao pausar projeto.')
+                    } else {
+                      router.refresh()
+                    }
+                  } catch {
+                    alert('Falha na comunicação com o servidor.')
+                  }
+                }}
+              >
+                ⏸ Pausar Projeto
               </button>
             </div>
           )}

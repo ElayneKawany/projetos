@@ -141,10 +141,11 @@ export default async function ComiteDetalhePage({ params }: { params: Promise<{ 
     WHERE p.ativo = 1 AND p.status IN ('EXECUCAO', 'GOLIVE')
   `).all()
 
-  // Macro tarefas (nivel='FASE') from latest active cronograma for each EXECUCAO project
+  // Macro tarefas (FASE + TAREFA direta) from latest active cronograma for each EXECUCAO project
+  // TAREFA rows are included so SlideExecucaoDetalhe can expand FASEs that have child tasks
   const macroTarefasExecucao = db.prepare(`
     SELECT
-      t.id, c.id AS cronograma_id, c.projeto_id, t.nome, t.nivel, t.percentual,
+      t.id, c.id AS cronograma_id, c.projeto_id, t.nome, t.nivel, t.codigo, t.percentual,
       t.data_inicio, t.data_fim, t.data_conclusao,
       t.bloqueio, t.motivo_bloqueio, t.motivo_atraso, t.criticidade,
       t.observacoes, t.prazo_status, t.ordem,
@@ -153,7 +154,7 @@ export default async function ComiteDetalhePage({ params }: { params: Promise<{ 
     JOIN cronogramas c ON c.id = t.cronograma_id
     LEFT JOIN usuarios u ON u.id = t.responsavel_id
     WHERE (c.ativo IS NULL OR c.ativo = 1)
-      AND t.nivel = 'FASE'
+      AND t.nivel IN ('FASE', 'TAREFA')
       AND (t.ativo IS NULL OR t.ativo = 1)
       AND c.versao = (
         SELECT MAX(c2.versao) FROM cronogramas c2

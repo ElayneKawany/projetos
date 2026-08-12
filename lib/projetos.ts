@@ -474,6 +474,48 @@ export function iniciarPayback(
   })
 }
 
+export function encerrarPayback(
+  projeto_id: number,
+  motivo: string,
+  usuario_id: number,
+  usuario_nome: string,
+): void {
+  const projeto = buscarProjetoPorId(projeto_id)
+  if (!projeto) throw new Error('Projeto não encontrado.')
+  if (projeto.status !== 'PAYBACK_ACOMPANHAMENTO') {
+    throw new Error('O projeto deve estar em "Payback em Acompanhamento" para encerrar o Payback.')
+  }
+
+  ProjetosRepository.updateStatus(projeto_id, 'PAYBACK_ENCERRADO')
+  ProjetosRepository.insertStatusHistorico(
+    projeto_id, 'PAYBACK_ACOMPANHAMENTO', 'PAYBACK_ENCERRADO',
+    motivo || 'Payback encerrado', usuario_id
+  )
+
+  registrarEvento({
+    projeto_id,
+    modulo: 'PROJETO',
+    artefato: 'PROJETO',
+    evento: 'ENCERRADO',
+    titulo: 'Payback encerrado',
+    descricao: motivo ? `Motivo: ${motivo}` : `Por ${usuario_nome}`,
+    usuario_id,
+    usuario_nome,
+  })
+
+  registrarAuditoria({
+    usuario_id,
+    usuario_nome,
+    acao: 'UPDATE',
+    entidade: 'projetos',
+    entidade_id: projeto_id,
+    projeto_id,
+    descricao: 'Payback encerrado',
+    dados_antes: { status: 'PAYBACK_ACOMPANHAMENTO' },
+    dados_depois: { status: 'PAYBACK_ENCERRADO', motivo },
+  })
+}
+
 export function encerrarProjeto(
   projeto_id: number,
   motivo: string,
