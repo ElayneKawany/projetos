@@ -121,7 +121,16 @@ export default async function ComiteDetalhePage({ params }: { params: Promise<{ 
       d.nome AS diretoria, a.nome AS area,
       u.nome AS gerente_nome,
       p.data_inicio_prev, p.data_fim_prev,
-      p.capex_aprovado, p.opex_aprovado,
+      COALESCE(
+        (SELECT v.capex FROM viabilidade v WHERE v.projeto_id = p.id ORDER BY v.versao DESC LIMIT 1),
+        p.capex_aprovado,
+        0
+      ) AS capex_aprovado,
+      COALESCE(
+        (SELECT v.opex FROM viabilidade v WHERE v.projeto_id = p.id ORDER BY v.versao DESC LIMIT 1),
+        p.opex_aprovado,
+        0
+      ) AS opex_aprovado,
       COALESCE(
         (SELECT SUM(fc2.valor_aprovado) FROM financeiro_contratos fc2
          WHERE fc2.projeto_id = p.id AND fc2.ativo = 1), 0

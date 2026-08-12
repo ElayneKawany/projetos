@@ -123,10 +123,10 @@ interface Props {
 const SLIDES = [
   { id: 'abertura',    label: 'Abertura',            icon: Presentation },
   { id: 'resumo',      label: 'Resumo Executivo',    icon: TrendingUp },
+  { id: 'logistica',   label: 'Dir. Logística',      icon: Building2 },
   { id: 'financeira',  label: 'Dir. Financeira',     icon: Building2 },
   { id: 'comercial',   label: 'Dir. Comercial',      icon: Building2 },
   { id: 'marketing',   label: 'MKT e Novos Neg.',    icon: Building2 },
-  { id: 'logistica',   label: 'Dir. Logística',      icon: Building2 },
   { id: 'decisoes',    label: 'Decisões',            icon: CheckCircle },
   { id: 'pendencias',  label: 'Pendências',          icon: Clock },
   { id: 'ata',         label: 'Ata Automática',      icon: FileCheck },
@@ -447,6 +447,7 @@ export default function ComiteDetalheClient({
         const nextLabel = nextId ? getAnySlideLabel(nextId) : undefined
         return (
           <SlideDiretoria
+            key={slideId}
             diretoriaNome={dirNome}
             projetos={slideProjetosMap[slideId]}
             projetosPropostaDetalhe={projetosPropostaDetalhe}
