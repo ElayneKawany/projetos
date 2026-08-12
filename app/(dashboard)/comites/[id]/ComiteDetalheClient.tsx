@@ -3390,6 +3390,20 @@ function SlideExecucaoDetalhe({
   // Pontos críticos
   const atrasadas = macros.filter(t => calcStatusTarefa(t, today) === 'atrasada')
   const bloqueadas = macros.filter(t => calcStatusTarefa(t, today) === 'bloqueada')
+
+  // Próximas atividades — usadas quando não há atrasadas
+  const proximasAtividades = macros
+    .filter(t => {
+      const st = calcStatusTarefa(t, today)
+      return st !== 'concluida' && st !== 'atrasada'
+    })
+    .sort((a, b) => {
+      if (!a.data_fim && !b.data_fim) return 0
+      if (!a.data_fim) return 1
+      if (!b.data_fim) return -1
+      return a.data_fim.localeCompare(b.data_fim)
+    })
+    .slice(0, 5)
   const pontosCount = atrasadas.length + bloqueadas.length + pendsProjeto.length
 
   // Existing decision for this project
@@ -3524,15 +3538,75 @@ function SlideExecucaoDetalhe({
           </div>
         </div>
 
-        {/* 2 – Macro Cronograma — apenas atividades atrasadas */}
-        <div className="bg-white rounded-xl border border-gray-100 border-t-4 shadow-sm overflow-hidden" style={{ borderTopColor: '#DC2626' }}>
-          <div className="px-5 pt-4 pb-3 border-b border-gray-100 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-red-600">
-            <BarChart2 size={13} className="shrink-0" /><span>Macro Cronograma — Atividades Atrasadas</span>
-            <span className="ml-auto text-gray-400 font-normal">{atrasadas.length} atrasada{atrasadas.length !== 1 ? 's' : ''}</span>
+        {/* 2 – Macro Cronograma */}
+        <div className="bg-white rounded-xl border border-gray-100 border-t-4 shadow-sm overflow-hidden"
+          style={{ borderTopColor: atrasadas.length > 0 ? '#DC2626' : COR }}>
+          <div className={`px-5 pt-4 pb-3 border-b border-gray-100 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider ${atrasadas.length > 0 ? 'text-red-600' : ''}`}
+            style={{ color: atrasadas.length > 0 ? '#DC2626' : COR }}>
+            <BarChart2 size={13} className="shrink-0" />
+            <span>{atrasadas.length > 0 ? 'Macro Cronograma — Atividades Atrasadas' : 'Macro Cronograma — Próximas Atividades'}</span>
+            <span className="ml-auto text-gray-400 font-normal">
+              {atrasadas.length > 0
+                ? `${atrasadas.length} atrasada${atrasadas.length !== 1 ? 's' : ''}`
+                : `${proximasAtividades.length} atividade${proximasAtividades.length !== 1 ? 's' : ''}`}
+            </span>
           </div>
-          {atrasadas.length === 0 ? (
+          {atrasadas.length === 0 && proximasAtividades.length === 0 ? (
             <div className="p-6 flex items-center gap-2 text-sm text-green-600 font-medium">
-              <CheckCircle size={16} /> Nenhuma atividade atrasada.
+              <CheckCircle size={16} /> Todas as atividades concluídas.
+            </div>
+          ) : atrasadas.length === 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    <th className="px-4 py-2.5 text-left">Macro Atividade</th>
+                    <th className="px-4 py-2.5 text-left">Responsável</th>
+                    <th className="px-4 py-2.5 text-center whitespace-nowrap">Previsão</th>
+                    <th className="px-4 py-2.5 text-center whitespace-nowrap">Dias Rest.</th>
+                    <th className="px-4 py-2.5 text-center">Avanço</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {proximasAtividades.map(t => {
+                    const st = calcStatusTarefa(t, today)
+                    const cfg = STATUS_TAREFA_CFG[st]
+                    const dias = t.data_fim
+                      ? Math.ceil((new Date(t.data_fim + 'T00:00:00').getTime() - today.getTime()) / 86400000)
+                      : null
+                    return (
+                      <tr key={t.id} className="border-t border-gray-50 hover:bg-gray-50/50 transition-colors">
+                        <td className="px-4 py-3">
+                          <span className="font-medium text-gray-800">{t.nome}</span>
+                          {t.criticidade === 'CRITICA' && (
+                            <span className="ml-2 text-xs bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-bold">Crítica</span>
+                          )}
+                          <span className="ml-2 inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full"
+                            style={{ color: cfg.color, background: `${cfg.color}18` }}>
+                            {cfg.dot} {cfg.label}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-xs text-gray-500">{t.responsavel_nome || '—'}</td>
+                        <td className="px-4 py-3 text-center text-xs text-gray-600 whitespace-nowrap">{fmtDate(t.data_fim)}</td>
+                        <td className="px-4 py-3 text-center text-xs">
+                          {dias === null ? '—'
+                            : <span className={`font-medium ${dias <= 7 ? 'text-amber-600' : 'text-gray-600'}`}>
+                                {dias}d
+                              </span>}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden" style={{ minWidth: '48px' }}>
+                              <div className="h-full rounded-full" style={{ width: `${t.percentual ?? 0}%`, background: cfg.color }} />
+                            </div>
+                            <span className="text-xs font-medium w-8 text-right" style={{ color: cfg.color }}>{t.percentual ?? 0}%</span>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
             </div>
           ) : (
             <div className="overflow-x-auto">
