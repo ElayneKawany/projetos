@@ -24,9 +24,9 @@ export async function POST(
   if (!cronograma) {
     return NextResponse.json({ error: 'Cronograma não encontrado.' }, { status: 404 })
   }
-  if (cronograma.status !== 'APROVADO') {
+  if (!['APROVADO','EM_EXECUCAO','PRONTO_PARA_ENCERRAMENTO'].includes(String(cronograma.status))) {
     return NextResponse.json(
-      { error: 'Apenas cronogramas com status APROVADO podem gerar uma nova versão.' },
+      { error: 'Apenas cronogramas aprovados ou em execução podem gerar uma nova versão.' },
       { status: 400 }
     )
   }

@@ -1597,8 +1597,8 @@ export default function CronogramaEditor({
                   {/* Botões de edição — ocultos quando cronograma está ENCERRADO */}
                   {cronograma.status !== 'ENCERRADO' && (
                     <>
-                      {/* APROVADO - só Nova Versão (somente na versão atual) */}
-                      {cronograma.status === 'APROVADO' && canEdit && !isVersaoHistorica && (
+                      {/* APROVADO / EM_EXECUCAO / PRONTO_PARA_ENCERRAMENTO - só Nova Versão (somente na versão atual) */}
+                      {['APROVADO','EM_EXECUCAO','PRONTO_PARA_ENCERRAMENTO'].includes(cronograma.status) && canEdit && !isVersaoHistorica && (
                         <button
                           className="btn-primary text-sm"
                           disabled={creatingNovaVersao}
