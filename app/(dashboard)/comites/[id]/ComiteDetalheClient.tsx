@@ -458,6 +458,7 @@ export default function ComiteDetalheClient({
             onRefresh={refresh}
             onNextSlide={nextId ? () => setActiveSlide(nextId) : undefined}
             nextSlideLabel={nextLabel}
+            comiteData={comite.data_realizacao}
           />
         )
       }
@@ -949,12 +950,12 @@ function SlideAbertura({ comite, participantes, todosProjetos, diretorias, prese
 // ─── Slide: Resumo Executivo — Visão Macro por Diretoria ─────────────────────
 
 const GRUPOS_ETAPA = [
-  { label: 'Proposta / Ideia',         statuses: ['PROPOSTA','TRIAGEM','COMITE_IDEIAS'],           cor: '#2563EB' },
-  { label: 'Estudo de Viabilidade',    statuses: ['VIABILIDADE','COMPLEMENTACAO_TAP','APROVACAO'], cor: '#7C3AED' },
-  { label: 'Em Execução',              statuses: ['EXECUCAO','GOLIVE'],                            cor: '#059669' },
-  { label: 'Acomp. de Payback',        statuses: ['ROI'],                                         cor: '#0891B2' },
-  { label: 'Pausado',                  statuses: ['SUSPENSO'],                                    cor: '#6B7280' },
-  { label: 'Concluído',                statuses: ['ENCERRAMENTO'],                                cor: '#15803D' },
+  { label: 'Proposta / Ideia',      statuses: ['PROPOSTA','TRIAGEM','COMITE_IDEIAS'],                                    cor: '#2563EB' },
+  { label: 'Est. de Viabilidade',   statuses: ['VIABILIDADE','COMPLEMENTACAO_TAP','APROVACAO'],                         cor: '#7C3AED' },
+  { label: 'Estruturação',          statuses: ['ESTRUTURACAO','CRONOGRAMA'],                                            cor: '#D97706' },
+  { label: 'Execução',              statuses: ['EXECUCAO','GOLIVE','PROJETO_CONCLUIDO'],                                cor: '#059669' },
+  { label: 'Payback',               statuses: ['ROI','PAYBACK_ACOMPANHAMENTO','PAYBACK_ENCERRADO','PROJETO_ENCERRADO'], cor: '#0891B2' },
+  { label: 'Pausado',               statuses: ['PAUSADO'],                                                              cor: '#6B7280' },
 ]
 
 const SIGLAS_OFICIAIS: Record<string, string> = {
@@ -1730,7 +1731,7 @@ function SlidePropostasDetalhe({
       if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable) return
       if (e.key === 'ArrowRight') {
         e.stopPropagation()
-        setCurrentIdx(i => Math.min(pages.length - 1, i + 1))
+        if (currentIdx >= pages.length - 1) { onNextSlide?.() } else { setCurrentIdx(i => i + 1) }
       } else if (e.key === 'ArrowLeft') {
         e.stopPropagation()
         setCurrentIdx(i => Math.max(0, i - 1))
@@ -1738,7 +1739,7 @@ function SlidePropostasDetalhe({
     }
     window.addEventListener('keydown', handler, true)
     return () => window.removeEventListener('keydown', handler, true)
-  }, [modalTipo, pages.length])
+  }, [modalTipo, pages.length, currentIdx, onNextSlide])
 
   if (projetos.length === 0) {
     return (
@@ -2323,12 +2324,12 @@ function SlideViabilidadeDetalhe({
       if (modalTipo) return
       const t = e.target as HTMLElement
       if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable) return
-      if (e.key === 'ArrowRight') { e.stopPropagation(); setCurrentIdx(i => Math.min(pages.length - 1, i + 1)) }
+      if (e.key === 'ArrowRight') { e.stopPropagation(); if (currentIdx >= pages.length - 1) { onNextSlide?.() } else { setCurrentIdx(i => i + 1) } }
       else if (e.key === 'ArrowLeft') { e.stopPropagation(); setCurrentIdx(i => Math.max(0, i - 1)) }
     }
     window.addEventListener('keydown', handler, true)
     return () => window.removeEventListener('keydown', handler, true)
-  }, [modalTipo, pages.length])
+  }, [modalTipo, pages.length, currentIdx, onNextSlide])
 
   if (projetos.length === 0) {
     return (
@@ -2811,12 +2812,14 @@ function SlideViabilidadeDetalhe({
 // ─── Slide: Lista de Projetos (genérico) ──────────────────────────────────────
 
 function SlideProjetosPorDiretoria({
-  titulo, projetos, cor, diretorias,
+  titulo, projetos, cor, diretorias, onNextSlide, nextSlideLabel,
 }: {
   titulo: string
   projetos: ProjetoResumo[]
   cor: string
   diretorias: { id: number; nome: string }[]
+  onNextSlide?: () => void
+  nextSlideLabel?: string
 }) {
   // Build ordered diretoria list (from DB order), skip those with no projects in this stage
   const porDir = projetos.reduce<Record<string, ProjetoResumo[]>>((acc, p) => {
@@ -2897,6 +2900,16 @@ function SlideProjetosPorDiretoria({
           ))}
         </div>
       )}
+      {onNextSlide && (
+        <div className="flex justify-end mt-6">
+          <button
+            onClick={onNextSlide}
+            className="flex items-center gap-1.5 px-4 py-1.5 text-sm font-semibold text-white bg-[#003087] hover:bg-[#002060] rounded-lg transition-colors shadow-sm"
+          >
+            {nextSlideLabel ? `Avançar para ${nextSlideLabel}` : 'Próxima Fase'} <ChevronRight size={16} />
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -2960,7 +2973,11 @@ function SlideFinanceiro({ projetos }: { projetos: ProjetoResumo[] }) {
 
 // ─── Slide: Payback ───────────────────────────────────────────────────────────
 
-function SlidePayback({ projetos }: { projetos: ProjetoResumo[] }) {
+function SlidePayback({ projetos, onNextSlide, nextSlideLabel }: {
+  projetos: ProjetoResumo[]
+  onNextSlide?: () => void
+  nextSlideLabel?: string
+}) {
   const comPayback = projetos.filter(p => !['CANCELADO','SUSPENSO'].includes(p.status))
   return (
     <div>
@@ -2986,6 +3003,13 @@ function SlidePayback({ projetos }: { projetos: ProjetoResumo[] }) {
           </tbody>
         </table>
       </div>
+      {onNextSlide && (
+        <div className="flex justify-end mt-6">
+          <button onClick={onNextSlide} className="flex items-center gap-1.5 px-4 py-1.5 text-sm font-semibold text-white bg-[#003087] hover:bg-[#002060] rounded-lg transition-colors shadow-sm">
+            {nextSlideLabel ? `Avançar para ${nextSlideLabel}` : 'Próxima Fase'} <ChevronRight size={16} />
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -3225,12 +3249,12 @@ function SlideExecucaoDetalhe({
     const handler = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement
       if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable) return
-      if (e.key === 'ArrowRight') { e.stopPropagation(); setIdx(i => Math.min(pages.length - 1, i + 1)) }
+      if (e.key === 'ArrowRight') { e.stopPropagation(); if (idx >= pages.length - 1) { onNextSlide?.() } else { setIdx(i => i + 1) } }
       else if (e.key === 'ArrowLeft') { e.stopPropagation(); setIdx(i => Math.max(0, i - 1)) }
     }
     window.addEventListener('keydown', handler, true)
     return () => window.removeEventListener('keydown', handler, true)
-  }, [pages.length])
+  }, [pages.length, idx, onNextSlide])
 
   if (projetos.length === 0) {
     return (
@@ -3751,6 +3775,7 @@ function SlideDiretoria({
   diretoriaNome, projetos, projetosPropostaDetalhe, projetosViabilidadeDetalhe,
   projetosExecucaoDetalhe, macroTarefasExecucao, diretorias, pendencias,
   decisoes, comiteId, podeGerenciar, onRefresh, onNextSlide, nextSlideLabel,
+  comiteData,
 }: {
   diretoriaNome: string
   projetos: ProjetoResumo[]
@@ -3766,86 +3791,112 @@ function SlideDiretoria({
   onRefresh: () => Promise<void>
   onNextSlide?: () => void
   nextSlideLabel?: string
+  comiteData?: string
 }) {
   const sigla = getSigla(diretoriaNome)
 
-  // Nível 2: macro selecionado (null = visão macro da diretoria)
+  // Nível 2: macro selecionado (null = visão centralizada da diretoria)
   const [selectedMacro, setSelectedMacro] = useState<string | null>(null)
 
-  // ── Cabeçalho comum ──────────────────────────────────────────────────────
+  // ── Cabeçalho (visível na navegação projeto-a-projeto) ───────────────────
   const header = (
-    <div className="flex items-center justify-between mb-6">
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-xl bg-[#003087] flex items-center justify-center shrink-0">
-          <span className="text-white text-xs font-bold">{sigla}</span>
-        </div>
-        <div>
-          <h2 className="text-xl font-bold text-[#003087]">{diretoriaNome}</h2>
-          <p className="text-sm text-gray-500">
-            {projetos.length} {projetos.length === 1 ? 'projeto' : 'projetos'}
-          </p>
-        </div>
+    <div className="flex items-center gap-3 mb-6">
+      <div className="w-10 h-10 rounded-xl bg-[#003087] flex items-center justify-center shrink-0">
+        <span className="text-white text-xs font-bold">{sigla}</span>
       </div>
-      {!selectedMacro && onNextSlide && (
-        <button
-          onClick={onNextSlide}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white bg-[#003087] hover:bg-[#00246b] transition"
-        >
-          {nextSlideLabel || 'Próxima Diretoria'} <ChevronRight size={16} />
-        </button>
-      )}
+      <div>
+        <h2 className="text-xl font-bold text-[#003087]">{diretoriaNome}</h2>
+        <p className="text-sm text-gray-500">
+          {projetos.length} {projetos.length === 1 ? 'projeto' : 'projetos'}
+        </p>
+      </div>
     </div>
   )
 
-  // ── NÍVEL 2: Visão macro — fase + contagem ───────────────────────────────
+  // ── NÍVEL 2: Visão centralizada da Diretoria + Macro Fases abaixo ───────
   if (!selectedMacro) {
-    if (projetos.length === 0) {
-      return (
-        <div>
-          {header}
-          <div className="text-center py-16 text-gray-400">
-            <Building2 size={40} className="mx-auto mb-3 opacity-30" />
-            <p className="text-sm">Nenhum projeto nesta diretoria</p>
-          </div>
-        </div>
-      )
-    }
+    const gruposComProjetos = MACRO_GRUPOS_DIRETORIA.filter(g =>
+      projetos.some(p => (g.statuses as readonly string[]).includes(p.status))
+    )
+    const primeiraFase = gruposComProjetos[0]
 
     return (
-      <div>
-        {header}
-        <div className="divide-y divide-gray-100 rounded-2xl border border-gray-200 overflow-hidden">
-          {MACRO_GRUPOS_DIRETORIA.map(grupo => {
-            const count = projetos.filter(p =>
-              (grupo.statuses as readonly string[]).includes(p.status)
-            ).length
-            const clicavel = count > 0
+      <div className="flex flex-col items-center min-h-[500px] gap-6 py-6">
+        {/* Layout centralizado — preservado exatamente como era */}
+        <div className="flex flex-col items-center gap-5 text-center">
+          {/* Ícone */}
+          <div className="w-20 h-20 rounded-3xl flex items-center justify-center shadow-lg bg-[#003087]">
+            <span className="text-white text-2xl font-black">{sigla}</span>
+          </div>
 
-            return (
-              <button
-                key={grupo.macro}
-                onClick={() => clicavel && setSelectedMacro(grupo.macro)}
-                disabled={!clicavel}
-                className={`w-full flex items-center justify-between px-5 py-4 text-left transition
-                  ${clicavel
-                    ? 'bg-white hover:bg-gray-50 cursor-pointer'
-                    : 'bg-white/60 cursor-default opacity-40'
-                  }`}
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: grupo.cor }} />
-                  <span className="font-medium text-gray-800">{grupo.label}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className={`text-sm font-semibold ${clicavel ? 'text-gray-700' : 'text-gray-400'}`}>
-                    {count} {count === 1 ? 'projeto' : 'projetos'}
-                  </span>
-                  {clicavel && <ChevronRight size={16} className="text-gray-400" />}
-                </div>
-              </button>
-            )
-          })}
+          {/* Nome da Diretoria */}
+          <h1 className="font-black text-gray-900 leading-tight" style={{ fontSize: '36px' }}>
+            {diretoriaNome}
+          </h1>
+
+          {/* Estatísticas */}
+          <div className="flex flex-col items-center">
+            <span className="font-black text-[#003087]" style={{ fontSize: '38px' }}>{projetos.length}</span>
+            <span className="text-sm font-medium text-gray-500">{projetos.length === 1 ? 'Projeto' : 'Projetos'}</span>
+          </div>
+
+          {/* Data do comitê */}
+          {comiteData && (
+            <p className="text-gray-400 text-sm flex items-center gap-1.5">
+              <Calendar size={14} />{fmtDate(comiteData)}
+            </p>
+          )}
+
+          {/* Botão Ver Projetos */}
+          {primeiraFase ? (
+            <button
+              onClick={() => setSelectedMacro(primeiraFase.macro)}
+              className="mt-1 flex items-center gap-2 px-6 py-3 rounded-xl font-semibold text-white shadow-md hover:shadow-lg transition-all bg-[#003087] hover:bg-[#00246b]"
+            >
+              Ver Projetos <ChevronRight size={18} />
+            </button>
+          ) : onNextSlide && (
+            <button
+              onClick={onNextSlide}
+              className="mt-1 flex items-center gap-2 px-6 py-3 rounded-xl font-semibold text-white shadow-md hover:shadow-lg transition-all bg-[#003087] hover:bg-[#00246b]"
+            >
+              {nextSlideLabel || 'Próxima Diretoria'} <ChevronRight size={18} />
+            </button>
+          )}
         </div>
+
+        {/* Macro Fases — compacto, abaixo do conteúdo centralizado */}
+        {projetos.length > 0 && (
+          <div className="w-full max-w-sm">
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 text-center">Macro Fases</p>
+            <div className="flex flex-col">
+              {MACRO_GRUPOS_DIRETORIA.map(grupo => {
+                const count = projetos.filter(p =>
+                  (grupo.statuses as readonly string[]).includes(p.status)
+                ).length
+                const clicavel = count > 0
+
+                return (
+                  <button
+                    key={grupo.macro}
+                    onClick={() => clicavel && setSelectedMacro(grupo.macro)}
+                    disabled={!clicavel}
+                    className={`flex items-center justify-between px-3 py-1.5 rounded-lg text-sm transition
+                      ${clicavel ? 'hover:bg-gray-100 cursor-pointer' : 'cursor-default'}`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className="w-2 h-2 rounded-full shrink-0" style={{ background: grupo.cor, opacity: clicavel ? 1 : 0.3 }} />
+                      <span className={clicavel ? 'text-gray-700' : 'text-gray-400'}>{grupo.label}</span>
+                    </div>
+                    <span className={`font-semibold tabular-nums ${clicavel ? 'text-gray-800' : 'text-gray-400'}`}>
+                      {count}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
       </div>
     )
   }
@@ -3862,8 +3913,21 @@ function SlideDiretoria({
   const execucaoDetalheFiltrado   = projetosExecucaoDetalhe.filter(d => projetosGrupo.some(p => p.id === d.id))
   const tarefasFiltradas          = macroTarefasExecucao.filter(t => projetosGrupo.some(p => p.id === t.projeto_id))
 
-  // Botão "← Fases" injetado como onNextSlide com label diferente
-  // Os componentes existentes já têm navegação interna projeto-a-projeto
+  // Grupos que têm pelo menos um projeto nesta diretoria, em ordem canônica
+  const gruposComProjetos = MACRO_GRUPOS_DIRETORIA.filter(g =>
+    projetos.some(p => (g.statuses as readonly string[]).includes(p.status))
+  )
+  const idxGrupoAtual = gruposComProjetos.findIndex(g => g.macro === selectedMacro)
+  const proximoGrupo  = idxGrupoAtual >= 0 ? gruposComProjetos[idxGrupoAtual + 1] : undefined
+
+  // Ao finalizar os projetos de uma fase: vai para a próxima fase com projetos;
+  // quando não há mais fases na diretoria, avança para a próxima diretoria.
+  const irParaProximaFase: (() => void) | undefined = proximoGrupo
+    ? () => setSelectedMacro(proximoGrupo.macro)
+    : onNextSlide
+
+  const labelProximaFase = proximoGrupo ? proximoGrupo.label : nextSlideLabel
+
   const voltarFases = () => setSelectedMacro(null)
 
   return (
@@ -3896,6 +3960,8 @@ function SlideDiretoria({
           decisoes={decisoes}
           podeGerenciar={podeGerenciar}
           onRefresh={onRefresh}
+          onNextSlide={irParaProximaFase}
+          nextSlideLabel={labelProximaFase}
         />
       )}
       {selectedMacro === 'MACRO_VIABILIDADE' && (
@@ -3907,6 +3973,8 @@ function SlideDiretoria({
           decisoes={decisoes}
           podeGerenciar={podeGerenciar}
           onRefresh={onRefresh}
+          onNextSlide={irParaProximaFase}
+          nextSlideLabel={labelProximaFase}
         />
       )}
       {selectedMacro === 'MACRO_EXECUCAO' && (
@@ -3920,10 +3988,16 @@ function SlideDiretoria({
           decisoes={decisoes}
           podeGerenciar={podeGerenciar}
           onRefresh={onRefresh}
+          onNextSlide={irParaProximaFase}
+          nextSlideLabel={labelProximaFase}
         />
       )}
       {selectedMacro === 'MACRO_PAYBACK' && (
-        <SlidePayback projetos={projetosGrupo} />
+        <SlidePayback
+          projetos={projetosGrupo}
+          onNextSlide={irParaProximaFase}
+          nextSlideLabel={labelProximaFase}
+        />
       )}
       {(selectedMacro === 'MACRO_ESTRUTURACAO' ||
         selectedMacro === 'MACRO_PAUSADO' ||
@@ -3934,6 +4008,8 @@ function SlideDiretoria({
           projetos={projetosGrupo}
           cor={grupoAtual.cor}
           diretorias={diretorias}
+          onNextSlide={irParaProximaFase}
+          nextSlideLabel={labelProximaFase}
         />
       )}
     </div>
