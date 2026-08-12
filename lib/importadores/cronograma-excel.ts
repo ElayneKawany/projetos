@@ -58,8 +58,6 @@ export interface TarefaParseada {
   duracao_dias: number | null
   responsavel_id: number | null
   responsavel_nome_ext: string | null
-  executor_id: number | null
-  executor_nome_ext: string | null
   percentual: number
   status_tarefa: string
   /**
@@ -138,7 +136,6 @@ const COLUNAS_OFICIAIS: Record<string, string> = {
   tipo:             'tipo',
   criticidade:      'criticidade',
   responsavel:      'responsavel',
-  executor:         'executor',
   datainicio:       'data_inicio',
   datafim:          'data_fim',
   novadata:             'data_nova',         // Nova data de entrega (reprogramação) — mantém Data Fim como baseline
@@ -148,7 +145,6 @@ const COLUNAS_OFICIAIS: Record<string, string> = {
   novoinicio:           'data_nova_inicio',  // alias
   novadatadeinicio:     'data_nova_inicio',  // alias
   dataconclusao:    'data_conclusao',  // opcional — data real de conclusão
-  percentual:       'percentual',
   status:           'status',
   observacoes:      'observacoes',
   tipomacro:        'tipo_macro',
@@ -497,20 +493,9 @@ export function parsearExcelCronograma(
       warnings.push(`Linha ${numLinha}: Data Conclusão "${rawConclusao}" não reconhecida — gravado como NULL.`)
     }
 
-    // ── Executor (opcional) ──────────────────────────────────────────────────
-    const execNome  = getCol('executor') != null ? String(getCol('executor')).trim() : ''
-    const executorId = execNome
-      ? (resolverUsuario(execNome, usuarios) ?? null)
-      : responsavelId
-    if (execNome && !resolverUsuario(execNome, usuarios)) {
-      warnings.push(`Linha ${numLinha}: Executor "${execNome}" não cadastrado no sistema — gravado como texto livre.`)
-    }
-    const executorNomeExt: string | null = execNome || null
-
     // ── Outros campos ────────────────────────────────────────────────────────
     const descricao    = getCol('descricao')   != null ? String(getCol('descricao')).trim()   || null : null
     const observacoes  = getCol('observacoes') != null ? String(getCol('observacoes')).trim() || null : null
-    const percentual   = normalizarPercentual(getCol('percentual'))
     const statusRaw    = getCol('status')
     const statusTarefa = normalizarStatus(statusRaw)
     const prazoHint    = extrairPrazoHint(statusRaw)
@@ -559,9 +544,7 @@ export function parsearExcelCronograma(
       duracao_dias:         duracaoDias,
       responsavel_id:       responsavelId,
       responsavel_nome_ext: respNome || null,
-      executor_id:          executorId,
-      executor_nome_ext:    executorNomeExt,
-      percentual:           statusTarefa === 'CONCLUIDA' ? 100 : percentual,
+      percentual:           statusTarefa === 'CONCLUIDA' ? 100 : 0,
       status_tarefa:        statusTarefa,
       prazo_status:         calcularPrazoStatusImportacao(statusTarefa, dataFim, dataConclusao, prazoHint),
       observacoes,

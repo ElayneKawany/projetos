@@ -35,8 +35,6 @@ interface CronogramaTarefa {
   duracao_dias?: number | null
   responsavel_id?: number | null
   responsavel_nome?: string
-  executor_id?: number | null
-  executor_nome?: string
   area_id?: number | null
   ordem: number
   status?: string
@@ -101,7 +99,6 @@ interface NovaLinha {
   data_fim: string
   responsavel_id: string  // kept for compat — first selected
   responsavel_ids: number[] // multi-select
-  executor_id: string     // optional — defaults to responsavel_id on save
   _responsaveis?: ResponsavelItem[] // transient: carries selected items to API payload
 }
 
@@ -111,7 +108,6 @@ interface NovaAtividadeForm {
   tipo: string
   criticidade: string
   responsavel_id: string  // required
-  executor_id: string     // optional
   data_inicio: string
   data_fim: string
   observacoes: string
@@ -591,12 +587,12 @@ function calcFaseSummaryFromList(
 
 const emptyLinha = (): NovaLinha => ({
   nome: '', nivel: 'TAREFA', tipo: 'TAREFA', criticidade: 'NORMAL', tipo_macro: 'OUTRO',
-  data_inicio: '', data_fim: '', responsavel_id: '', responsavel_ids: [], executor_id: '',
+  data_inicio: '', data_fim: '', responsavel_id: '', responsavel_ids: [],
 })
 
 const emptyNovaAtividade = (): NovaAtividadeForm => ({
   macro_id: '', nome: '', tipo: 'TAREFA', criticidade: 'NORMAL',
-  responsavel_id: '', executor_id: '', data_inicio: '', data_fim: '', observacoes: '',
+  responsavel_id: '', data_inicio: '', data_fim: '', observacoes: '',
   responsaveis: [],
 })
 
@@ -739,6 +735,11 @@ export default function CronogramaEditor({
   const [concluindoId, setConcluindoId]   = useState<number | null>(null)
   const [editandoTarefas, setEditandoTarefas] = useState<CronogramaTarefa[]>([])
 
+  // Edição inline de Observação (funciona mesmo com cronograma aprovado)
+  const [editObsId, setEditObsId]   = useState<number | null>(null)
+  const [editObsVal, setEditObsVal] = useState('')
+  const [salvandoObs, setSalvandoObs] = useState(false)
+
   // Reprogramação de data por tarefa (modo view)
   const [reprogramarId, setReprogramarId]           = useState<number | null>(null)
   const [novaDataInicioRepr, setNovaDataInicioRepr] = useState('')
@@ -827,10 +828,6 @@ export default function CronogramaEditor({
     setLinhas(p => p.map((l, i) => {
       if (i !== idx) return l
       const updated = { ...l, [field]: value }
-      // Quando responsavel_id muda e executor ainda está vazio, sincroniza
-      if (field === 'responsavel_id' && !l.executor_id) {
-        updated.executor_id = value
-      }
       return updated
     }))
   }
@@ -842,7 +839,6 @@ export default function CronogramaEditor({
         ...l,
         responsavel_ids: selected.map(r => r.id ?? 0).filter(Boolean),
         responsavel_id: selected[0]?.id ? String(selected[0].id) : '',
-        executor_id: l.executor_id || (selected[0]?.id ? String(selected[0].id) : ''),
         _responsaveis: selected,
       }
     }))
@@ -877,7 +873,6 @@ export default function CronogramaEditor({
             duracao_dias:   calcDuracao(l.data_inicio, l.data_fim),
             responsavel_id: l._responsaveis?.length ? (l._responsaveis[0].id ?? undefined) : (l.responsavel_id ? Number(l.responsavel_id) : undefined),
             responsaveis_nomes: l._responsaveis?.map(r => r.nome) ?? (l.responsavel_id ? [usuarios.find(u => u.id === Number(l.responsavel_id))?.nome ?? ''] : []),
-            executor_id:    l.executor_id ? Number(l.executor_id) : undefined,
             ordem:          i + 1,
           })),
         }),
@@ -1090,8 +1085,6 @@ export default function CronogramaEditor({
         responsavel_id:       t.responsaveis?.length ? (t.responsaveis[0].id ?? null) : (t.responsavel_id ?? null),
         responsavel_nome_ext: t.responsaveis?.length ? (!t.responsaveis[0].id ? t.responsaveis[0].nome : null) : (t.responsavel_nome ?? null),
         responsaveis:         t.responsaveis ?? undefined,
-        executor_id:          t.executor_id           ?? null,
-        executor_nome_ext:    t.executor_nome         ?? null,
         data_inicio:          normalizarData(t.data_inicio),
         data_inicio_baseline: t.data_inicio_baseline ?? null,
         data_fim:             normalizarData(t.data_fim),
@@ -1125,7 +1118,7 @@ export default function CronogramaEditor({
     pushUndo(editandoTarefas)
     const nova: CronogramaTarefa = {
       nome: '', nivel: 'FASE', ordem: editandoTarefas.length + 1,
-      responsavel_id: null, executor_id: null,
+      responsavel_id: null,
     }
     setEditandoTarefas(prev => recalcWBSInline([...prev, nova]))
   }
@@ -1134,7 +1127,7 @@ export default function CronogramaEditor({
     pushUndo(editandoTarefas)
     const nova: CronogramaTarefa = {
       nome: '', nivel: 'TAREFA', ordem: editandoTarefas.length + 1,
-      responsavel_id: null, executor_id: null,
+      responsavel_id: null,
     }
     setEditandoTarefas(prev => recalcWBSInline([...prev, nova]))
   }
@@ -1172,6 +1165,31 @@ export default function CronogramaEditor({
     setUndoStack(prev => [...prev.slice(-49), editandoTarefas])
     setRedoStack([])
     setEditandoTarefas(prev => prev.map((t, i) => i === idx ? { ...t, [campo]: valor } : t))
+  }
+
+  // ── Observação inline (independente do modo editando) ─────────────────────
+
+  async function handleSalvarObservacao(tarefaId: number) {
+    if (!cronograma) return
+    setSalvandoObs(true)
+    try {
+      const res = await fetch(
+        `/api/projetos/${projetoId}/cronograma/${cronograma.id}/tarefas/${tarefaId}/observacao`,
+        { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ observacao: editObsVal }) }
+      )
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        alert(err.error ?? 'Erro ao salvar observação.')
+        return
+      }
+      // Atualiza a lista local sem recarregar tudo
+      setTarefas(prev => prev.map(t => t.id === tarefaId ? { ...t, observacoes: editObsVal || undefined } : t))
+      setEditObsId(null)
+    } catch {
+      alert('Erro de rede ao salvar observação.')
+    } finally {
+      setSalvandoObs(false)
+    }
   }
 
   // ── Undo / Redo ────────────────────────────────────────────────────────────
@@ -1286,7 +1304,6 @@ export default function CronogramaEditor({
           criticidade:        novaAtividade.criticidade,
           responsavel_id:     novaAtividade.responsaveis?.length ? (novaAtividade.responsaveis[0].id ?? undefined) : (novaAtividade.responsavel_id ? Number(novaAtividade.responsavel_id) : undefined),
           responsaveis_nomes: novaAtividade.responsaveis?.length ? novaAtividade.responsaveis.map(r => r.nome) : (novaAtividade.responsavel_id ? [usuarios.find(u => u.id === Number(novaAtividade.responsavel_id))?.nome ?? ''] : []),
-          executor_id:        novaAtividade.executor_id  ? Number(novaAtividade.executor_id)  : undefined,
           data_inicio:        novaAtividade.data_inicio  || undefined,
           data_fim:           novaAtividade.data_fim     || undefined,
           duracao_dias:       calcDuracao(novaAtividade.data_inicio, novaAtividade.data_fim),
@@ -1391,7 +1408,7 @@ export default function CronogramaEditor({
     const nova: CronogramaTarefa = {
       nome: '', nivel: 'SUBTAREFA', ordem: editandoTarefas.length + 1,
       parent_id: editandoTarefas[tarefaIdx].id ?? null,
-      responsavel_id: null, executor_id: null,
+      responsavel_id: null,
     }
     setEditandoTarefas(prev => {
       const next = [...prev]
@@ -1672,12 +1689,11 @@ export default function CronogramaEditor({
                     <th className="text-left px-3 py-2 font-medium text-gray-500 text-xs w-20">WBS</th>
                     <th className="text-left px-3 py-2 font-medium text-gray-500 text-xs">Nome</th>
                     <th className="text-left px-3 py-2 font-medium text-gray-500 text-xs w-28">Responsável</th>
-                    <th className="text-left px-3 py-2 font-medium text-gray-500 text-xs w-28">Executor</th>
                     <th className="text-left px-3 py-2 font-medium text-gray-500 text-xs w-24">Início</th>
                     <th className="text-left px-3 py-2 font-medium text-gray-500 text-xs w-24">Fim</th>
                     <th className="text-right px-3 py-2 font-medium text-gray-500 text-xs w-16">Dias</th>
                     <th className="text-left px-3 py-2 font-medium text-gray-500 text-xs w-28">Status</th>
-                    <th className="text-left px-3 py-2 font-medium text-gray-500 text-xs w-36">Progresso</th>
+                    <th className="text-left px-3 py-2 font-medium text-gray-500 text-xs w-40">Observação</th>
                     <th className="px-3 py-2 w-20"></th>
                   </tr>
                 </thead>
@@ -1747,26 +1763,6 @@ export default function CronogramaEditor({
                                 />
                               ) : (
                                 <ResponsaveisDisplay responsaveis={t.responsaveis} fallback={t.responsavel_nome} />
-                              )}
-                            </td>
-
-                            {/* Executor */}
-                            <td className="px-3 py-2 text-xs w-32">
-                              {editando ? (
-                                <AutocompleteUsuario
-                                  value={t.executor_nome ?? ''}
-                                  usuarios={usuarios}
-                                  placeholder="Executor"
-                                  onChange={(nome, id) => handleAtualizarCamposInline(i, {
-                                    executor_id: id, executor_nome: nome || undefined,
-                                  })}
-                                />
-                              ) : (
-                                <span className="text-gray-500 truncate max-w-[110px] block">
-                                  {t.executor_nome && t.executor_nome !== t.responsavel_nome
-                                    ? t.executor_nome
-                                    : <span className="text-gray-300">—</span>}
-                                </span>
                               )}
                             </td>
 
@@ -1861,17 +1857,40 @@ export default function CronogramaEditor({
                               )}
                             </td>
 
-                            {/* Progresso */}
-                            <td className="px-3 py-2 w-36">
-                              {!editando && summary.totalFilhos > 0 && (
-                                <div className="flex items-center gap-2">
-                                  <div className="w-16 h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                                    <div
-                                      className="h-full rounded-full transition-all"
-                                      style={{ width: `${summary.percentual}%`, backgroundColor: cor.progress }}
-                                    />
-                                  </div>
-                                  <span className="text-xs whitespace-nowrap" style={{ color: cor.text }}>{summary.percentual}%</span>
+                            {/* Observação */}
+                            <td className="px-3 py-2 w-40">
+                              {editando ? (
+                                <input
+                                  type="text"
+                                  className="input w-full text-xs py-1"
+                                  placeholder="Observação…"
+                                  value={t.observacoes ?? ''}
+                                  onChange={e => handleAtualizarCampoInline(i, 'observacoes', e.target.value)}
+                                />
+                              ) : editObsId === t.id && t.id ? (
+                                <div className="flex items-center gap-1">
+                                  <input
+                                    type="text"
+                                    autoFocus
+                                    className="input text-xs py-0.5 w-full"
+                                    value={editObsVal}
+                                    onChange={e => setEditObsVal(e.target.value)}
+                                    onKeyDown={e => {
+                                      if (e.key === 'Enter') handleSalvarObservacao(t.id!)
+                                      if (e.key === 'Escape') setEditObsId(null)
+                                    }}
+                                  />
+                                  <button type="button" disabled={salvandoObs} onClick={() => handleSalvarObservacao(t.id!)} className="text-[10px] text-green-700 border border-green-300 rounded px-1 py-0.5 hover:bg-green-50 shrink-0">{salvandoObs ? '…' : '✓'}</button>
+                                  <button type="button" onClick={() => setEditObsId(null)} className="text-[10px] text-gray-500 border border-gray-200 rounded px-1 py-0.5 hover:bg-gray-50 shrink-0">✕</button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-1 group">
+                                  <span className="text-xs text-gray-500 truncate max-w-[120px]" title={t.observacoes ?? ''}>
+                                    {t.observacoes || <span className="text-gray-300">—</span>}
+                                  </span>
+                                  {canEdit && t.id && !isVersaoHistorica && (
+                                    <button type="button" title="Editar observação" onClick={() => { setEditObsId(t.id!); setEditObsVal(t.observacoes ?? '') }} className="opacity-0 group-hover:opacity-100 text-[10px] text-blue-500 hover:text-blue-700 shrink-0">✏</button>
+                                  )}
                                 </div>
                               )}
                             </td>
@@ -1976,7 +1995,6 @@ export default function CronogramaEditor({
                                   <ResponsaveisDisplay responsaveis={t.responsaveis} fallback={t.responsavel_nome} />
                                 )}
                               </td>
-                              <td className="px-3 py-1.5 text-xs w-32 text-gray-400">—</td>
                               <td className="px-3 py-1.5 text-gray-500 text-xs w-24">
                                 {editando ? (
                                   <div>
@@ -2021,8 +2039,33 @@ export default function CronogramaEditor({
                               <td className="px-3 py-1.5 w-28">
                                 {!editando && <StatusAutoBadge status={subStatusAuto} />}
                               </td>
-                              {/* Progresso — vazio */}
-                              <td className="px-3 py-1.5 w-36" />
+                              {/* Observação */}
+                              <td className="px-3 py-1.5 w-40">
+                                {editando ? (
+                                  <input
+                                    type="text"
+                                    className="input w-full text-xs py-1"
+                                    placeholder="Observação…"
+                                    value={t.observacoes ?? ''}
+                                    onChange={e => handleAtualizarCampoInline(i, 'observacoes', e.target.value)}
+                                  />
+                                ) : editObsId === t.id && t.id ? (
+                                  <div className="flex items-center gap-1">
+                                    <input type="text" autoFocus className="input text-xs py-0.5 w-full" value={editObsVal} onChange={e => setEditObsVal(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleSalvarObservacao(t.id!); if (e.key === 'Escape') setEditObsId(null) }} />
+                                    <button type="button" disabled={salvandoObs} onClick={() => handleSalvarObservacao(t.id!)} className="text-[10px] text-green-700 border border-green-300 rounded px-1 py-0.5 hover:bg-green-50 shrink-0">{salvandoObs ? '…' : '✓'}</button>
+                                    <button type="button" onClick={() => setEditObsId(null)} className="text-[10px] text-gray-500 border border-gray-200 rounded px-1 py-0.5 hover:bg-gray-50 shrink-0">✕</button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-1 group">
+                                    <span className="text-xs text-gray-500 truncate max-w-[110px]" title={t.observacoes ?? ''}>
+                                      {t.observacoes || <span className="text-gray-300">—</span>}
+                                    </span>
+                                    {canEdit && t.id && !isVersaoHistorica && (
+                                      <button type="button" title="Editar observação" onClick={() => { setEditObsId(t.id!); setEditObsVal(t.observacoes ?? '') }} className="opacity-0 group-hover:opacity-100 text-[10px] text-blue-500 hover:text-blue-700 shrink-0">✏</button>
+                                    )}
+                                  </div>
+                                )}
+                              </td>
                               {/* Ações */}
                               <td className="px-3 py-1.5 text-right w-20">
                                 {editando ? (
@@ -2127,26 +2170,6 @@ export default function CronogramaEditor({
                                 />
                               ) : (
                                 <ResponsaveisDisplay responsaveis={t.responsaveis} fallback={t.responsavel_nome} />
-                              )}
-                            </td>
-
-                            {/* Executor */}
-                            <td className="px-3 py-2 text-xs w-32">
-                              {editando ? (
-                                <AutocompleteUsuario
-                                  value={t.executor_nome ?? ''}
-                                  usuarios={usuarios}
-                                  placeholder="= Responsável"
-                                  onChange={(nome, id) => handleAtualizarCamposInline(i, {
-                                    executor_id: id, executor_nome: nome || undefined,
-                                  })}
-                                />
-                              ) : (
-                                <span className="text-gray-500 truncate max-w-[110px] block">
-                                  {t.executor_nome && t.executor_nome !== t.responsavel_nome
-                                    ? t.executor_nome
-                                    : <span className="text-gray-300">—</span>}
-                                </span>
                               )}
                             </td>
 
@@ -2270,8 +2293,33 @@ export default function CronogramaEditor({
                               {!editando && <StatusAutoBadge status={statusAuto} />}
                             </td>
 
-                            {/* Progresso — vazio para tarefas */}
-                            <td className="px-3 py-2 w-36" />
+                            {/* Observação */}
+                            <td className="px-3 py-2 w-40">
+                              {editando ? (
+                                <input
+                                  type="text"
+                                  className="input w-full text-xs py-1"
+                                  placeholder="Observação…"
+                                  value={t.observacoes ?? ''}
+                                  onChange={e => handleAtualizarCampoInline(i, 'observacoes', e.target.value)}
+                                />
+                              ) : editObsId === t.id && t.id ? (
+                                <div className="flex items-center gap-1">
+                                  <input type="text" autoFocus className="input text-xs py-0.5 w-full" value={editObsVal} onChange={e => setEditObsVal(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleSalvarObservacao(t.id!); if (e.key === 'Escape') setEditObsId(null) }} />
+                                  <button type="button" disabled={salvandoObs} onClick={() => handleSalvarObservacao(t.id!)} className="text-[10px] text-green-700 border border-green-300 rounded px-1 py-0.5 hover:bg-green-50 shrink-0">{salvandoObs ? '…' : '✓'}</button>
+                                  <button type="button" onClick={() => setEditObsId(null)} className="text-[10px] text-gray-500 border border-gray-200 rounded px-1 py-0.5 hover:bg-gray-50 shrink-0">✕</button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-1 group">
+                                  <span className="text-xs text-gray-500 truncate max-w-[120px]" title={t.observacoes ?? ''}>
+                                    {t.observacoes || <span className="text-gray-300">—</span>}
+                                  </span>
+                                  {canEdit && t.id && !isVersaoHistorica && (
+                                    <button type="button" title="Editar observação" onClick={() => { setEditObsId(t.id!); setEditObsVal(t.observacoes ?? '') }} className="opacity-0 group-hover:opacity-100 text-[10px] text-blue-500 hover:text-blue-700 shrink-0">✏</button>
+                                  )}
+                                </div>
+                              )}
+                            </td>
 
                             {/* Ações */}
                             <td className="px-3 py-2 text-right w-20">
@@ -2326,7 +2374,7 @@ export default function CronogramaEditor({
                     if (editando) {
                       rows.push(
                         <tr key="add-buttons" className="border-b border-gray-100 bg-gray-50/50">
-                          <td colSpan={10} className="px-3 py-3">
+                          <td colSpan={9} className="px-3 py-3">
                             <div className="flex items-center gap-4">
                               <button
                                 type="button"
@@ -2470,7 +2518,6 @@ export default function CronogramaEditor({
                         <th className="text-left px-2 py-2 text-xs font-medium text-gray-500 w-32">Tipo</th>
                         <th className="text-left px-2 py-2 text-xs font-medium text-gray-500 w-28">Criticidade</th>
                         <th className="text-left px-2 py-2 text-xs font-medium text-gray-500 w-36">Responsável *</th>
-                        <th className="text-left px-2 py-2 text-xs font-medium text-gray-500 w-36">Executor</th>
                         <th className="text-left px-2 py-2 text-xs font-medium text-gray-500 w-28">Início</th>
                         <th className="text-left px-2 py-2 text-xs font-medium text-gray-500 w-28">Fim</th>
                         <th className="w-6"></th>
@@ -2534,14 +2581,6 @@ export default function CronogramaEditor({
                               placeholder="Responsável *"
                               onChange={sel => updateLinhaResponsaveis(idx, sel)}
                             />
-                          </td>
-                          <td className="px-2 py-1">
-                            <select className="input w-full text-xs py-1"
-                              value={linha.executor_id}
-                              onChange={e => updateLinha(idx, 'executor_id', e.target.value)}>
-                              <option value="">= Responsável</option>
-                              {usuarios.map(u => <option key={u.id} value={u.id}>{u.nome}</option>)}
-                            </select>
                           </td>
                           <td className="px-2 py-1">
                             <input type="date" className="input w-full text-xs"
@@ -2767,17 +2806,8 @@ export default function CronogramaEditor({
                       ...a,
                       responsaveis: sel,
                       responsavel_id: sel[0]?.id ? String(sel[0].id) : '',
-                      executor_id: a.executor_id || (sel[0]?.id ? String(sel[0].id) : ''),
                     }))}
                   />
-                </div>
-                <div>
-                  <label className="input-label">Executor</label>
-                  <select className="input w-full" value={novaAtividade.executor_id}
-                    onChange={e => setNovaAtividade(a => ({ ...a, executor_id: e.target.value }))}>
-                    <option value="">= Responsável</option>
-                    {usuarios.map(u => <option key={u.id} value={u.id}>{u.nome}</option>)}
-                  </select>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">

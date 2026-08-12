@@ -6,10 +6,10 @@ import { CronogramaRepository } from '@/lib/repositories'
 // Cabeçalho oficial — ordem fixa, nomes exatos
 const CABECALHO = [
   'WBS', 'Nível', 'Nome', 'Descrição', 'Tipo', 'Criticidade',
-  'Responsável', 'Executor',
+  'Responsável',
   'Data Início', 'Nova Data Início',
   'Data Fim', 'Nova Data',
-  'Percentual', 'Status', 'Observações', 'Tipo Macro',
+  'Status', 'Observações', 'Tipo Macro',
 ]
 
 const COL_WIDTHS = [
@@ -20,14 +20,12 @@ const COL_WIDTHS = [
   { wch: 14 },  // Tipo
   { wch: 12 },  // Criticidade
   { wch: 28 },  // Responsável
-  { wch: 28 },  // Executor
   { wch: 13 },  // Data Início   (linha de base / original)
   { wch: 15 },  // Nova Data Início (reprogramação, se houver)
   { wch: 13 },  // Data Fim      (linha de base / original)
   { wch: 13 },  // Nova Data     (data de reprogramação, se houver)
-  { wch: 10 },  // Percentual
   { wch: 14 },  // Status
-  { wch: 25 },  // Observações
+  { wch: 35 },  // Observações
   { wch: 16 },  // Tipo Macro
 ]
 
@@ -74,12 +72,10 @@ export async function GET(
       tipo: string | null
       criticidade: string | null
       responsavel_nome: string | null
-      executor_nome: string | null
       data_inicio: string | null
       data_inicio_baseline: string | null
       data_fim: string | null
       data_fim_baseline: string | null
-      percentual: number | null
       status: string | null
       observacoes: string | null
       tipo_macro: string | null
@@ -109,12 +105,10 @@ export async function GET(
       TIPO_DISPLAY[t.tipo ?? ''] ?? (t.tipo ?? 'Tarefa'),
       CRIT_DISPLAY[t.criticidade ?? ''] ?? (t.criticidade ?? 'Normal'),
       t.responsavel_nome ?? '',
-      t.executor_nome    ?? '',
       dInicioBase,   // Data Início (original/linha de base)
       dInicioNova,   // Nova Data Início (só preenchida quando reprogramada)
       dFimBase,      // Data Fim (original/linha de base)
       dFimNova,      // Nova Data (só preenchida quando reprogramada)
-      t.percentual ?? 0,
       t.status ?? 'PENDENTE',
       t.observacoes ?? '',
       t.nivel === 'FASE' ? (t.tipo_macro ?? 'OUTRO') : '',
@@ -125,10 +119,10 @@ export async function GET(
   const ws = XLSX.utils.aoa_to_sheet(aoa, { cellDates: true })
   ws['!cols'] = COL_WIDTHS
 
-  // Formatar colunas de data (I=8, J=9, K=10, L=11) como DD/MM/YYYY
+  // Formatar colunas de data (H=7, I=8, J=9, K=10) como DD/MM/YYYY
   const range = XLSX.utils.decode_range(ws['!ref'] ?? 'A1')
   for (let R = 1; R <= range.e.r; R++) {
-    for (const C of [8, 9, 10, 11]) {
+    for (const C of [7, 8, 9, 10]) {
       const addr = XLSX.utils.encode_cell({ r: R, c: C })
       const cell = ws[addr]
       if (cell) ws[addr] = { ...cell, z: 'DD/MM/YYYY' }
