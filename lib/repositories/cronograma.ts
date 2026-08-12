@@ -323,7 +323,7 @@ export const CronogramaRepository = {
           responsavel_id, responsavel_nome_ext, executor_id, executor_nome_ext,
           area_id, peso, ordem, percentual, status, prazo_status, data_conclusao,
           observacoes, tipo_macro, ativo, criado_por, alterado_por, alterado_em)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
       [
         params.cronograma_id,
         params.parent_id ?? null,
@@ -408,6 +408,7 @@ export const CronogramaRepository = {
        SET data_conclusao = datetime('now'),
            concluido_por  = ?,
            percentual     = 100,
+           status         = 'CONCLUIDA',
            prazo_status   = ?,
            alterado_por   = ?,
            alterado_em    = datetime('now')

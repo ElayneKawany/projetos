@@ -511,14 +511,28 @@ function calcFaseSummaryFromList(
     if (lista[i].nivel === 'TAREFA') filhos.push(lista[i])
   }
   if (!filhos.length) {
-    // Fase sem filhos visíveis: usa status gravado no DB em vez de forçar PENDENTE.
-    // Cobre o caso de fases cujas tarefas foram removidas mas a fase já foi concluída.
+    // Fase sem filhos visíveis: usa datas e status gravados no DB.
     const dbStatus = fase?.status?.toUpperCase()
-    const faseStatus: FaseStatus = dbStatus === 'CONCLUIDA' ? 'CONCLUIDA'
+    const faseStatus: FaseStatus = (dbStatus === 'CONCLUIDA' || !!fase?.data_conclusao) ? 'CONCLUIDA'
       : dbStatus === 'EM_ANDAMENTO'                         ? 'EM_ANDAMENTO'
       : dbStatus === 'ATRASADA'                             ? 'ATRASADA'
       : 'PENDENTE'
-    return { ...EMPTY, status: faseStatus }
+    const dbInicio = fase?.data_inicio ? fase.data_inicio.slice(0, 10) : null
+    const dbFim    = fase?.data_fim    ? fase.data_fim.slice(0, 10)    : null
+    const diasNum  = dbInicio && dbFim
+      ? (Math.round(
+          (new Date(dbFim + 'T12:00:00').getTime() - new Date(dbInicio + 'T12:00:00').getTime())
+          / 86400000
+        ) + 1)
+      : null
+    return {
+      data_inicio: dbInicio ? formatarData(dbInicio) : '—',
+      data_fim:    dbFim    ? formatarData(dbFim)    : '—',
+      dias:        diasNum  ? `${diasNum}d`          : '—',
+      percentual:  0,
+      status:      faseStatus,
+      totalFilhos: 0,
+    }
   }
 
   // Converter datas para ISO
@@ -1199,9 +1213,14 @@ export default function CronogramaEditor({
 
   function handleEnviarParaAprovacao() {
     setValidacaoErros([]); setValidacaoSucesso(false)
-    // FASEs não armazenam data_inicio/data_fim no banco — são calculadas dos filhos.
-    // Validar apenas TARREFAs e SUBTAREFAs para não bloquear incorretamente.
-    const tarefasParaValidar = tarefas.filter(t => t.nivel !== 'FASE')
+    // FASEs sem filhos comportam-se como tarefas diretas — incluí-las na validação.
+    // FASEs com filhos são excluídas (datas calculadas dos filhos).
+    const fasesSemFilhos = tarefas.filter((t, i) => {
+      if (t.nivel !== 'FASE') return false
+      const proximo = tarefas[i + 1]
+      return !proximo || proximo.nivel === 'FASE'
+    })
+    const tarefasParaValidar = [...tarefas.filter(t => t.nivel !== 'FASE'), ...fasesSemFilhos]
     const erros = validarCronograma(tarefasParaValidar)
     if (erros.length) { setValidacaoErros(erros) } else { setShowEnviarModal(true) }
   }
@@ -1751,18 +1770,72 @@ export default function CronogramaEditor({
                               )}
                             </td>
 
-                            {/* Início — auto calculado, bloqueado */}
+                            {/* Início */}
                             <td className="px-3 py-2 text-xs w-24">
-                              {editando
-                                ? <span className="text-gray-400 italic">{summary.data_inicio}</span>
-                                : <span className="text-gray-600">{summary.data_inicio}</span>}
+                              {!editando && summary.totalFilhos === 0 && reprogramarId === t.id ? (
+                                <input
+                                  type="text"
+                                  className="input text-xs py-0.5 w-full"
+                                  value={novaDataInicioRepr}
+                                  placeholder="DD/MM/AAAA"
+                                  maxLength={10}
+                                  onChange={e => setNovaDataInicioRepr(e.target.value)}
+                                  onKeyDown={e => {
+                                    if (e.key === 'Escape') { setReprogramarId(null); setNovaDataRepr(''); setNovaDataInicioRepr('') }
+                                  }}
+                                />
+                              ) : (
+                                editando
+                                  ? <span className="text-gray-400 italic">{summary.data_inicio}</span>
+                                  : <span className="text-gray-600">{summary.data_inicio}</span>
+                              )}
                             </td>
 
-                            {/* Fim — auto calculado, bloqueado */}
+                            {/* Fim */}
                             <td className="px-3 py-2 text-xs w-24">
-                              {editando
-                                ? <span className="text-gray-400 italic">{summary.data_fim}</span>
-                                : <span className="text-gray-600">{summary.data_fim}</span>}
+                              {!editando && summary.totalFilhos === 0 && reprogramarId === t.id ? (
+                                <div className="flex flex-col gap-1">
+                                  <input
+                                    type="text"
+                                    className="input text-xs py-0.5 w-full"
+                                    value={novaDataRepr}
+                                    placeholder="DD/MM/AAAA"
+                                    maxLength={10}
+                                    autoFocus
+                                    onChange={e => setNovaDataRepr(e.target.value)}
+                                    onKeyDown={e => {
+                                      if (e.key === 'Enter') handleReprogramar(t.id!)
+                                      if (e.key === 'Escape') { setReprogramarId(null); setNovaDataRepr(''); setNovaDataInicioRepr('') }
+                                    }}
+                                  />
+                                  <div className="flex gap-1">
+                                    <button
+                                      type="button"
+                                      className="text-[10px] text-blue-600 border border-blue-200 rounded px-1.5 py-0.5 hover:bg-blue-50 disabled:opacity-50"
+                                      disabled={salvandoRepr}
+                                      onClick={() => handleReprogramar(t.id!)}
+                                    >{salvandoRepr ? '…' : 'OK'}</button>
+                                    <button
+                                      type="button"
+                                      className="text-[10px] text-gray-400 border border-gray-200 rounded px-1.5 py-0.5 hover:bg-gray-50"
+                                      onClick={() => { setReprogramarId(null); setNovaDataRepr(''); setNovaDataInicioRepr('') }}
+                                    >✕</button>
+                                  </div>
+                                </div>
+                              ) : (
+                                editando
+                                  ? <span className="text-gray-400 italic">{summary.data_fim}</span>
+                                  : (
+                                    <div>
+                                      <span className="text-gray-600">{summary.data_fim}</span>
+                                      {t.data_fim_baseline && (
+                                        <p className="text-[10px] text-gray-400 mt-0.5 leading-tight">
+                                          Base: {formatarData(t.data_fim_baseline.slice(0, 10))}
+                                        </p>
+                                      )}
+                                    </div>
+                                  )
+                              )}
                             </td>
 
                             {/* Dias */}
@@ -1814,6 +1887,28 @@ export default function CronogramaEditor({
                                 >
                                   ✕
                                 </button>
+                              )}
+                              {!editando && summary.totalFilhos === 0 && canEdit && t.id && (
+                                <div className="flex flex-col items-end gap-1">
+                                  {summary.status !== 'CONCLUIDA' && (
+                                    <button
+                                      type="button"
+                                      className="text-xs text-green-600 hover:text-green-800 border border-green-300 rounded px-1.5 py-0.5"
+                                      title="Concluir fase"
+                                      onClick={() => handleConcluirTarefa(t.id!)}
+                                    >
+                                      ✓
+                                    </button>
+                                  )}
+                                  {summary.status !== 'CONCLUIDA' && reprogramarId !== t.id && (
+                                    <button
+                                      type="button"
+                                      className="text-[10px] text-orange-600 border border-orange-200 rounded px-1.5 py-0.5 hover:bg-orange-50"
+                                      title="Reprogramar datas da fase (mantém linha de base)"
+                                      onClick={() => { setReprogramarId(t.id!); setNovaDataRepr(''); setNovaDataInicioRepr('') }}
+                                    >Reprog.</button>
+                                  )}
+                                </div>
                               )}
                             </td>
                           </tr>

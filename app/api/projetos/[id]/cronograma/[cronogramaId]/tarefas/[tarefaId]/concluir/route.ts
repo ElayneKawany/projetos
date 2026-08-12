@@ -56,9 +56,14 @@ export async function POST(
 
   const item = CronogramaRepository.findTarefaByIdAndCronograma(tarefa_id, cronograma_id)
 
-  if (!item)                 return NextResponse.json({ error: 'Tarefa não encontrada.' }, { status: 404 })
-  if (item.nivel === 'FASE') return NextResponse.json({ error: 'Fases não podem ser concluídas diretamente.' }, { status: 400 })
-  if (item.data_conclusao)   return NextResponse.json({ error: 'Atividade já foi concluída.' }, { status: 400 })
+  if (!item)               return NextResponse.json({ error: 'Tarefa não encontrada.' }, { status: 404 })
+  if (item.data_conclusao) return NextResponse.json({ error: 'Atividade já foi concluída.' }, { status: 400 })
+
+  if (item.nivel === 'FASE') {
+    const totalFilhos = CronogramaRepository.countTarefasFase(cronograma_id, tarefa_id, false)
+    if (totalFilhos > 0)
+      return NextResponse.json({ error: 'Fases com tarefas devem ser concluídas via suas tarefas filhas.' }, { status: 400 })
+  }
 
   const hoje = new Date()
   hoje.setHours(0, 0, 0, 0)
