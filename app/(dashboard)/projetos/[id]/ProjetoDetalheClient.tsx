@@ -454,18 +454,12 @@ export default function ProjetoDetalheClient(props: Props) {
             </p>
           </div>
 
-          {/* Badge NO PRAZO / ATRASADO — exibido quando há data de conclusão no cronograma */}
-          {prazoAtrasado !== null && (
-            <div className="shrink-0 self-start">
-              <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold border ${
-                prazoAtrasado
-                  ? 'bg-red-50 text-red-700 border-red-200'
-                  : 'bg-green-50 text-green-700 border-green-200'
-              }`}>
-                {prazoAtrasado ? '⚠ ATRASADO' : '✓ NO PRAZO'}
-              </span>
-            </div>
-          )}
+          {/* Badge prazo — sempre visível */}
+          <div className="shrink-0 self-start">
+            <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold border ${scCfg.cls}`}>
+              {scCfg.emoji} {scCfg.label}
+            </span>
+          </div>
 
           {/* Botão Concluir Projeto — visível apenas em EXECUCAO + cronograma aprovado */}
           {podeGerenciar && projeto.status === 'EXECUCAO' && cronogramaAprovado && (

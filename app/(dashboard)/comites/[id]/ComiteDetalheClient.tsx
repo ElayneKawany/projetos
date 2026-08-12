@@ -74,6 +74,7 @@ interface ProjetoExecucaoDetalhe {
 
 interface MacroTarefa {
   id: number
+  cronograma_id: number
   projeto_id: number
   nome: string
   nivel?: number
@@ -3213,6 +3214,12 @@ function SlideExecucaoDetalhe({
   const [idx, setIdx] = useState(0)
   const [decisaoLoading, setDecisaoLoading] = useState(false)
   const [decisaoErro, setDecisaoErro] = useState('')
+  const [reprogramarId, setReprogramarId] = useState<number | null>(null)
+  const [novaDataFim, setNovaDataFim] = useState('')
+  const [reprogramandoLoading, setReprogramandoLoading] = useState(false)
+
+  // Reset reprogramação ao navegar entre projetos
+  useEffect(() => { setReprogramarId(null); setNovaDataFim('') }, [idx])
 
   type ExecPage =
     | { kind: 'dir'; nome: string; projetos: ProjetoResumo[] }
@@ -3504,7 +3511,7 @@ function SlideExecucaoDetalhe({
           </div>
 
           {/* Progress indicators */}
-          <div className="mt-4 pt-4 border-t border-gray-100 grid grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="mt-4 pt-4 border-t border-gray-100">
             <div>
               <div className="flex justify-between text-xs font-medium mb-1.5">
                 <span className="text-gray-500">% Concluído</span>
@@ -3514,31 +3521,19 @@ function SlideExecucaoDetalhe({
                 <div className="h-full rounded-full" style={{ width: `${percConcluido}%`, background: COR }} />
               </div>
             </div>
-            <div>
-              <div className="flex justify-between text-xs font-medium mb-1.5">
-                <span className="text-gray-500">% Financeiro</span>
-                <span className={percFinanceiro > 100 ? 'text-red-600' : 'text-[#003087]'}>{percFinanceiro}%</span>
-              </div>
-              <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                <div className="h-full rounded-full" style={{ width: `${Math.min(percFinanceiro, 100)}%`, background: percFinanceiro > 100 ? '#DC2626' : '#003087' }} />
-              </div>
-            </div>
-            <div className="col-span-2 lg:col-span-1 flex items-center">
-              <div className={`w-full text-xs font-semibold px-3 py-2 rounded-lg text-center ${pontosCount > 0 ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}`}>
-                {pontosCount > 0 ? `⚠ ${pontosCount} ponto${pontosCount > 1 ? 's' : ''} crítico${pontosCount > 1 ? 's' : ''}` : '✓ Sem pontos críticos'}
-              </div>
-            </div>
           </div>
         </div>
 
-        {/* 2 – Macro Cronograma */}
-        <div className="bg-white rounded-xl border border-gray-100 border-t-4 shadow-sm overflow-hidden" style={{ borderTopColor: COR }}>
-          <div className="px-5 pt-4 pb-3 border-b border-gray-100 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider" style={{ color: COR }}>
-            <BarChart2 size={13} className="shrink-0" /><span>Macro Cronograma</span>
-            <span className="ml-auto text-gray-400 font-normal">{macros.length} atividade{macros.length !== 1 ? 's' : ''}</span>
+        {/* 2 – Macro Cronograma — apenas atividades atrasadas */}
+        <div className="bg-white rounded-xl border border-gray-100 border-t-4 shadow-sm overflow-hidden" style={{ borderTopColor: '#DC2626' }}>
+          <div className="px-5 pt-4 pb-3 border-b border-gray-100 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-red-600">
+            <BarChart2 size={13} className="shrink-0" /><span>Macro Cronograma — Atividades Atrasadas</span>
+            <span className="ml-auto text-gray-400 font-normal">{atrasadas.length} atrasada{atrasadas.length !== 1 ? 's' : ''}</span>
           </div>
-          {macros.length === 0 ? (
-            <p className="p-6 text-center text-sm text-gray-400">Nenhuma macro atividade cadastrada</p>
+          {atrasadas.length === 0 ? (
+            <div className="p-6 flex items-center gap-2 text-sm text-green-600 font-medium">
+              <CheckCircle size={16} /> Nenhuma atividade atrasada.
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -3546,120 +3541,101 @@ function SlideExecucaoDetalhe({
                   <tr className="bg-gray-50 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                     <th className="px-4 py-2.5 text-left">Macro Atividade</th>
                     <th className="px-4 py-2.5 text-left">Responsável</th>
-                    <th className="px-4 py-2.5 text-center whitespace-nowrap">Data Prevista</th>
-                    <th className="px-4 py-2.5 text-center">Status</th>
-                    <th className="px-4 py-2.5 text-center whitespace-nowrap">Dias Rest.</th>
+                    <th className="px-4 py-2.5 text-center whitespace-nowrap">Data Original</th>
+                    <th className="px-4 py-2.5 text-center whitespace-nowrap">Dias Atraso</th>
                     <th className="px-4 py-2.5 text-center">Avanço</th>
-                    <th className="px-4 py-2.5 text-left">Observações</th>
+                    <th className="px-4 py-2.5 text-center">Ação</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {macros.map(t => {
-                    const st = calcStatusTarefa(t, today)
-                    const cfg = STATUS_TAREFA_CFG[st]
+                  {atrasadas.map(t => {
                     const dias = t.data_fim
-                      ? Math.ceil((new Date(t.data_fim + 'T00:00:00').getTime() - today.getTime()) / 86400000)
+                      ? Math.ceil((today.getTime() - new Date(t.data_fim + 'T00:00:00').getTime()) / 86400000)
                       : null
+                    const isReprog = reprogramarId === t.id
                     return (
-                      <tr key={t.id} className="border-t border-gray-50 hover:bg-gray-50/50 transition-colors">
-                        <td className="px-4 py-3">
-                          <span className={`font-medium ${st === 'atrasada' ? 'text-red-700' : st === 'bloqueada' ? 'text-purple-700' : 'text-gray-800'}`}>
-                            {t.nome}
-                          </span>
-                          {t.criticidade === 'CRITICA' && (
-                            <span className="ml-2 text-xs bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-bold">Crítica</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-xs text-gray-500">{t.responsavel_nome || '—'}</td>
-                        <td className="px-4 py-3 text-center text-xs text-gray-600 whitespace-nowrap">{fmtDate(t.data_fim)}</td>
-                        <td className="px-4 py-3 text-center">
-                          <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full"
-                            style={{ color: cfg.color, background: `${cfg.color}18` }}>
-                            {cfg.dot} {cfg.label}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-center text-xs">
-                          {st === 'concluida'
-                            ? <span className="text-green-600 font-bold">✓</span>
-                            : dias === null ? '—'
-                            : <span className={`font-medium ${dias < 0 ? 'text-red-600' : dias <= 7 ? 'text-amber-600' : 'text-gray-600'}`}>
-                                {dias < 0 ? `${Math.abs(dias)}d atrás` : `${dias}d`}
-                              </span>
-                          }
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            <div className="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden" style={{ minWidth: '48px' }}>
-                              <div className="h-full rounded-full" style={{ width: `${t.percentual ?? 0}%`, background: cfg.color }} />
+                      <React.Fragment key={t.id}>
+                        <tr className="border-t border-gray-50 hover:bg-red-50/30 transition-colors">
+                          <td className="px-4 py-3">
+                            <span className="font-medium text-red-700">{t.nome}</span>
+                            {t.criticidade === 'CRITICA' && (
+                              <span className="ml-2 text-xs bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-bold">Crítica</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-xs text-gray-500">{t.responsavel_nome || '—'}</td>
+                          <td className="px-4 py-3 text-center text-xs text-gray-600 whitespace-nowrap">{fmtDate(t.data_fim)}</td>
+                          <td className="px-4 py-3 text-center text-xs">
+                            {dias !== null
+                              ? <span className="font-bold text-red-600">{dias}d</span>
+                              : '—'}
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-2">
+                              <div className="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden" style={{ minWidth: '48px' }}>
+                                <div className="h-full rounded-full bg-red-500" style={{ width: `${t.percentual ?? 0}%` }} />
+                              </div>
+                              <span className="text-xs font-medium w-8 text-right text-red-600">{t.percentual ?? 0}%</span>
                             </div>
-                            <span className="text-xs font-medium w-8 text-right" style={{ color: cfg.color }}>{t.percentual ?? 0}%</span>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-xs text-gray-400 max-w-xs truncate">{t.observacoes || (t.motivo_bloqueio || t.motivo_atraso) || '—'}</td>
-                      </tr>
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            {!isReprog && (
+                              <button
+                                onClick={() => { setReprogramarId(t.id); setNovaDataFim('') }}
+                                className="text-xs px-2 py-1 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 hover:bg-amber-100 font-medium transition"
+                              >
+                                Reprog.
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                        {isReprog && (
+                          <tr className="border-t border-amber-100 bg-amber-50/60">
+                            <td colSpan={6} className="px-4 py-3">
+                              <div className="flex items-center gap-3 flex-wrap">
+                                <span className="text-xs text-gray-600 font-medium">Nova data de entrega:</span>
+                                <input
+                                  type="date"
+                                  value={novaDataFim}
+                                  onChange={e => setNovaDataFim(e.target.value)}
+                                  className="text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                  min={new Date().toISOString().slice(0, 10)}
+                                />
+                                <button
+                                  disabled={!novaDataFim || reprogramandoLoading}
+                                  onClick={async () => {
+                                    if (!novaDataFim) return
+                                    setReprogramandoLoading(true)
+                                    try {
+                                      const res = await fetch(
+                                        `/api/projetos/${t.projeto_id}/cronograma/${t.cronograma_id}/tarefas/${t.id}/reprogramar`,
+                                        { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                          body: JSON.stringify({ nova_data_fim: novaDataFim }) }
+                                      )
+                                      if (res.ok) { setReprogramarId(null); setNovaDataFim(''); onRefresh() }
+                                    } finally { setReprogramandoLoading(false) }
+                                  }}
+                                  className="text-xs px-3 py-1 rounded-lg bg-green-600 text-white font-medium hover:bg-green-700 disabled:opacity-40 transition"
+                                >
+                                  {reprogramandoLoading ? 'Salvando…' : 'Confirmar'}
+                                </button>
+                                <button
+                                  onClick={() => { setReprogramarId(null); setNovaDataFim('') }}
+                                  className="text-xs px-2 py-1 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 transition"
+                                >
+                                  Cancelar
+                                </button>
+                                {t.data_fim && (
+                                  <span className="text-xs text-gray-400">Linha de base: {fmtDate(t.data_fim)}</span>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
                     )
                   })}
                 </tbody>
               </table>
-            </div>
-          )}
-        </div>
-
-        {/* 3 – Pontos Críticos */}
-        <div className="bg-white rounded-xl border border-gray-100 border-t-4 shadow-sm" style={{ borderTopColor: pontosCount > 0 ? '#DC2626' : '#10B981' }}>
-          <div className="px-5 pt-4 pb-3 border-b border-gray-100 flex items-center gap-1.5">
-            <AlertCircle size={13} className={`shrink-0 ${pontosCount > 0 ? 'text-red-600' : 'text-green-600'}`} />
-            <span className={`text-xs font-bold uppercase tracking-wider ${pontosCount > 0 ? 'text-red-600' : 'text-green-600'}`}>Pontos Críticos</span>
-            {pontosCount > 0 && (
-              <span className="ml-auto px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-xs font-bold">{pontosCount}</span>
-            )}
-          </div>
-          {pontosCount === 0 ? (
-            <div className="p-5 flex items-center gap-2 text-sm text-green-600 font-medium">
-              <CheckCircle size={16} /> Nenhum ponto crítico identificado.
-            </div>
-          ) : (
-            <div className="p-4 space-y-2">
-              {atrasadas.map(t => (
-                <div key={`at-${t.id}`} className="flex items-start gap-2.5 p-3 bg-red-50 rounded-lg border border-red-100">
-                  <span className="shrink-0 mt-0.5">🔴</span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-red-800">{t.nome}</p>
-                    <p className="text-xs text-red-600 mt-0.5">
-                      Atividade atrasada{t.data_fim ? ` · Prevista: ${fmtDate(t.data_fim)}` : ''}{t.responsavel_nome ? ` · ${t.responsavel_nome}` : ''}
-                    </p>
-                    {(t.motivo_atraso || t.motivo_bloqueio) && (
-                      <p className="text-xs text-red-500 mt-0.5 italic">{t.motivo_atraso || t.motivo_bloqueio}</p>
-                    )}
-                  </div>
-                  <span className="text-xs font-bold text-red-600 shrink-0 bg-red-100 px-1.5 py-0.5 rounded">{t.percentual ?? 0}%</span>
-                </div>
-              ))}
-              {bloqueadas.map(t => (
-                <div key={`bl-${t.id}`} className="flex items-start gap-2.5 p-3 bg-purple-50 rounded-lg border border-purple-100">
-                  <span className="shrink-0 mt-0.5">🟣</span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-purple-800">{t.nome}</p>
-                    <p className="text-xs text-purple-600 mt-0.5">
-                      Atividade bloqueada{t.responsavel_nome ? ` · ${t.responsavel_nome}` : ''}
-                    </p>
-                    {t.motivo_bloqueio && <p className="text-xs text-purple-500 mt-0.5 italic">{t.motivo_bloqueio}</p>}
-                  </div>
-                </div>
-              ))}
-              {pendsProjeto.map(p => (
-                <div key={`pend-${p.id}`} className="flex items-start gap-2.5 p-3 bg-amber-50 rounded-lg border border-amber-100">
-                  <span className="shrink-0 mt-0.5">🟡</span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-amber-800">{p.descricao}</p>
-                    <p className="text-xs text-amber-600 mt-0.5">
-                      {p.responsavel_nome ? `Responsável: ${p.responsavel_nome}` : 'Sem responsável'}
-                      {p.prazo ? ` · Prazo: ${fmtDate(p.prazo)}` : ''}
-                    </p>
-                  </div>
-                  <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 shrink-0">{p.status}</span>
-                </div>
-              ))}
             </div>
           )}
         </div>
@@ -3672,9 +3648,9 @@ function SlideExecucaoDetalhe({
           <div className="p-5">
             <div className="grid grid-cols-3 gap-4 mb-4">
               {([
-                { label: 'Budget Aprovado',   value: budgetAprovado || totalContratado, color: '#003087' },
-                { label: 'Budget Utilizado',  value: totalPago,                         color: percFinanceiro > 100 ? '#DC2626' : '#059669' },
-                { label: 'Saldo Atual',        value: saldo,                             color: saldo >= 0 ? '#059669' : '#DC2626' },
+                { label: 'Budget Lançado/Aprovado', value: budgetAprovado || totalContratado, color: '#003087' },
+                { label: 'Budget Utilizado',         value: totalPago,                         color: totalPago > (budgetAprovado || totalContratado) ? '#DC2626' : '#059669' },
+                { label: 'Saldo Atual',               value: saldo,                             color: saldo >= 0 ? '#059669' : '#DC2626' },
               ] as const).map(card => (
                 <div key={card.label} className="flex flex-col items-center p-4 rounded-xl bg-gray-50 border border-gray-100 text-center">
                   <p className="text-xs font-semibold text-gray-500 mb-2">{card.label}</p>
@@ -3761,14 +3737,12 @@ function SlideExecucaoDetalhe({
 // ─── Slide: Diretoria (agrupa todos os status-macro de uma diretoria) ─────────
 
 const MACRO_GRUPOS_DIRETORIA = [
-  { macro: 'MACRO_PROPOSTA',     label: 'Proposta / Ideia',       cor: '#6B7280', statuses: ['PROPOSTA','TRIAGEM','COMITE_IDEIAS'] },
-  { macro: 'MACRO_VIABILIDADE',  label: 'Estudo de Viabilidade',  cor: '#7C3AED', statuses: ['VIABILIDADE','COMPLEMENTACAO_TAP','APROVACAO'] },
-  { macro: 'MACRO_ESTRUTURACAO', label: 'Estruturação',           cor: '#EA580C', statuses: ['ESTRUTURACAO','CRONOGRAMA'] },
-  { macro: 'MACRO_EXECUCAO',     label: 'Execução',               cor: '#16A34A', statuses: ['EXECUCAO','GOLIVE'] },
-  { macro: 'MACRO_PAUSADO',      label: 'Pausado',                cor: '#D97706', statuses: ['PAUSADO','SUSPENSO'] },
-  { macro: 'MACRO_CANCELADO',    label: 'Cancelado',              cor: '#DC2626', statuses: ['CANCELADO'] },
-  { macro: 'MACRO_CONCLUIDO',    label: 'Concluído',              cor: '#059669', statuses: ['ENCERRAMENTO','PROJETO_CONCLUIDO','PROJETO_ENCERRADO'] },
-  { macro: 'MACRO_PAYBACK',      label: 'Payback',                cor: '#0891B2', statuses: ['ROI','PAYBACK_ACOMPANHAMENTO','PAYBACK_ENCERRADO'] },
+  { macro: 'MACRO_PROPOSTA',     label: 'Proposta / Ideia',       cor: '#2563EB', statuses: ['PROPOSTA','TRIAGEM','COMITE_IDEIAS'] },
+  { macro: 'MACRO_VIABILIDADE',  label: 'Est. de Viabilidade',   cor: '#7C3AED', statuses: ['VIABILIDADE','COMPLEMENTACAO_TAP','APROVACAO'] },
+  { macro: 'MACRO_ESTRUTURACAO', label: 'Estruturação',           cor: '#D97706', statuses: ['ESTRUTURACAO','CRONOGRAMA'] },
+  { macro: 'MACRO_EXECUCAO',     label: 'Execução',               cor: '#059669', statuses: ['EXECUCAO','GOLIVE','PROJETO_CONCLUIDO'] },
+  { macro: 'MACRO_PAYBACK',      label: 'Payback',                cor: '#0891B2', statuses: ['ROI','PAYBACK_ACOMPANHAMENTO','PAYBACK_ENCERRADO','PROJETO_ENCERRADO'] },
+  { macro: 'MACRO_PAUSADO',      label: 'Pausado',                cor: '#6B7280', statuses: ['PAUSADO'] },
 ] as const
 
 function SlideDiretoria({
@@ -4001,8 +3975,7 @@ function SlideDiretoria({
       )}
       {(selectedMacro === 'MACRO_ESTRUTURACAO' ||
         selectedMacro === 'MACRO_PAUSADO' ||
-        selectedMacro === 'MACRO_CANCELADO' ||
-        selectedMacro === 'MACRO_CONCLUIDO') && (
+        selectedMacro === 'MACRO_PAYBACK') && (
         <SlideProjetosPorDiretoria
           titulo={grupoAtual.label}
           projetos={projetosGrupo}

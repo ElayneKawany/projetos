@@ -144,7 +144,7 @@ export default async function ComiteDetalhePage({ params }: { params: Promise<{ 
   // Macro tarefas (nivel=1) from latest active cronograma for each EXECUCAO project
   const macroTarefasExecucao = db.prepare(`
     SELECT
-      t.id, c.projeto_id, t.nome, t.nivel, t.percentual,
+      t.id, c.id AS cronograma_id, c.projeto_id, t.nome, t.nivel, t.percentual,
       t.data_inicio, t.data_fim, t.data_conclusao,
       t.bloqueio, t.motivo_bloqueio, t.motivo_atraso, t.criticidade,
       t.observacoes, t.prazo_status, t.ordem,
