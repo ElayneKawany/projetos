@@ -85,18 +85,43 @@ export default async function TIAgendaPage() {
     (usuariosInfo as any[]).map((u: any) => u.diretoria).filter(Boolean)
   )].sort() as string[]
 
-  // Prioridades persistidas no DB (overrides e confirmações)
+  // Prioridades persistidas no DB (overrides, confirmações e vínculos)
   const tiPrioridadesDB = db.prepare('SELECT * FROM ti_prioridades WHERE fonte = ?').all('dev2026') as any[]
+
+  // Lista de projetos disponíveis para vínculo
+  const projetosDisponiveis = db.prepare(`
+    SELECT id, codigo, nome, status FROM projetos WHERE ativo = 1 ORDER BY nome
+  `).all() as { id: number; codigo: string; nome: string; status: string }[]
+
+  // Hierarquia: para cada (projeto_id, analista), manter só o nível mais específico
+  // Ordem de especificidade: SUBTAREFA > TAREFA > FASE
+  const NIVEL_DEPTH: Record<string, number> = { SUBTAREFA: 3, TAREFA: 2, FASE: 1 }
+  const tarefasHierarquizadas = (() => {
+    const tarefas = tarefasCronograma as any[]
+    // Determinar profundidade máxima por (projeto_id, analista)
+    const maxDepth: Record<string, number> = {}
+    tarefas.forEach((t: any) => {
+      const key = `${t.projeto_id}::${t.analista}`
+      const d = NIVEL_DEPTH[t.nivel] ?? 1
+      if (!maxDepth[key] || d > maxDepth[key]) maxDepth[key] = d
+    })
+    // Manter apenas o nível mais específico
+    return tarefas.filter((t: any) => {
+      const key = `${t.projeto_id}::${t.analista}`
+      return (NIVEL_DEPTH[t.nivel] ?? 1) === maxDepth[key]
+    })
+  })()
 
   return (
     <TIAgendaClient
-      tarefasCronograma={tarefasCronograma as any}
+      tarefasCronograma={tarefasHierarquizadas as any}
       dev2026={DEV2026_ATIVIDADES}
       tiPrioridadesDB={tiPrioridadesDB}
       usuariosInfo={usuariosInfo as any}
       cargosDistinct={cargosDistinct}
       perfisDistinct={perfisDistinct}
       diretoriasDistinct={diretoriasDistinct}
+      projetosDisponiveis={projetosDisponiveis}
       session={session}
     />
   )

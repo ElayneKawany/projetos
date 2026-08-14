@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useMemo } from 'react'
+import { useRouter } from 'next/navigation'
 import {
   Monitor, User, Calendar, Clock, AlertTriangle, CheckCircle2, Circle,
   Loader2, ChevronDown, ChevronRight, ExternalLink, Info,
@@ -49,6 +50,16 @@ interface TiPrioridadeDB {
   solicitacao_alteracao: number
   solicitacao_nova_prioridade: number | null
   solicitacao_motivo: string | null
+  projeto_id?: number | null
+  projeto_codigo?: string | null
+  projeto_nome?: string | null
+}
+
+interface ProjetoDisponivel {
+  id: number
+  codigo: string
+  nome: string
+  status: string
 }
 
 interface Props {
@@ -59,6 +70,7 @@ interface Props {
   cargosDistinct: string[]
   perfisDistinct: { codigo: string; nome: string }[]
   diretoriasDistinct: string[]
+  projetosDisponiveis: ProjetoDisponivel[]
   session: SessionUser
 }
 
@@ -81,6 +93,7 @@ type KanbanColunaId =
   | 'treinamento'
   | 'acompanhamento'
   | 'concluido'
+  | 'sem_projeto'
 
 const KANBAN_COLUNAS: { id: KanbanColunaId; label: string; cor: string; icon: string }[] = [
   { id: 'definir_prioridade',  label: 'Definir Prioridade',          cor: '#6B7280', icon: '🎯' },
@@ -90,6 +103,7 @@ const KANBAN_COLUNAS: { id: KanbanColunaId; label: string; cor: string; icon: st
   { id: 'treinamento',         label: 'Treinamento',                  cor: '#0EA5E9', icon: '📚' },
   { id: 'acompanhamento',      label: 'Acompanhamento',               cor: '#F97316', icon: '👁️' },
   { id: 'concluido',           label: 'Concluído',                    cor: '#059669', icon: '✅' },
+  { id: 'sem_projeto',         label: 'Sem Projeto Vinculado',        cor: '#DC2626', icon: '🔗' },
 ]
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -156,6 +170,7 @@ interface ItemKanban {
   id: string
   nome: string
   analista: string
+  projetoId?: number   // id numérico do projeto (usado no link /projetos/:id)
   projetoCodigo?: string
   projetoNome?: string
   fonte: 'cronograma' | 'dev2026'
@@ -173,6 +188,7 @@ interface ItemKanban {
   prioridadeDB_id?: number
   solicitacaoAlteracao?: boolean
   requisito?: string
+  devId?: number  // id numérico da atividade DEV2026 (para vincular projeto)
 }
 
 function obterColunaKanban(item: ItemKanban): KanbanColunaId {
@@ -181,6 +197,8 @@ function obterColunaKanban(item: ItemKanban): KanbanColunaId {
   const texto = st + ' ' + obs
 
   if (item.fonte === 'dev2026') {
+    // DEV2026 sem projeto vinculado → coluna especial
+    if (!item.projetoCodigo) return 'sem_projeto'
     if (item.progresso === 'Concluído') return 'concluido'
     if (item.progresso === 'Não iniciado') {
       return item.prioridade === '' ? 'definir_prioridade' : 'aguardando'
@@ -208,15 +226,16 @@ function obterColunaKanban(item: ItemKanban): KanbanColunaId {
 // ── Card de atividade (visão Agenda) ──────────────────────────────────────────
 function CardAtividade({
   titulo, analista, inicio, fim, duracao, progresso, pct,
-  projetoCodigo, projetoNome, fonte, statusTexto, conflito, semDatas,
-  observacoes, prioridade, requisito, confirmada, onOpen,
+  projetoId, projetoCodigo, projetoNome, fonte, statusTexto, conflito, semDatas,
+  observacoes, prioridade, requisito, confirmada, onOpen, onVincular,
 }: {
   titulo: string; analista: string; inicio: string | null; fim: string | null
   duracao: number | null; progresso?: Dev2026Atividade['progresso']
-  pct?: number; projetoCodigo?: string; projetoNome?: string; fonte: 'cronograma' | 'dev2026'
+  pct?: number; projetoId?: number; projetoCodigo?: string; projetoNome?: string; fonte: 'cronograma' | 'dev2026'
   statusTexto?: string; conflito: boolean; semDatas: boolean
   observacoes?: string | null; prioridade?: number | ''; requisito?: string; confirmada?: boolean
   onOpen?: () => void
+  onVincular?: () => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const cor = COR_ANALISTA[analista] ?? '#6B7280'
@@ -236,6 +255,9 @@ function CardAtividade({
           <div className="flex items-center gap-1.5 shrink-0">
             {confirmada && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 border border-green-200">✓ Confirmada</span>}
             {conflito && <span title="Conflito de agenda detectado"><AlertTriangle size={13} className="text-amber-500" /></span>}
+            {prioridade !== '' && prioridade !== undefined && (
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-megag-azul text-white">P{prioridade}</span>
+            )}
             {fonte === 'dev2026' && (
               <span className="text-xs px-1.5 py-0.5 rounded bg-purple-50 text-purple-600 font-medium border border-purple-100">DEV2026</span>
             )}
@@ -249,16 +271,24 @@ function CardAtividade({
         {projetoCodigo ? (
           <div className="flex items-center gap-1.5 mb-2">
             <ExternalLink size={11} className="text-gray-400 shrink-0" />
-            <a href={`/projetos/${projetoCodigo}`} target="_blank" rel="noreferrer"
+            <a href={projetoId ? `/projetos/${projetoId}` : '#'} target="_blank" rel="noreferrer"
               onClick={e => e.stopPropagation()}
               className="text-xs text-megag-azul hover:underline truncate font-medium">
               {projetoCodigo} — {projetoNome}
             </a>
           </div>
         ) : fonte === 'dev2026' ? (
-          <div className="flex items-center gap-1.5 mb-2">
+          <div className="flex items-center gap-1.5 mb-2 flex-wrap">
             <Info size={11} className="text-amber-500 shrink-0" />
-            <span className="text-xs text-amber-600 font-medium">Atividade sem projeto cadastrado</span>
+            <span className="text-xs text-amber-600 font-medium">Projeto não encontrado</span>
+            {onVincular && (
+              <button
+                onClick={e => { e.stopPropagation(); onVincular() }}
+                className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500 text-white hover:bg-amber-600 font-semibold ml-1"
+              >
+                Vincular Projeto
+              </button>
+            )}
           </div>
         ) : null}
 
@@ -326,7 +356,7 @@ function CardAtividade({
             {projetoCodigo && (
               <div>
                 <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-0.5">Projeto</p>
-                <a href={`/projetos/${projetoCodigo}`} target="_blank" rel="noreferrer"
+                <a href={projetoId ? `/projetos/${projetoId}` : '#'} target="_blank" rel="noreferrer"
                   className="text-xs text-megag-azul hover:underline">
                   {projetoCodigo} — {projetoNome}
                 </a>
@@ -369,7 +399,7 @@ function KanbanCard({ item, onOpen }: { item: ItemKanban; onOpen?: () => void })
         {item.projetoCodigo ? (
           <div className="flex items-center gap-1 mb-1.5">
             <ExternalLink size={10} className="text-gray-400 shrink-0" />
-            <a href={`/projetos/${item.projetoCodigo}`} target="_blank" rel="noreferrer"
+            <a href={item.projetoId ? `/projetos/${item.projetoId}` : '#'} target="_blank" rel="noreferrer"
               onClick={e => e.stopPropagation()}
               className="text-[10px] text-megag-azul hover:underline truncate">{item.projetoCodigo}</a>
           </div>
@@ -415,8 +445,123 @@ function KanbanCard({ item, onOpen }: { item: ItemKanban; onOpen?: () => void })
   )
 }
 
+// ── Modal: Vincular Projeto ───────────────────────────────────────────────────
+const STATUS_LABELS: Record<string, string> = {
+  PROPOSTA: 'Proposta / Ideia', TRIAGEM: 'Triagem', VIABILIDADE: 'Estudo de Viabilidade',
+  ESTRUTURACAO: 'Estruturação', EXECUCAO: 'Execução', GOLIVE: 'Go-Live',
+  PAYBACK: 'Payback', CONCLUIDO: 'Concluído', PAUSADO: 'Pausado', CANCELADO: 'Cancelado',
+}
+
+function VincularProjetoModal({
+  atividadeId, atividadeNome, projetos, onClose, onVincular,
+}: {
+  atividadeId: number
+  atividadeNome: string
+  projetos: ProjetoDisponivel[]
+  onClose: () => void
+  onVincular: (projetoCodigo: string, projetoNome: string) => void
+}) {
+  const [busca, setBusca] = useState('')
+  const [filtroStatus, setFiltroStatus] = useState('TODOS')
+  const [loading, setLoading] = useState(false)
+  const [erro, setErro] = useState('')
+
+  const statusOptions = ['TODOS', ...Array.from(new Set(projetos.map(p => p.status))).sort()]
+
+  const projetosFiltrados = projetos.filter(p => {
+    if (filtroStatus !== 'TODOS' && p.status !== filtroStatus) return false
+    if (busca.trim()) {
+      const q = busca.toLowerCase()
+      if (!p.nome.toLowerCase().includes(q) && !p.codigo.toLowerCase().includes(q)) return false
+    }
+    return true
+  })
+
+  async function handleVincular(p: ProjetoDisponivel) {
+    setLoading(true)
+    setErro('')
+    try {
+      const res = await fetch('/api/ti/prioridades/vincular', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ atividade_id: atividadeId, projeto_id: p.id, projeto_codigo: p.codigo, projeto_nome: p.nome }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setErro(data.error || 'Erro ao vincular.'); setLoading(false); return }
+      onVincular(data.projeto_codigo, data.projeto_nome)
+      onClose()
+    } catch {
+      setErro('Erro de rede.'); setLoading(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="h-1.5 bg-amber-500" />
+        <div className="p-5">
+          <div className="flex items-start justify-between mb-4">
+            <div>
+              <h2 className="font-bold text-base text-gray-900">Vincular Projeto</h2>
+              <p className="text-xs text-gray-500 mt-0.5">Atividade: <span className="font-medium text-gray-700">{atividadeNome}</span></p>
+            </div>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-lg font-bold">✕</button>
+          </div>
+
+          {/* Filtros */}
+          <div className="flex gap-2 mb-3">
+            <input
+              type="text"
+              className="input flex-1"
+              placeholder="Buscar por nome ou código..."
+              value={busca}
+              onChange={e => setBusca(e.target.value)}
+              autoFocus
+            />
+            <select className="input w-40" value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)}>
+              {statusOptions.map(s => (
+                <option key={s} value={s}>{s === 'TODOS' ? 'Todos os status' : (STATUS_LABELS[s] ?? s)}</option>
+              ))}
+            </select>
+          </div>
+
+          {erro && <p className="text-xs text-red-600 mb-2">{erro}</p>}
+
+          {/* Lista de projetos */}
+          <div className="overflow-y-auto max-h-72 border border-gray-100 rounded-xl divide-y divide-gray-100">
+            {projetosFiltrados.length === 0 ? (
+              <div className="p-6 text-center text-sm text-gray-400">Nenhum projeto encontrado.</div>
+            ) : projetosFiltrados.map(p => (
+              <button
+                key={p.id}
+                className="w-full text-left px-4 py-3 hover:bg-blue-50 transition flex items-center justify-between gap-3"
+                onClick={() => handleVincular(p)}
+                disabled={loading}
+              >
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-gray-800 truncate">{p.nome}</p>
+                  <p className="text-xs text-gray-500">{p.codigo}</p>
+                </div>
+                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 shrink-0">
+                  {STATUS_LABELS[p.status] ?? p.status}
+                </span>
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-gray-400 mt-2">{projetosFiltrados.length} projeto{projetosFiltrados.length !== 1 ? 's' : ''} encontrado{projetosFiltrados.length !== 1 ? 's' : ''}</p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Modal de detalhe de card TI ───────────────────────────────────────────────
-function TICardModal({ item, onClose }: { item: ItemKanban; onClose: () => void }) {
+function TICardModal({ item, onClose, onVincular, projetos }: {
+  item: ItemKanban
+  onClose: () => void
+  onVincular?: () => void
+  projetos?: ProjetoDisponivel[]
+}) {
   const cor = COR_ANALISTA[item.analista] ?? '#6B7280'
   return (
     <div
@@ -437,12 +582,24 @@ function TICardModal({ item, onClose }: { item: ItemKanban; onClose: () => void 
                 : badgeTarefaPct(item.pct ?? 0)}
               <div className="min-w-0">
                 <h2 className="font-bold text-base text-gray-900 leading-snug">{item.nome}</h2>
-                {item.projetoCodigo && (
-                  <a href={`/projetos/${item.projetoCodigo}`} target="_blank" rel="noreferrer"
+                {item.projetoCodigo ? (
+                  <a href={item.projetoId ? `/projetos/${item.projetoId}` : '#'} target="_blank" rel="noreferrer"
                     className="text-xs text-megag-azul hover:underline mt-0.5 block">
                     {item.projetoCodigo} — {item.projetoNome}
                   </a>
-                )}
+                ) : item.fonte === 'dev2026' ? (
+                  <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                    <span className="text-xs text-amber-600 font-medium">Projeto não encontrado</span>
+                    {onVincular && (
+                      <button
+                        onClick={onVincular}
+                        className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500 text-white hover:bg-amber-600 font-semibold"
+                      >
+                        Vincular Projeto
+                      </button>
+                    )}
+                  </div>
+                ) : null}
               </div>
             </div>
             <button onClick={onClose} className="text-gray-400 hover:text-gray-700 transition shrink-0 text-lg font-bold">✕</button>
@@ -529,7 +686,7 @@ function KanbanView({ itens, onOpen }: { itens: ItemKanban[]; onOpen: (item: Ite
   const colunas = useMemo(() => {
     const map: Record<KanbanColunaId, ItemKanban[]> = {
       definir_prioridade: [], aguardando: [], em_desenvolvimento: [],
-      em_validacao: [], treinamento: [], acompanhamento: [], concluido: [],
+      em_validacao: [], treinamento: [], acompanhamento: [], concluido: [], sem_projeto: [],
     }
     itens.forEach(item => {
       const col = obterColunaKanban(item)
@@ -685,7 +842,7 @@ function PrazosView({ itens }: { itens: ItemKanban[] }) {
                   </td>
                   <td className="px-3 py-2.5 max-w-[200px]">
                     {item.projetoCodigo ? (
-                      <a href={`/projetos/${item.projetoCodigo}`} target="_blank" rel="noreferrer"
+                      <a href={item.projetoId ? `/projetos/${item.projetoId}` : '#'} target="_blank" rel="noreferrer"
                         className="text-xs text-megag-azul hover:underline flex items-center gap-1">
                         <ExternalLink size={10} className="shrink-0" />
                         <span className="truncate">{item.projetoCodigo}</span>
@@ -710,7 +867,8 @@ function PrazosView({ itens }: { itens: ItemKanban[] }) {
 // ── Componente principal ──────────────────────────────────────────────────────
 export default function TIAgendaClient({
   tarefasCronograma, dev2026, tiPrioridadesDB,
-  usuariosInfo, cargosDistinct, perfisDistinct, diretoriasDistinct, session,
+  usuariosInfo, cargosDistinct, perfisDistinct, diretoriasDistinct,
+  projetosDisponiveis, session,
 }: Props) {
   const [viewMode, setViewMode] = useState<ViewMode>('agenda')
   const [filtroAnalista, setFiltroAnalista] = useState<string>('TODOS')
@@ -723,6 +881,8 @@ export default function TIAgendaClient({
   const [agruparAnalista, setAgruparAnalista] = useState(true)
   const [expandidos, setExpandidos] = useState<Record<string, boolean>>({})
   const [modalItem, setModalItem] = useState<ItemKanban | null>(null)
+  const [vincularModal, setVincularModal] = useState<{ devId: number; nome: string } | null>(null)
+  const router = useRouter()
 
   const usuarioMap = useMemo(() => {
     const m: Record<string, UsuarioInfo> = {}
@@ -756,9 +916,15 @@ export default function TIAgendaClient({
       // Merge prioridade do DB (override a estática)
       const dbPrio = priMap.get(a.id)
       const prioridade: number | '' = dbPrio && dbPrio.prioridade !== null ? dbPrio.prioridade : a.prioridade
+      const projetoCodigoFinal = dbPrio?.projeto_codigo ?? a.projeto_codigo
+      const projetoNomeFinal = dbPrio?.projeto_nome ?? a.projeto_nome
+      const projetoIdFinal: number | null = dbPrio?.projeto_id ?? null
       return {
         ...a,
         prioridade,
+        projeto_codigo: projetoCodigoFinal,
+        projeto_nome: projetoNomeFinal,
+        projeto_id_num: projetoIdFinal,
         analistaNorm: analista, ehAnalistaTI, duracao, semDatas, concluida,
         prioridade_confirmada: dbPrio?.confirmada === 1,
         prioridade_db_id: dbPrio?.id,
@@ -825,6 +991,7 @@ export default function TIAgendaClient({
       id: `c-${t.id}`,
       nome: t.nome,
       analista: t.analistaNorm,
+      projetoId: t.projeto_id,
       projetoCodigo: t.projeto_codigo,
       projetoNome: t.projeto_nome,
       fonte: 'cronograma' as const,
@@ -842,6 +1009,7 @@ export default function TIAgendaClient({
       id: `d-${a.id}`,
       nome: a.nome,
       analista: a.analistaNorm,
+      projetoId: (a as any).projeto_id_num ?? undefined,
       projetoCodigo: a.projeto_codigo,
       projetoNome: a.projeto_nome,
       fonte: 'dev2026' as const,
@@ -858,6 +1026,7 @@ export default function TIAgendaClient({
       prioridadeDB_id: a.prioridade_db_id,
       solicitacaoAlteracao: a.solicitacao_alteracao,
       requisito: a.requisito,
+      devId: a.id,
     }))
     return [...tItems, ...dItems]
   }, [tarefasFiltradas, dev2026Filtradas])
@@ -880,12 +1049,42 @@ export default function TIAgendaClient({
   const totalConflitos = conflitos.size / 2
 
   const resumoAnalistas = useMemo(() => {
+    const hoje = new Date()
+    hoje.setHours(0, 0, 0, 0)
+    const janela = new Date(hoje)
+    janela.setDate(janela.getDate() + 30)
+
+    function calcComprometidas(
+      tCron: Array<{ data_inicio: string | null; data_fim: string | null }>,
+      tDev: Array<{ inicio_dev?: string | null; fim_dev?: string | null }>,
+    ): number {
+      let horas = 0
+      const pares: Array<{ ini: string | null; fim: string | null }> = [
+        ...tCron.map(t => ({ ini: t.data_inicio, fim: t.data_fim })),
+        ...tDev.map(a => ({ ini: a.inicio_dev ?? null, fim: a.fim_dev ?? null })),
+      ]
+      pares.forEach(({ ini, fim }) => {
+        if (!ini || !fim) return
+        const dIni = new Date(ini + 'T00:00:00')
+        const dFim = new Date(fim + 'T00:00:00')
+        const ovIni = dIni > hoje ? dIni : hoje
+        const ovFim = dFim < janela ? dFim : janela
+        if (ovIni <= ovFim) {
+          const dias = Math.ceil((ovFim.getTime() - ovIni.getTime()) / 86400000) + 1
+          horas += dias * 8
+        }
+      })
+      return horas
+    }
+
     return ANALISTAS_TI.map(nome => {
       const tCron = tarefasNormalizadas.filter(t => t.analistaNorm === nome && t.percentual < 100)
       const tDev = dev2026Normalizadas.filter(a => a.analistaNorm === nome && !a.concluida)
       const emAndamento = tCron.filter(t => t.percentual > 0).length + tDev.filter(a => a.progresso === 'Em andamento').length
       const naoConcluidas = tCron.length + tDev.length
-      return { nome, emAndamento, naoConcluidas, cor: COR_ANALISTA[nome] }
+      const comprometidas = calcComprometidas(tCron, tDev)
+      const disponiveis = Math.max(0, 176 - comprometidas)
+      return { nome, emAndamento, naoConcluidas, comprometidas, disponiveis, cor: COR_ANALISTA[nome] }
     })
   }, [tarefasNormalizadas, dev2026Normalizadas])
 
@@ -934,6 +1133,14 @@ export default function TIAgendaClient({
               <div className="bg-gray-50 rounded-lg p-2">
                 <p className="text-lg font-black text-gray-700">{a.naoConcluidas}</p>
                 <p className="text-xs text-gray-500">Pendentes</p>
+              </div>
+              <div className="bg-orange-50 rounded-lg p-2">
+                <p className="text-base font-black text-orange-600">{a.comprometidas}h</p>
+                <p className="text-xs text-gray-500">Comprometidas</p>
+              </div>
+              <div className="bg-green-50 rounded-lg p-2">
+                <p className="text-base font-black text-green-600">{a.disponiveis}h</p>
+                <p className="text-xs text-gray-500">Disponíveis</p>
               </div>
             </div>
           </div>
@@ -1119,12 +1326,12 @@ export default function TIAgendaClient({
                                 titulo={t.nome} analista={t.analistaNorm}
                                 inicio={t.data_inicio} fim={t.data_fim} duracao={t.duracao}
                                 pct={t.percentual}
-                                projetoCodigo={t.projeto_codigo} projetoNome={t.projeto_nome}
+                                projetoId={t.projeto_id} projetoCodigo={t.projeto_codigo} projetoNome={t.projeto_nome}
                                 fonte="cronograma"
                                 observacoes={t.observacoes}
                                 conflito={conflitos.has(`${analista}::${t.nome}`)}
                                 semDatas={!t.data_inicio && !t.data_fim}
-                                onOpen={() => setModalItem({ id: `c-${t.id}`, nome: t.nome, analista: t.analistaNorm, projetoCodigo: t.projeto_codigo, projetoNome: t.projeto_nome, fonte: 'cronograma', inicio: t.data_inicio, fim: t.data_fim, duracao: t.duracao, progresso: null, pct: t.percentual ?? null, prioridade: '', statusTexto: '', dataConclusao: null, observacoes: t.observacoes ?? null })}
+                                onOpen={() => setModalItem({ id: `c-${t.id}`, nome: t.nome, analista: t.analistaNorm, projetoId: t.projeto_id, projetoCodigo: t.projeto_codigo, projetoNome: t.projeto_nome, fonte: 'cronograma', inicio: t.data_inicio, fim: t.data_fim, duracao: t.duracao, progresso: null, pct: t.percentual ?? null, prioridade: '', statusTexto: '', dataConclusao: null, observacoes: t.observacoes ?? null })}
                               />
                             ))}
                           </div>
@@ -1139,14 +1346,15 @@ export default function TIAgendaClient({
                                 titulo={a.nome} analista={a.analistaNorm}
                                 inicio={a.inicio_dev || null} fim={a.fim_dev || null}
                                 duracao={a.duracao} progresso={a.progresso}
-                                projetoCodigo={a.projeto_codigo} projetoNome={a.projeto_nome}
+                                projetoId={(a as any).projeto_id_num ?? undefined} projetoCodigo={a.projeto_codigo} projetoNome={a.projeto_nome}
                                 fonte="dev2026" statusTexto={a.status}
                                 prioridade={a.prioridade}
                                 requisito={a.requisito}
                                 confirmada={a.prioridade_confirmada}
                                 conflito={conflitos.has(`${a.analistaNorm}::${a.nome}`)}
                                 semDatas={a.semDatas}
-                                onOpen={() => setModalItem({ id: `d-${a.id}`, nome: a.nome, analista: a.analistaNorm, projetoCodigo: a.projeto_codigo, projetoNome: a.projeto_nome, fonte: 'dev2026', inicio: a.inicio_dev || null, fim: a.fim_dev || null, duracao: a.duracao, progresso: a.progresso, pct: null, prioridade: a.prioridade, statusTexto: a.status || '', dataConclusao: null, observacoes: null, confirmada: a.prioridade_confirmada, requisito: a.requisito })}
+                                onOpen={() => setModalItem({ id: `d-${a.id}`, nome: a.nome, analista: a.analistaNorm, projetoId: (a as any).projeto_id_num ?? undefined, projetoCodigo: a.projeto_codigo, projetoNome: a.projeto_nome, fonte: 'dev2026', inicio: a.inicio_dev || null, fim: a.fim_dev || null, duracao: a.duracao, progresso: a.progresso, pct: null, prioridade: a.prioridade, statusTexto: a.status || '', dataConclusao: null, observacoes: null, confirmada: a.prioridade_confirmada, requisito: a.requisito, devId: a.id })}
+                                onVincular={!a.projeto_codigo ? () => setVincularModal({ devId: a.id, nome: a.nome }) : undefined}
                               />
                             ))}
                           </div>
@@ -1171,11 +1379,11 @@ export default function TIAgendaClient({
                   titulo={t.nome} analista={t.analistaNorm}
                   inicio={t.data_inicio} fim={t.data_fim} duracao={t.duracao}
                   pct={t.percentual}
-                  projetoCodigo={t.projeto_codigo} projetoNome={t.projeto_nome}
+                  projetoId={t.projeto_id} projetoCodigo={t.projeto_codigo} projetoNome={t.projeto_nome}
                   fonte="cronograma" conflito={conflitos.has(`${analista}::${t.nome}`)}
                   observacoes={t.observacoes}
                   semDatas={!t.data_inicio && !t.data_fim}
-                  onOpen={() => setModalItem({ id: `c-${t.id}`, nome: t.nome, analista: t.analistaNorm, projetoCodigo: t.projeto_codigo, projetoNome: t.projeto_nome, fonte: 'cronograma', inicio: t.data_inicio, fim: t.data_fim, duracao: t.duracao, progresso: null, pct: t.percentual ?? null, prioridade: '', statusTexto: '', dataConclusao: null, observacoes: t.observacoes ?? null })}
+                  onOpen={() => setModalItem({ id: `c-${t.id}`, nome: t.nome, analista: t.analistaNorm, projetoId: t.projeto_id, projetoCodigo: t.projeto_codigo, projetoNome: t.projeto_nome, fonte: 'cronograma', inicio: t.data_inicio, fim: t.data_fim, duracao: t.duracao, progresso: null, pct: t.percentual ?? null, prioridade: '', statusTexto: '', dataConclusao: null, observacoes: t.observacoes ?? null })}
                 />
               )),
               ...dev.map(a => (
@@ -1183,14 +1391,15 @@ export default function TIAgendaClient({
                   titulo={a.nome} analista={a.analistaNorm}
                   inicio={a.inicio_dev || null} fim={a.fim_dev || null}
                   duracao={a.duracao} progresso={a.progresso}
-                  projetoCodigo={a.projeto_codigo} projetoNome={a.projeto_nome}
+                  projetoId={(a as any).projeto_id_num ?? undefined} projetoCodigo={a.projeto_codigo} projetoNome={a.projeto_nome}
                   fonte="dev2026" statusTexto={a.status}
                   prioridade={a.prioridade}
                   requisito={a.requisito}
                   confirmada={a.prioridade_confirmada}
                   conflito={conflitos.has(`${a.analistaNorm}::${a.nome}`)}
                   semDatas={a.semDatas}
-                  onOpen={() => setModalItem({ id: `d-${a.id}`, nome: a.nome, analista: a.analistaNorm, projetoCodigo: a.projeto_codigo, projetoNome: a.projeto_nome, fonte: 'dev2026', inicio: a.inicio_dev || null, fim: a.fim_dev || null, duracao: a.duracao, progresso: a.progresso, pct: null, prioridade: a.prioridade, statusTexto: a.status || '', dataConclusao: null, observacoes: null, confirmada: a.prioridade_confirmada, requisito: a.requisito })}
+                  onOpen={() => setModalItem({ id: `d-${a.id}`, nome: a.nome, analista: a.analistaNorm, projetoId: (a as any).projeto_id_num ?? undefined, projetoCodigo: a.projeto_codigo, projetoNome: a.projeto_nome, fonte: 'dev2026', inicio: a.inicio_dev || null, fim: a.fim_dev || null, duracao: a.duracao, progresso: a.progresso, pct: null, prioridade: a.prioridade, statusTexto: a.status || '', dataConclusao: null, observacoes: null, confirmada: a.prioridade_confirmada, requisito: a.requisito, devId: a.id })}
+                  onVincular={!a.projeto_codigo ? () => setVincularModal({ devId: a.id, nome: a.nome }) : undefined}
                 />
               )),
             ])}
@@ -1217,7 +1426,27 @@ export default function TIAgendaClient({
       {viewMode === 'prazos' && <PrazosView itens={itensUnificados} />}
 
       {/* Modal de detalhes */}
-      {modalItem && <TICardModal item={modalItem} onClose={() => setModalItem(null)} />}
+      {modalItem && (
+        <TICardModal
+          item={modalItem}
+          onClose={() => setModalItem(null)}
+          projetos={projetosDisponiveis}
+          onVincular={modalItem.fonte === 'dev2026' && !modalItem.projetoCodigo && modalItem.devId !== undefined
+            ? () => { setModalItem(null); setVincularModal({ devId: modalItem.devId!, nome: modalItem.nome }) }
+            : undefined}
+        />
+      )}
+
+      {/* Modal: Vincular Projeto */}
+      {vincularModal && (
+        <VincularProjetoModal
+          atividadeId={vincularModal.devId}
+          atividadeNome={vincularModal.nome}
+          projetos={projetosDisponiveis}
+          onClose={() => setVincularModal(null)}
+          onVincular={() => { setVincularModal(null); router.refresh() }}
+        />
+      )}
 
       {/* Legenda */}
       <div className="bg-gray-50 rounded-xl border border-gray-100 p-4 text-xs text-gray-500">

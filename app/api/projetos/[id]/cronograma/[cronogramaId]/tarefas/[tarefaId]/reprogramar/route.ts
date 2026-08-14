@@ -27,7 +27,7 @@ export async function PATCH(
     return NextResponse.json({ error: 'Tarefa não encontrada.' }, { status: 404 })
 
   const body = await request.json()
-  const { nova_data, nova_data_inicio } = body as { nova_data?: string; nova_data_inicio?: string }
+  const { nova_data, nova_data_inicio, justificativa } = body as { nova_data?: string; nova_data_inicio?: string; justificativa?: string }
 
   const dateRe = /^\d{4}-\d{2}-\d{2}$/
   if (!nova_data && !nova_data_inicio) {
@@ -69,7 +69,7 @@ export async function PATCH(
     artefato:        'CRONOGRAMA',
     evento:          'ALTERADO',
     titulo:          'Tarefa reprogramada',
-    descricao:       `"${tarefa.nome}" reprogramada: ${descParts} por ${session.nome}`,
+    descricao:       `"${tarefa.nome}" reprogramada: ${descParts} por ${session.nome}${justificativa ? `. Justificativa: ${justificativa}` : ''}`,
     usuario_id:      session.id,
     usuario_nome:    session.nome,
     referencia_id:   cronograma_id,
@@ -83,7 +83,7 @@ export async function PATCH(
     entidade:     'cronograma_tarefas',
     entidade_id:  tarefa_id,
     projeto_id,
-    descricao:    `Tarefa reprogramada: ${descParts}`,
+    descricao:    `Tarefa reprogramada: ${descParts}${justificativa ? `. Justificativa: ${justificativa}` : ''}`,
     dados_antes:  { data_inicio: dataInicioAtual, data_inicio_baseline: dataInicioBaselineAtual, data_fim: dataFimAtual, data_fim_baseline: dataFimBaselineAtual },
     dados_depois: { data_inicio: novoInicio,      data_inicio_baseline: novoBaselineInicio,      data_fim: novoFim,    data_fim_baseline: novoBaselineFim },
   })

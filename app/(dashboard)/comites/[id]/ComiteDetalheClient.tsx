@@ -125,6 +125,7 @@ interface TITarefaCronogramaComite {
   data_inicio: string | null; data_fim: string | null; data_conclusao: string | null
   observacoes: string | null; prazo_status: string | null
   analista: string; projeto_codigo: string; projeto_nome: string
+  cronograma_id: number; projeto_id: number
 }
 
 interface Props {
@@ -3896,7 +3897,7 @@ function SlideExecucaoDetalhe({
               </div>
             </div>
             {/* Retorno — dados do Payback */}
-            {(det.economia_mensal_esperada != null || det.payback_informado != null || det.payback_meses != null) && (
+            {(det.opex_aprovado != null && det.opex_aprovado > 0) && (det.economia_mensal_esperada != null || det.payback_informado != null || det.payback_meses != null) && (
               <div className="pt-1 border-t border-gray-100">
                 <p className="text-xs font-bold uppercase tracking-wider text-green-700 mb-1.5">Retorno Esperado</p>
                 <div className="grid grid-cols-2 gap-2">
@@ -4317,6 +4318,77 @@ function SlideCapa({
 
 // ─── TI – Desenvolvimento ────────────────────────────────────────────────────
 
+function ModalReprogramarTarefa({
+  tarefa,
+  onClose,
+  onSuccess,
+}: {
+  tarefa: TITarefaCronogramaComite
+  onClose: () => void
+  onSuccess: () => void
+}) {
+  const [novaData, setNovaData] = useState(tarefa.data_fim ?? '')
+  const [justificativa, setJustificativa] = useState('')
+  const [salvando, setSalvando] = useState(false)
+  const [erro, setErro] = useState<string | null>(null)
+
+  async function salvar() {
+    if (!novaData) { setErro('Informe a nova data de término.'); return }
+    if (!justificativa.trim()) { setErro('Informe a justificativa.'); return }
+    setSalvando(true); setErro(null)
+    try {
+      const res = await fetch(
+        `/api/projetos/${tarefa.projeto_id}/cronograma/${tarefa.cronograma_id}/tarefas/${tarefa.id}/reprogramar`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ nova_data: novaData, justificativa }),
+        }
+      )
+      if (!res.ok) { const d = await res.json(); setErro(d.error ?? 'Erro ao reprogramar.'); return }
+      onSuccess()
+    } catch {
+      setErro('Erro de comunicação.')
+    } finally {
+      setSalvando(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-bold text-lg text-gray-900">Reprogramar Tarefa</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={20} /></button>
+        </div>
+        <p className="text-sm text-gray-600 mb-4 font-medium">{tarefa.nome}</p>
+        <div className="space-y-4">
+          <div>
+            <label className="input-label">Nova Data de Término</label>
+            <input type="date" className="input w-full" value={novaData} onChange={e => setNovaData(e.target.value)} />
+          </div>
+          <div>
+            <label className="input-label">Justificativa <span className="text-red-500">*</span></label>
+            <textarea
+              className="input w-full min-h-[80px] resize-none"
+              placeholder="Descreva o motivo da reprogramação..."
+              value={justificativa}
+              onChange={e => setJustificativa(e.target.value)}
+            />
+          </div>
+          {erro && <p className="text-sm text-red-600">{erro}</p>}
+          <div className="flex justify-end gap-2 pt-2">
+            <button className="btn-secondary" onClick={onClose} disabled={salvando}>Cancelar</button>
+            <button className="btn-primary" onClick={salvar} disabled={salvando}>
+              {salvando ? <Loader2 size={14} className="animate-spin" /> : 'Salvar'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function SlideTIDesenvolvimento({
   atividades,
   tarefasCronograma,
@@ -4324,21 +4396,47 @@ function SlideTIDesenvolvimento({
   atividades: TIAtividadeComite[]
   tarefasCronograma: TITarefaCronogramaComite[]
 }) {
-  const progBadge = (p: string) => {
-    const map: Record<string, string> = {
-      'Em andamento': 'bg-blue-100 text-blue-700',
-      'Em validação': 'bg-purple-100 text-purple-700',
-      'Em treinamento': 'bg-orange-100 text-orange-700',
-      'Em acompanhamento': 'bg-teal-100 text-teal-700',
-    }
-    return map[p] ?? 'bg-gray-100 text-gray-600'
+  const router = useRouter()
+  const [reprogramar, setReprogramar] = useState<TITarefaCronogramaComite | null>(null)
+
+  // Unify: DEV2026 with linked project + cronograma tasks
+  type LinhaUnificada = {
+    key: string
+    projeto_codigo: string
+    projeto_nome: string
+    tarefa: string
+    analista: string
+    prazo: string | null
+    prazo_status?: string | null
+    fonte: 'dev2026' | 'cronograma'
+    tarefaRef?: TITarefaCronogramaComite
   }
 
-  const pctBadge = (pct: number) => {
-    if (pct >= 80) return 'bg-green-100 text-green-700'
-    if (pct >= 40) return 'bg-yellow-100 text-yellow-700'
-    return 'bg-red-100 text-red-700'
-  }
+  const linhas: LinhaUnificada[] = [
+    ...atividades
+      .filter(a => !!a.projeto_codigo)
+      .map(a => ({
+        key: `dev-${a.id}`,
+        projeto_codigo: a.projeto_codigo!,
+        projeto_nome: a.projeto_nome || '',
+        tarefa: a.nome,
+        analista: a.responsavel || '—',
+        prazo: a.fim_dev || null,
+        prazo_status: null,
+        fonte: 'dev2026' as const,
+      })),
+    ...tarefasCronograma.map(t => ({
+      key: `cron-${t.id}`,
+      projeto_codigo: t.projeto_codigo,
+      projeto_nome: t.projeto_nome,
+      tarefa: t.nome,
+      analista: t.analista || '—',
+      prazo: t.data_fim || null,
+      prazo_status: t.prazo_status,
+      fonte: 'cronograma' as const,
+      tarefaRef: t,
+    })),
+  ]
 
   return (
     <div>
@@ -4346,99 +4444,62 @@ function SlideTIDesenvolvimento({
         <Monitor size={20} /> TI – Projetos em Desenvolvimento
       </h2>
 
-      {/* DEV2026 em andamento */}
-      {atividades.length > 0 && (
-        <div className="mb-6">
-          <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-2">
-            Atividades DEV2026
-          </h3>
-          <div className="overflow-x-auto">
-            <table className="table-megag text-sm">
-              <thead>
-                <tr>
-                  <th>Projeto / Requisito</th>
-                  <th>Atividade</th>
-                  <th>Analista</th>
-                  <th>Início</th>
-                  <th>Fim</th>
-                  <th>Situação</th>
-                </tr>
-              </thead>
-              <tbody>
-                {atividades.map(a => (
-                  <tr key={a.id}>
-                    <td className="text-xs text-gray-500">{a.requisito || '—'}</td>
-                    <td className="font-medium">{a.nome}</td>
-                    <td>{a.responsavel || '—'}</td>
-                    <td className="text-xs">{a.inicio_dev ? fmtDate(a.inicio_dev) : '—'}</td>
-                    <td className="text-xs">{a.fim_dev ? fmtDate(a.fim_dev) : '—'}</td>
-                    <td>
-                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${progBadge(a.progresso)}`}>
-                        {a.progresso}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Tarefas de cronograma de TI em andamento */}
-      {tarefasCronograma.length > 0 && (
-        <div>
-          <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-2">
-            Tarefas de Cronograma
-          </h3>
-          <div className="overflow-x-auto">
-            <table className="table-megag text-sm">
-              <thead>
-                <tr>
-                  <th>Projeto</th>
-                  <th>Tarefa</th>
-                  <th>Analista</th>
-                  <th>Início</th>
-                  <th>Fim</th>
-                  <th>% Concluído</th>
-                  <th>Prazo</th>
-                </tr>
-              </thead>
-              <tbody>
-                {tarefasCronograma.map(t => (
-                  <tr key={t.id}>
-                    <td className="text-xs">
-                      <span className="font-mono text-[#003087]">{t.projeto_codigo}</span>{' '}
-                      <span className="text-gray-500">{t.projeto_nome}</span>
-                    </td>
-                    <td className="font-medium">{t.nome}</td>
-                    <td>{t.analista || '—'}</td>
-                    <td className="text-xs">{t.data_inicio ? fmtDate(t.data_inicio) : '—'}</td>
-                    <td className="text-xs">{t.data_fim ? fmtDate(t.data_fim) : '—'}</td>
-                    <td>
-                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${pctBadge(t.percentual)}`}>
-                        {t.percentual}%
-                      </span>
-                    </td>
-                    <td>
-                      {t.prazo_status ? (
-                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                          t.prazo_status === 'ATRASADO' ? 'bg-red-100 text-red-700' :
-                          t.prazo_status === 'EM_RISCO'  ? 'bg-yellow-100 text-yellow-700' :
-                          'bg-green-100 text-green-700'
-                        }`}>{t.prazo_status}</span>
+      {linhas.length === 0 ? (
+        <p className="text-sm text-gray-400 italic">Nenhuma atividade de TI vinculada a projetos no momento.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="table-megag text-sm">
+            <thead>
+              <tr>
+                <th>Projeto</th>
+                <th>Tarefa do TI</th>
+                <th>Analista</th>
+                <th>Prazo</th>
+              </tr>
+            </thead>
+            <tbody>
+              {linhas.map(l => (
+                <tr key={l.key}>
+                  <td className="text-xs">
+                    <span className="font-mono text-[#003087]">{l.projeto_codigo}</span>{' '}
+                    <span className="text-gray-500">{l.projeto_nome}</span>
+                    {l.fonte === 'dev2026' && (
+                      <span className="ml-1 text-[10px] px-1 py-0.5 rounded bg-purple-50 text-purple-600 font-medium border border-purple-100">DEV2026</span>
+                    )}
+                  </td>
+                  <td className="font-medium">{l.tarefa}</td>
+                  <td>{l.analista}</td>
+                  <td className="text-xs">
+                    <div className="flex items-center gap-2">
+                      {l.prazo ? (
+                        <span className={l.prazo_status === 'ATRASADO' ? 'text-red-600 font-semibold' : l.prazo_status === 'EM_RISCO' ? 'text-yellow-600 font-semibold' : ''}>
+                          {fmtDate(l.prazo)}
+                        </span>
                       ) : '—'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                      {l.fonte === 'cronograma' && l.tarefaRef && (
+                        <button
+                          onClick={() => setReprogramar(l.tarefaRef!)}
+                          className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 hover:bg-gray-200 font-medium"
+                          title="Reprogramar tarefa"
+                        >
+                          Reprogramar
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 
-      {atividades.length === 0 && tarefasCronograma.length === 0 && (
-        <p className="text-center text-gray-400 py-8 text-sm">Nenhum item em desenvolvimento no momento</p>
+      {reprogramar && (
+        <ModalReprogramarTarefa
+          tarefa={reprogramar}
+          onClose={() => setReprogramar(null)}
+          onSuccess={() => { setReprogramar(null); router.refresh() }}
+        />
       )}
     </div>
   )

@@ -547,7 +547,18 @@ export default function ViabilidadeEditor({ viabilidade, projetoId, canEdit, can
     // Payback v2
     baseline_valor: (viabilidade?.baseline_valor ?? null) as number | null,
     meta_valor: (viabilidade?.meta_valor ?? null) as number | null,
-    tipo_indicador: viabilidade?.tipo_indicador ?? 'ABSOLUTO',
+    tipo_indicador: (() => {
+      const raw = viabilidade?.tipo_indicador ?? null
+      if (!raw) {
+        // Backward compat: derive from boolean flags
+        const arr: string[] = ['ABSOLUTO']
+        if (viabilidade?.ganho_tarefa_ativo) arr.push('GANHO_TAREFA')
+        if (viabilidade?.hc_ativo) arr.push('HC')
+        return arr
+      }
+      try { const p = JSON.parse(raw); return Array.isArray(p) ? p : [raw] }
+      catch { return [raw] }
+    })() as string[],
     economia_mensal_esperada: (viabilidade?.economia_mensal_esperada ?? null) as number | null,
     // Indicador Ganho Tarefa
     ganho_tarefa_ativo: Boolean(viabilidade?.ganho_tarefa_ativo),
@@ -608,10 +619,14 @@ export default function ViabilidadeEditor({ viabilidade, projetoId, canEdit, can
     ? custoTotalHCUnitario * (form.hc_quantidade ?? 1)
     : null
 
+  const tipoIndicadorArr = Array.isArray(form.tipo_indicador) ? form.tipo_indicador : [form.tipo_indicador as unknown as string]
+  const ganhoTarefaAtivo = tipoIndicadorArr.includes('GANHO_TAREFA')
+  const hcAtivo = tipoIndicadorArr.includes('HC')
+
   // Economia mensal total dos indicadores automáticos
   const economiaMensalIndicadores = (
-    (form.ganho_tarefa_ativo ? (economiaMensalGT ?? 0) : 0)
-    + (form.hc_ativo ? (economiaMensalHC ?? 0) : 0)
+    (ganhoTarefaAtivo ? (economiaMensalGT ?? 0) : 0)
+    + (hcAtivo ? (economiaMensalHC ?? 0) : 0)
   ) || null
 
   // Divergence check
@@ -810,16 +825,16 @@ export default function ViabilidadeEditor({ viabilidade, projetoId, canEdit, can
           payback_unidade: form.payback_unidade,
           baseline_valor: form.baseline_valor,
           meta_valor: form.meta_valor,
-          tipo_indicador: form.tipo_indicador,
+          tipo_indicador: JSON.stringify(form.tipo_indicador),
           economia_mensal_esperada: form.economia_mensal_esperada,
           // Ganho Tarefa
-          ganho_tarefa_ativo: form.ganho_tarefa_ativo ? 1 : 0,
+          ganho_tarefa_ativo: ganhoTarefaAtivo ? 1 : 0,
           ganho_tarefa_salario: form.ganho_tarefa_salario,
           ganho_tarefa_horas_antes: form.ganho_tarefa_horas_antes,
           ganho_tarefa_horas_depois: form.ganho_tarefa_horas_depois,
           ganho_tarefa_freq_mensal: form.ganho_tarefa_freq_mensal,
           // HC
-          hc_ativo: form.hc_ativo ? 1 : 0,
+          hc_ativo: hcAtivo ? 1 : 0,
           hc_quantidade: form.hc_quantidade,
           hc_salario_mensal: form.hc_salario_mensal,
           hc_encargos_pct: form.hc_encargos_pct,
@@ -1198,21 +1213,42 @@ export default function ViabilidadeEditor({ viabilidade, projetoId, canEdit, can
                         <p className="text-xs text-gray-500 mb-3">
                           Preencha estes campos para habilitar o gráfico de evolução do indicador na aba de Payback.
                         </p>
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-3">
-                          <div>
-                            <label className="input-label">Tipo do Indicador</label>
-                            <select className="input w-full" value={form.tipo_indicador} onChange={e => setForm(f => ({ ...f, tipo_indicador: e.target.value }))}>
-                              <option value="ABSOLUTO">Absoluto (ex: n.º de ocorrências)</option>
-                              <option value="PERCENTUAL">Percentual (%)</option>
-                            </select>
+                        <div className="mb-4">
+                          <label className="input-label mb-2">Tipo de Indicador (selecione um ou mais)</label>
+                          <div className="flex flex-wrap gap-2">
+                            {[
+                              { value: 'ABSOLUTO',     label: 'Absoluto (n.º ocorrências)' },
+                              { value: 'PERCENTUAL',   label: 'Percentual (%)' },
+                              { value: 'GANHO_TAREFA', label: 'Ganho Tarefa' },
+                              { value: 'HC',           label: 'HC (Headcount)' },
+                            ].map(opt => {
+                              const selected = tipoIndicadorArr.includes(opt.value)
+                              return (
+                                <button
+                                  key={opt.value}
+                                  type="button"
+                                  onClick={() => {
+                                    const arr = tipoIndicadorArr.includes(opt.value)
+                                      ? tipoIndicadorArr.filter(v => v !== opt.value)
+                                      : [...tipoIndicadorArr, opt.value]
+                                    setForm(f => ({ ...f, tipo_indicador: arr.length ? arr : ['ABSOLUTO'] }))
+                                  }}
+                                  className={`text-xs px-3 py-1.5 rounded-full border font-medium transition-colors ${selected ? 'bg-megag-azul text-white border-megag-azul' : 'bg-white text-gray-600 border-gray-300 hover:border-megag-azul'}`}
+                                >
+                                  {opt.label}
+                                </button>
+                              )
+                            })}
                           </div>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-3">
                           <div>
                             <label className="input-label">Valor Baseline (antes do projeto)</label>
                             <input
                               type="number" step="0.01" min="0" className="input w-full"
                               value={form.baseline_valor ?? ''}
                               onChange={e => setForm(f => ({ ...f, baseline_valor: e.target.value ? parseFloat(e.target.value) : null }))}
-                              placeholder={form.tipo_indicador === 'PERCENTUAL' ? 'Ex: 15 (%)' : 'Ex: 250'}
+                              placeholder={tipoIndicadorArr.includes('PERCENTUAL') ? 'Ex: 15 (%)' : 'Ex: 250'}
                             />
                           </div>
                           <div>
@@ -1221,7 +1257,7 @@ export default function ViabilidadeEditor({ viabilidade, projetoId, canEdit, can
                               type="number" step="0.01" min="0" className="input w-full"
                               value={form.meta_valor ?? ''}
                               onChange={e => setForm(f => ({ ...f, meta_valor: e.target.value ? parseFloat(e.target.value) : null }))}
-                              placeholder={form.tipo_indicador === 'PERCENTUAL' ? 'Ex: 3 (%)' : 'Ex: 50'}
+                              placeholder={tipoIndicadorArr.includes('PERCENTUAL') ? 'Ex: 3 (%)' : 'Ex: 50'}
                             />
                           </div>
                         </div>
@@ -1236,183 +1272,149 @@ export default function ViabilidadeEditor({ viabilidade, projetoId, canEdit, can
                         </div>
                       </div>
 
-                      {/* Indicadores de Ganho */}
-                      <div className="mt-4 pt-4 border-t border-blue-100">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-blue-700 mb-3">
-                          Indicadores de Ganho (opcional)
-                        </p>
+                      {/* Campos dinâmicos — abrem conforme seleção no Tipo de Indicador */}
 
-                        {/* Ganho Tarefa */}
-                        <div className="mb-4">
-                          <label className="flex items-center gap-2 cursor-pointer mb-2">
-                            <input
-                              type="checkbox"
-                              checked={!!form.ganho_tarefa_ativo}
-                              onChange={e => setForm(f => ({ ...f, ganho_tarefa_ativo: e.target.checked }))}
-                            />
-                            <span className="text-sm font-medium text-gray-700">Ganho Tarefa — redução de tempo em atividade</span>
-                          </label>
-                          {form.ganho_tarefa_ativo && (
-                            <div className="ml-6 p-3 bg-blue-50 rounded-lg">
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
-                                <div>
-                                  <label className="input-label">Salário Mensal (R$)</label>
-                                  <CurrencyInput
-                                    value={form.ganho_tarefa_salario}
-                                    onChange={v => setForm(f => ({ ...f, ganho_tarefa_salario: v }))}
-                                    placeholder="Ex.: 5000"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="input-label">Frequência Mensal (vezes/mês)</label>
-                                  <input
-                                    type="number" step="0.5" min="0.5" className="input w-full"
-                                    value={form.ganho_tarefa_freq_mensal ?? 1}
-                                    onChange={e => setForm(f => ({ ...f, ganho_tarefa_freq_mensal: e.target.value ? parseFloat(e.target.value) : 1 }))}
-                                    placeholder="Ex.: 22"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="input-label">Horas Atuais (por execução)</label>
-                                  <input
-                                    type="number" step="0.25" min="0" className="input w-full"
-                                    value={form.ganho_tarefa_horas_antes ?? ''}
-                                    onChange={e => setForm(f => ({ ...f, ganho_tarefa_horas_antes: e.target.value ? parseFloat(e.target.value) : null }))}
-                                    placeholder="Ex.: 2"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="input-label">Horas Previstas após projeto (por execução)</label>
-                                  <input
-                                    type="number" step="0.25" min="0" className="input w-full"
-                                    value={form.ganho_tarefa_horas_depois ?? ''}
-                                    onChange={e => setForm(f => ({ ...f, ganho_tarefa_horas_depois: e.target.value ? parseFloat(e.target.value) : null }))}
-                                    placeholder="Ex.: 0.5"
-                                  />
-                                </div>
+                      {ganhoTarefaAtivo && (
+                        <div className="mt-4 pt-4 border-t border-blue-100">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-blue-700 mb-3">Ganho Tarefa — Detalhamento</p>
+                          <div className="p-3 bg-blue-50 rounded-lg">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                              <div>
+                                <label className="input-label">Salário Mensal (R$)</label>
+                                <CurrencyInput
+                                  value={form.ganho_tarefa_salario}
+                                  onChange={v => setForm(f => ({ ...f, ganho_tarefa_salario: v }))}
+                                  placeholder="Ex.: 5000"
+                                />
                               </div>
-                              {valorHoraGT !== null && (
-                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs bg-white rounded p-2 border border-blue-200">
-                                  <div>
-                                    <span className="text-gray-500">Valor/hora</span>
-                                    <p className="font-semibold text-gray-800">
-                                      R$ {valorHoraGT.toFixed(2).replace('.', ',')}
-                                    </p>
-                                    <p className="text-gray-400">salário ÷ 220h</p>
-                                  </div>
-                                  {horasEconomizadasGT !== null && (
-                                    <div>
-                                      <span className="text-gray-500">Horas economizadas/exec.</span>
-                                      <p className="font-semibold text-gray-800">
-                                        {horasEconomizadasGT.toFixed(2).replace('.', ',')}h
-                                      </p>
-                                    </div>
-                                  )}
-                                  {economiaMensalGT !== null && (
-                                    <div>
-                                      <span className="text-gray-500">Economia mensal</span>
-                                      <p className="font-semibold text-green-700">
-                                        R$ {economiaMensalGT.toFixed(2).replace('.', ',')}
-                                      </p>
-                                      <p className="text-gray-400">valor/h × horas × freq.</p>
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-
-                        {/* HC — Headcount */}
-                        <div>
-                          <label className="flex items-center gap-2 cursor-pointer mb-2">
-                            <input
-                              type="checkbox"
-                              checked={!!form.hc_ativo}
-                              onChange={e => setForm(f => ({ ...f, hc_ativo: e.target.checked }))}
-                            />
-                            <span className="text-sm font-medium text-gray-700">HC — redução de Headcount</span>
-                          </label>
-                          {form.hc_ativo && (
-                            <div className="ml-6 p-3 bg-blue-50 rounded-lg">
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
-                                <div>
-                                  <label className="input-label">Quantidade de Colaboradores (HC)</label>
-                                  <input
-                                    type="number" step="1" min="1" className="input w-full"
-                                    value={form.hc_quantidade ?? 1}
-                                    onChange={e => setForm(f => ({ ...f, hc_quantidade: e.target.value ? parseInt(e.target.value) : 1 }))}
-                                    placeholder="Ex.: 2"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="input-label">Salário Mensal por Colaborador (R$)</label>
-                                  <CurrencyInput
-                                    value={form.hc_salario_mensal}
-                                    onChange={v => setForm(f => ({ ...f, hc_salario_mensal: v }))}
-                                    placeholder="Ex.: 4000"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="input-label">Encargos (%)</label>
-                                  <input
-                                    type="number" step="0.1" min="0" max="200" className="input w-full"
-                                    value={form.hc_encargos_pct ?? ''}
-                                    onChange={e => setForm(f => ({ ...f, hc_encargos_pct: e.target.value ? parseFloat(e.target.value) : null }))}
-                                    placeholder="Ex.: 68 (INSS+FGTS+férias)"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="input-label">Benefícios Mensais por Colaborador (R$)</label>
-                                  <CurrencyInput
-                                    value={form.hc_beneficios_mensais}
-                                    onChange={v => setForm(f => ({ ...f, hc_beneficios_mensais: v }))}
-                                    placeholder="VT + VR + plano de saúde..."
-                                  />
-                                </div>
-                                <div>
-                                  <label className="input-label">Outros Custos Mensais por Colaborador (R$)</label>
-                                  <CurrencyInput
-                                    value={form.hc_outros_mensais}
-                                    onChange={v => setForm(f => ({ ...f, hc_outros_mensais: v }))}
-                                    placeholder="Ex.: equipamentos, licenças..."
-                                  />
-                                </div>
+                              <div>
+                                <label className="input-label">Frequência Mensal (vezes/mês)</label>
+                                <input
+                                  type="number" step="0.5" min="0.5" className="input w-full"
+                                  value={form.ganho_tarefa_freq_mensal ?? 1}
+                                  onChange={e => setForm(f => ({ ...f, ganho_tarefa_freq_mensal: e.target.value ? parseFloat(e.target.value) : 1 }))}
+                                  placeholder="Ex.: 22"
+                                />
                               </div>
-                              {custoTotalHCUnitario !== null && (
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs bg-white rounded p-2 border border-blue-200">
-                                  <div>
-                                    <span className="text-gray-500">Custo unitário/mês</span>
-                                    <p className="font-semibold text-gray-800">
-                                      R$ {custoTotalHCUnitario.toFixed(2).replace('.', ',')}
-                                    </p>
-                                    <p className="text-gray-400">salário + encargos + benefícios + outros</p>
-                                  </div>
-                                  {economiaMensalHC !== null && (
-                                    <div>
-                                      <span className="text-gray-500">Economia mensal total ({form.hc_quantidade ?? 1} HC)</span>
-                                      <p className="font-semibold text-green-700">
-                                        R$ {economiaMensalHC.toFixed(2).replace('.', ',')}
-                                      </p>
-                                    </div>
-                                  )}
-                                </div>
-                              )}
+                              <div>
+                                <label className="input-label">Horas Atuais (por execução)</label>
+                                <input
+                                  type="number" step="0.25" min="0" className="input w-full"
+                                  value={form.ganho_tarefa_horas_antes ?? ''}
+                                  onChange={e => setForm(f => ({ ...f, ganho_tarefa_horas_antes: e.target.value ? parseFloat(e.target.value) : null }))}
+                                  placeholder="Ex.: 2"
+                                />
+                              </div>
+                              <div>
+                                <label className="input-label">Horas Previstas após projeto (por execução)</label>
+                                <input
+                                  type="number" step="0.25" min="0" className="input w-full"
+                                  value={form.ganho_tarefa_horas_depois ?? ''}
+                                  onChange={e => setForm(f => ({ ...f, ganho_tarefa_horas_depois: e.target.value ? parseFloat(e.target.value) : null }))}
+                                  placeholder="Ex.: 0.5"
+                                />
+                              </div>
                             </div>
-                          )}
-                        </div>
-
-                        {/* Resultado combinado dos indicadores */}
-                        {economiaMensalIndicadores !== null && economiaMensalIndicadores > 0 && (
-                          <div className="mt-3 p-2 bg-green-50 border border-green-200 rounded text-xs">
-                            <span className="text-gray-600">Economia mensal total dos indicadores: </span>
-                            <span className="font-semibold text-green-700">
-                              R$ {economiaMensalIndicadores.toFixed(2).replace('.', ',')}
-                            </span>
-                            <span className="text-gray-400 ml-2">— use este valor no campo "Economia Mensal Esperada" acima para acionar o gráfico de Payback.</span>
+                            {valorHoraGT !== null && (
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs bg-white rounded p-2 border border-blue-200">
+                                <div>
+                                  <span className="text-gray-500">Valor/hora</span>
+                                  <p className="font-semibold text-gray-800">R$ {valorHoraGT.toFixed(2).replace('.', ',')}</p>
+                                  <p className="text-gray-400">salário ÷ 220h</p>
+                                </div>
+                                {horasEconomizadasGT !== null && (
+                                  <div>
+                                    <span className="text-gray-500">Horas economizadas/exec.</span>
+                                    <p className="font-semibold text-gray-800">{horasEconomizadasGT.toFixed(2).replace('.', ',')}h</p>
+                                  </div>
+                                )}
+                                {economiaMensalGT !== null && (
+                                  <div>
+                                    <span className="text-gray-500">Economia mensal</span>
+                                    <p className="font-semibold text-green-700">R$ {economiaMensalGT.toFixed(2).replace('.', ',')}</p>
+                                    <p className="text-gray-400">valor/h × horas × freq.</p>
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
-                        )}
-                      </div>
+                        </div>
+                      )}
+
+                      {hcAtivo && (
+                        <div className="mt-4 pt-4 border-t border-blue-100">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-blue-700 mb-3">HC — Headcount Reduzido</p>
+                          <div className="p-3 bg-blue-50 rounded-lg">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                              <div>
+                                <label className="input-label">Quantidade de Colaboradores (HC)</label>
+                                <input
+                                  type="number" step="1" min="1" className="input w-full"
+                                  value={form.hc_quantidade ?? 1}
+                                  onChange={e => setForm(f => ({ ...f, hc_quantidade: e.target.value ? parseInt(e.target.value) : 1 }))}
+                                  placeholder="Ex.: 2"
+                                />
+                              </div>
+                              <div>
+                                <label className="input-label">Salário Mensal por Colaborador (R$)</label>
+                                <CurrencyInput
+                                  value={form.hc_salario_mensal}
+                                  onChange={v => setForm(f => ({ ...f, hc_salario_mensal: v }))}
+                                  placeholder="Ex.: 4000"
+                                />
+                              </div>
+                              <div>
+                                <label className="input-label">Encargos (%)</label>
+                                <input
+                                  type="number" step="0.1" min="0" max="200" className="input w-full"
+                                  value={form.hc_encargos_pct ?? ''}
+                                  onChange={e => setForm(f => ({ ...f, hc_encargos_pct: e.target.value ? parseFloat(e.target.value) : null }))}
+                                  placeholder="Ex.: 68 (INSS+FGTS+férias)"
+                                />
+                              </div>
+                              <div>
+                                <label className="input-label">Benefícios Mensais por Colaborador (R$)</label>
+                                <CurrencyInput
+                                  value={form.hc_beneficios_mensais}
+                                  onChange={v => setForm(f => ({ ...f, hc_beneficios_mensais: v }))}
+                                  placeholder="VT + VR + plano de saúde..."
+                                />
+                              </div>
+                              <div>
+                                <label className="input-label">Outros Custos Mensais por Colaborador (R$)</label>
+                                <CurrencyInput
+                                  value={form.hc_outros_mensais}
+                                  onChange={v => setForm(f => ({ ...f, hc_outros_mensais: v }))}
+                                  placeholder="Ex.: equipamentos, licenças..."
+                                />
+                              </div>
+                            </div>
+                            {custoTotalHCUnitario !== null && (
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs bg-white rounded p-2 border border-blue-200">
+                                <div>
+                                  <span className="text-gray-500">Custo unitário/mês</span>
+                                  <p className="font-semibold text-gray-800">R$ {custoTotalHCUnitario.toFixed(2).replace('.', ',')}</p>
+                                  <p className="text-gray-400">salário + encargos + benefícios + outros</p>
+                                </div>
+                                {economiaMensalHC !== null && (
+                                  <div>
+                                    <span className="text-gray-500">Economia mensal total ({form.hc_quantidade ?? 1} HC)</span>
+                                    <p className="font-semibold text-green-700">R$ {economiaMensalHC.toFixed(2).replace('.', ',')}</p>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {economiaMensalIndicadores !== null && economiaMensalIndicadores > 0 && (
+                        <div className="mt-3 p-2 bg-green-50 border border-green-200 rounded text-xs">
+                          <span className="text-gray-600">Economia mensal total dos indicadores: </span>
+                          <span className="font-semibold text-green-700">R$ {economiaMensalIndicadores.toFixed(2).replace('.', ',')}</span>
+                          <span className="text-gray-400 ml-2">— use este valor no campo "Economia Mensal Esperada" acima para acionar o gráfico de Payback.</span>
+                        </div>
+                      )}
 
                     </div>
                   )}

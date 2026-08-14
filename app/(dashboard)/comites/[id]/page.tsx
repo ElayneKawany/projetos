@@ -241,7 +241,8 @@ export default async function ComiteDetalhePage({ params }: { params: Promise<{ 
       t.id, t.nome, t.percentual, t.data_inicio, t.data_fim, t.data_conclusao,
       t.observacoes, t.prazo_status,
       COALESCE(u.nome, t.responsavel_nome_ext) AS analista,
-      p.codigo AS projeto_codigo, p.nome AS projeto_nome
+      p.codigo AS projeto_codigo, p.nome AS projeto_nome,
+      c.id AS cronograma_id, c.projeto_id
     FROM cronograma_tarefas t
     JOIN cronogramas c ON c.id = t.cronograma_id
     JOIN projetos p ON p.id = c.projeto_id

@@ -640,6 +640,11 @@ function runMigrations(db: Database.Database) {
   addCol('viabilidade', 'tipo_indicador',         "TEXT DEFAULT 'ABSOLUTO'")  // PERCENTUAL | ABSOLUTO
   addCol('viabilidade', 'economia_mensal_esperada', 'REAL')           // benefício financeiro mensal esperado (R$)
 
+  // TI — vínculo de atividade DEV2026 com projeto cadastrado
+  addCol('ti_prioridades', 'projeto_id',     'INTEGER')
+  addCol('ti_prioridades', 'projeto_codigo', 'TEXT')
+  addCol('ti_prioridades', 'projeto_nome',   'TEXT')
+
   // Indicador Ganho Tarefa (redução de tempo de atividade)
   addCol('viabilidade', 'ganho_tarefa_ativo',       'INTEGER DEFAULT 0')
   addCol('viabilidade', 'ganho_tarefa_salario',      'REAL')
