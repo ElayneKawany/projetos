@@ -34,8 +34,8 @@ export async function POST(request: NextRequest) {
       solicitante_id, gerente_id, classificacao, prioridade,
     } = body
 
-    if (!nome || !diretoria_id || !area_id || !objetivo || !justificativa) {
-      return NextResponse.json({ error: 'Campos obrigatórios: nome, diretoria, área, objetivo e justificativa.' }, { status: 400 })
+    if (!nome || !diretoria_id || !area_id || !objetivo) {
+      return NextResponse.json({ error: 'Campos obrigatórios: nome, diretoria, área e objetivo.' }, { status: 400 })
     }
 
     const projeto = criarProjeto({

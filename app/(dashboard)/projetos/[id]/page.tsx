@@ -103,7 +103,16 @@ export default async function ProjetoDetalhePage({
     'SELECT a.*, d.nome as diretoria_nome FROM areas a JOIN diretorias d ON a.diretoria_id=d.id WHERE a.ativo=1'
   ).all()
   const usuarios = db.prepare('SELECT id, nome, email, cargo FROM usuarios WHERE ativo=1 ORDER BY nome').all()
-  const usuariosPmo = db.prepare("SELECT id, nome FROM usuarios WHERE ativo=1 AND perfil='PMO' ORDER BY nome").all()
+  const usuariosPmo = db.prepare(`
+    SELECT u.id, u.nome FROM usuarios u
+    JOIN perfis p ON p.id = u.perfil_id
+    WHERE u.ativo = 1 AND p.codigo = 'PMO'
+    ORDER BY u.nome
+  `).all()
+
+  const fasePrazos = db.prepare(
+    'SELECT status, data_limite FROM projeto_fase_prazo WHERE projeto_id = ?'
+  ).all(projeto.id) as { status: string; data_limite: string | null }[]
 
   // Workflows ativos por documento
   const tapAtualId = (tapVersoes[0] as { id?: number } | undefined)?.id
@@ -147,6 +156,7 @@ export default async function ProjetoDetalhePage({
       areas={areas as never[]}
       usuarios={usuarios as never[]}
       usuariosPmo={usuariosPmo as never[]}
+      fasePrazos={fasePrazos}
       workflowTap={workflowTap as never}
       workflowViabilidade={workflowViabilidade as never}
       workflowCronograma={workflowCronograma as never}

@@ -49,6 +49,7 @@ export async function PATCH(
     'ganho_tarefa_horas_depois', 'ganho_tarefa_freq_mensal',
     'hc_ativo', 'hc_quantidade', 'hc_salario_mensal', 'hc_encargos_pct',
     'hc_beneficios_mensais', 'hc_outros_mensais',
+    'horas_analistas_ativo', 'horas_analistas_json', 'horas_analistas_total',
   ]
 
   const dados: Record<string, unknown> = {}

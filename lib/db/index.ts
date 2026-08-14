@@ -659,6 +659,11 @@ function runMigrations(db: Database.Database) {
   addCol('viabilidade', 'hc_beneficios_mensais',     'REAL')
   addCol('viabilidade', 'hc_outros_mensais',         'REAL')
 
+  // Horas de analistas MegaG — custo de desenvolvimento interno
+  addCol('viabilidade', 'horas_analistas_ativo', 'INTEGER DEFAULT 0')
+  addCol('viabilidade', 'horas_analistas_json',  'TEXT')
+  addCol('viabilidade', 'horas_analistas_total', 'REAL')
+
   // Leituras reais do indicador mês a mês (substitui entrada manual na planilha)
   db.exec(`CREATE TABLE IF NOT EXISTS payback_registros (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -781,6 +786,21 @@ function runMigrations(db: Database.Database) {
   // Cronograma — Linha de Base: datas originais antes de reprogramação
   addCol('cronograma_tarefas', 'data_fim_baseline', 'TEXT')
   addCol('cronograma_tarefas', 'data_inicio_baseline', 'TEXT')
+
+  // Data limite do TAP — campo de controle no cabeçalho do TAP
+  addCol('tap_versoes', 'data_limite_tap', 'TEXT')
+
+  // Prazos das Macro Fases — data limite por fase por projeto
+  db.exec(`CREATE TABLE IF NOT EXISTS projeto_fase_prazo (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    projeto_id  INTEGER NOT NULL REFERENCES projetos(id),
+    status      TEXT    NOT NULL,
+    data_limite TEXT,
+    usuario_id  INTEGER REFERENCES usuarios(id),
+    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(projeto_id, status)
+  )`)
 
   // Seed: popula config_status_projeto com os status padrão se ainda estiver vazio
   const count = (db.prepare('SELECT COUNT(*) as c FROM config_status_projeto').get() as { c: number }).c

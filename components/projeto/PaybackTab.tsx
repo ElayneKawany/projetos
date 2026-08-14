@@ -226,7 +226,13 @@ export default function PaybackTab({ projetoId, canEdit, session, onRefresh }: P
     {
       label: 'Investimento Aprovado',
       valor: fmt(resumo.investimento_aprovado),
-      sub: `CAPEX ${fmt(resumo.capex_aprovado)} · OPEX ${fmt(resumo.opex_aprovado)}`,
+      sub: [
+        `CAPEX ${fmt(resumo.capex_aprovado)}`,
+        `OPEX ${fmt(resumo.opex_aprovado)}`,
+        resumo.custo_desenvolvimento_interno > 0
+          ? `Desenv. Interno ${fmt(resumo.custo_desenvolvimento_interno)}`
+          : null,
+      ].filter(Boolean).join(' · '),
       icon: DollarSign, cor: 'text-megag-azul', bg: 'bg-megag-azul/10',
     },
     {

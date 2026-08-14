@@ -710,6 +710,10 @@ export default function CronogramaEditor({
   const [novaAtividade, setNovaAtividade]         = useState<NovaAtividadeForm>(emptyNovaAtividade())
   const [savingAtividade, setSavingAtividade]     = useState(false)
 
+  // Seletor de fase para nova tarefa em RASCUNHO (usa índice no array editandoTarefas)
+  const [showFaseSelector, setShowFaseSelector]     = useState(false)
+  const [faseSelecionadaIdx, setFaseSelecionadaIdx] = useState<number | 'sem_fase'>('sem_fase')
+
   // Modal de importação duplicada
   const [showDupModal, setShowDupModal]   = useState(false)
   const [pendingFile, setPendingFile]     = useState<File | null>(null)
@@ -1123,13 +1127,50 @@ export default function CronogramaEditor({
     setEditandoTarefas(prev => recalcWBSInline([...prev, nova]))
   }
 
-  function handleAdicionarTarefa() {
+  function handleAdicionarTarefa(faseArrIdx?: number) {
     pushUndo(editandoTarefas)
-    const nova: CronogramaTarefa = {
-      nome: '', nivel: 'TAREFA', ordem: editandoTarefas.length + 1,
-      responsavel_id: null,
+    if (faseArrIdx != null) {
+      // Insere após o último filho da fase no array
+      setEditandoTarefas(prev => {
+        const fase = prev[faseArrIdx]
+        let insertIdx = faseArrIdx + 1
+        while (insertIdx < prev.length && prev[insertIdx].nivel !== 'FASE') insertIdx++
+        const nova: CronogramaTarefa = {
+          nome: '', nivel: 'TAREFA', ordem: insertIdx + 1,
+          responsavel_id: null,
+          parent_id: fase?.id ?? null,
+        }
+        const next = [...prev.slice(0, insertIdx), nova, ...prev.slice(insertIdx)]
+        return recalcWBSInline(next)
+      })
+    } else {
+      const nova: CronogramaTarefa = {
+        nome: '', nivel: 'TAREFA', ordem: editandoTarefas.length + 1,
+        responsavel_id: null,
+      }
+      setEditandoTarefas(prev => recalcWBSInline([...prev, nova]))
     }
-    setEditandoTarefas(prev => recalcWBSInline([...prev, nova]))
+  }
+
+  function handleAbrirFaseSelector() {
+    const fasesExistentes = editandoTarefas
+      .map((t, i) => ({ t, i }))
+      .filter(({ t }) => t.nivel === 'FASE')
+    if (fasesExistentes.length === 0) {
+      handleAdicionarTarefa()
+    } else {
+      setFaseSelecionadaIdx(fasesExistentes[0].i)
+      setShowFaseSelector(true)
+    }
+  }
+
+  function handleConfirmarFaseSelector() {
+    setShowFaseSelector(false)
+    if (faseSelecionadaIdx === 'sem_fase') {
+      handleAdicionarTarefa()
+    } else {
+      handleAdicionarTarefa(faseSelecionadaIdx as number)
+    }
   }
 
   function handleRemoverItem(idx: number) {
@@ -1614,15 +1655,23 @@ export default function CronogramaEditor({
                   {/* Botões de edição — ocultos quando cronograma está ENCERRADO */}
                   {cronograma.status !== 'ENCERRADO' && (
                     <>
-                      {/* APROVADO / EM_EXECUCAO / PRONTO_PARA_ENCERRAMENTO - só Nova Versão (somente na versão atual) */}
+                      {/* APROVADO / EM_EXECUCAO / PRONTO_PARA_ENCERRAMENTO - Nova Tarefa + Nova Versão */}
                       {['APROVADO','EM_EXECUCAO','PRONTO_PARA_ENCERRAMENTO'].includes(cronograma.status) && canEdit && !isVersaoHistorica && (
-                        <button
-                          className="btn-primary text-sm"
-                          disabled={creatingNovaVersao}
-                          onClick={handleNovaVersao}
-                        >
-                          {creatingNovaVersao ? 'Criando…' : 'Nova Versão'}
-                        </button>
+                        <>
+                          <button
+                            className="btn-secondary text-sm"
+                            onClick={() => setShowNovaAtividade(true)}
+                          >
+                            + Nova Tarefa
+                          </button>
+                          <button
+                            className="btn-primary text-sm"
+                            disabled={creatingNovaVersao}
+                            onClick={handleNovaVersao}
+                          >
+                            {creatingNovaVersao ? 'Criando…' : 'Nova Versão'}
+                          </button>
+                        </>
                       )}
 
                       {/* RASCUNHO - Salvar/Cancelar (editando) ou Editar/Enviar */}
@@ -2388,7 +2437,7 @@ export default function CronogramaEditor({
                                 type="button"
                                 className="text-sm font-medium hover:underline"
                                 style={{ color: '#003087' }}
-                                onClick={handleAdicionarTarefa}
+                                onClick={handleAbrirFaseSelector}
                               >
                                 + Nova Tarefa
                               </button>
@@ -2751,6 +2800,47 @@ export default function CronogramaEditor({
               <button className="btn-primary text-sm" disabled={!revisaoObs.trim() || approving}
                 onClick={handleSolicitarRevisao}>
                 {approving ? 'Enviando…' : 'Confirmar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Selecionar Fase para Nova Tarefa (RASCUNHO) */}
+      {showFaseSelector && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm">
+            <h3 className="font-semibold text-gray-900 mb-4">Selecionar Fase</h3>
+            <div className="space-y-2">
+              {editandoTarefas.map((t, i) => t.nivel === 'FASE' ? (
+                <label key={i} className="flex items-center gap-3 cursor-pointer p-2 rounded-lg hover:bg-gray-50">
+                  <input
+                    type="radio"
+                    name="fase_selector"
+                    checked={faseSelecionadaIdx === i}
+                    onChange={() => setFaseSelecionadaIdx(i)}
+                    className="accent-blue-600"
+                  />
+                  <span className="text-sm text-gray-800">{t.nome || '(Fase sem nome)'}</span>
+                </label>
+              ) : null)}
+              <label className="flex items-center gap-3 cursor-pointer p-2 rounded-lg hover:bg-gray-50">
+                <input
+                  type="radio"
+                  name="fase_selector"
+                  checked={faseSelecionadaIdx === 'sem_fase'}
+                  onChange={() => setFaseSelecionadaIdx('sem_fase')}
+                  className="accent-blue-600"
+                />
+                <span className="text-sm text-gray-500 italic">Sem fase (adicionar ao final)</span>
+              </label>
+            </div>
+            <div className="flex gap-2 mt-5 justify-end">
+              <button className="btn-secondary text-sm" onClick={() => setShowFaseSelector(false)}>
+                Cancelar
+              </button>
+              <button className="btn-primary text-sm" onClick={handleConfirmarFaseSelector}>
+                Confirmar
               </button>
             </div>
           </div>

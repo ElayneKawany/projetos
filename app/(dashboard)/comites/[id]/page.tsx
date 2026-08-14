@@ -106,6 +106,7 @@ export default async function ComiteDetalhePage({ params }: { params: Promise<{ 
       (SELECT tv.riscos_iniciais FROM tap_versoes tv WHERE tv.projeto_id = p.id ORDER BY tv.versao DESC LIMIT 1) AS riscos_iniciais,
       (SELECT tv.payback_meses FROM tap_versoes tv WHERE tv.projeto_id = p.id ORDER BY tv.versao DESC LIMIT 1) AS payback_meses,
       (SELECT tv.beneficios_tap FROM tap_versoes tv WHERE tv.projeto_id = p.id ORDER BY tv.versao DESC LIMIT 1) AS beneficios_tap,
+      (SELECT tv.data_limite_tap FROM tap_versoes tv WHERE tv.projeto_id = p.id ORDER BY tv.versao DESC LIMIT 1) AS data_limite_tap,
       (SELECT GROUP_CONCAT(a.nome, ', ')
        FROM projeto_areas pa JOIN areas a ON a.id = pa.area_id
        WHERE pa.projeto_id = p.id AND pa.ativo = 1) AS areas_envolvidas

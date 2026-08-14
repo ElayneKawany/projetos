@@ -21,7 +21,6 @@ export default function NovoProjetoModal({ diretorias, areas, usuarios, session,
     diretoria_id: '',
     area_id: '',
     objetivo: '',
-    justificativa: '',
     categoria: '',
     prioridade: 'MEDIA',
     ponto_focal: '',
@@ -52,7 +51,6 @@ export default function NovoProjetoModal({ diretorias, areas, usuarios, session,
           diretoria_id: form.diretoria_id,
           area_id: form.area_id,
           objetivo: form.objetivo,
-          justificativa: form.justificativa,
           classificacao: form.categoria || undefined,
           prioridade: form.prioridade,
           ponto_focal: form.ponto_focal || undefined,
@@ -168,16 +166,9 @@ export default function NovoProjetoModal({ diretorias, areas, usuarios, session,
                 className="input resize-none" rows={3} placeholder="Objetivo principal do projeto" required />
             </div>
 
-            {/* Justificativa */}
+            {/* Situação Atual */}
             <div className="sm:col-span-2">
-              <label className="input-label">Justificativa *</label>
-              <textarea value={form.justificativa} onChange={e => set('justificativa', e.target.value)}
-                className="input resize-none" rows={3} placeholder="Por que este projeto é necessário?" required />
-            </div>
-
-            {/* Problema ou Oportunidade (antes: Descrição) */}
-            <div className="sm:col-span-2">
-              <label className="input-label">Problema ou Oportunidade</label>
+              <label className="input-label">Situação Atual</label>
               <textarea value={form.descricao} onChange={e => set('descricao', e.target.value)}
                 className="input resize-none" rows={3}
                 placeholder="Descreva o problema que será resolvido ou a oportunidade que será aproveitada." />

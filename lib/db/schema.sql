@@ -114,6 +114,18 @@ CREATE TABLE IF NOT EXISTS projetos (
   updated_at        DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Prazo por macro fase do projeto
+CREATE TABLE IF NOT EXISTS projeto_fase_prazo (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  projeto_id  INTEGER NOT NULL REFERENCES projetos(id),
+  status      TEXT    NOT NULL,
+  data_limite TEXT,
+  usuario_id  INTEGER REFERENCES usuarios(id),
+  created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(projeto_id, status)
+);
+
 -- Histórico de status do projeto
 CREATE TABLE IF NOT EXISTS projeto_status_historico (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,

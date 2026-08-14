@@ -67,6 +67,10 @@ interface ViabilidadeData {
   hc_encargos_pct?: number | null
   hc_beneficios_mensais?: number | null
   hc_outros_mensais?: number | null
+  // Horas de analistas MegaG
+  horas_analistas_ativo?: number | null
+  horas_analistas_json?: string | null
+  horas_analistas_total?: number | null
   created_at: string
 }
 
@@ -573,6 +577,16 @@ export default function ViabilidadeEditor({ viabilidade, projetoId, canEdit, can
     hc_encargos_pct: (viabilidade?.hc_encargos_pct ?? null) as number | null,
     hc_beneficios_mensais: (viabilidade?.hc_beneficios_mensais ?? null) as number | null,
     hc_outros_mensais: (viabilidade?.hc_outros_mensais ?? null) as number | null,
+    // Horas de analistas MegaG
+    horas_analistas_ativo: Boolean(viabilidade?.horas_analistas_ativo),
+    horas_analistas_lista: (() => {
+      try {
+        const raw = viabilidade?.horas_analistas_json
+        if (!raw) return []
+        const parsed = JSON.parse(raw)
+        return Array.isArray(parsed) ? parsed : []
+      } catch { return [] }
+    })() as { id: string; nome: string; horas: number | null; custo_hora: number | null }[],
   })
 
   // V1 aprovada pode ser editada para regularização de base histórica
@@ -582,8 +596,16 @@ export default function ViabilidadeEditor({ viabilidade, projetoId, canEdit, can
 
   const setField = (key: keyof typeof form) => (v: string) => setForm((f) => ({ ...f, [key]: v }))
 
-  // Derived: Investimento Total = CAPEX + OPEX (as entered, no period conversion)
-  const investimentoTotalCalc = (form.capex ?? 0) + (form.opex ?? 0)
+  // Custo de Desenvolvimento Interno (horas analistas MegaG)
+  const custoDesenvolvimentoInterno = form.horas_analistas_ativo
+    ? form.horas_analistas_lista.reduce(
+        (sum, a) => sum + (a.horas ?? 0) * (a.custo_hora ?? 0),
+        0
+      )
+    : 0
+
+  // Derived: Investimento Total = CAPEX + OPEX + Custo Desenvolvimento Interno
+  const investimentoTotalCalc = (form.capex ?? 0) + (form.opex ?? 0) + custoDesenvolvimentoInterno
 
   // Economia mensal (normalize for payback calculation)
   const economiaMensal =
@@ -840,6 +862,10 @@ export default function ViabilidadeEditor({ viabilidade, projetoId, canEdit, can
           hc_encargos_pct: form.hc_encargos_pct,
           hc_beneficios_mensais: form.hc_beneficios_mensais,
           hc_outros_mensais: form.hc_outros_mensais,
+          // Horas de Analistas MegaG
+          horas_analistas_ativo: form.horas_analistas_ativo ? 1 : 0,
+          horas_analistas_json: form.horas_analistas_ativo ? JSON.stringify(form.horas_analistas_lista) : null,
+          horas_analistas_total: form.horas_analistas_ativo ? custoDesenvolvimentoInterno : null,
         }),
       })
       if (!res.ok) throw new Error((await res.json()).error ?? 'Erro ao salvar')
@@ -1101,10 +1127,120 @@ export default function ViabilidadeEditor({ viabilidade, projetoId, canEdit, can
                       </div>
                     </div>
                   </div>
+                  {/* Horas de Analistas MegaG */}
+                  <div className="mt-4 border border-gray-100 rounded-lg p-3">
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={form.horas_analistas_ativo}
+                        onChange={e => setForm(f => ({
+                          ...f,
+                          horas_analistas_ativo: e.target.checked,
+                          horas_analistas_lista: e.target.checked && f.horas_analistas_lista.length === 0
+                            ? [{ id: crypto.randomUUID(), nome: '', horas: null, custo_hora: null }]
+                            : f.horas_analistas_lista,
+                        }))}
+                        className="rounded"
+                      />
+                      <span className="text-sm font-medium text-gray-700">Possui horas de analistas MegaG</span>
+                    </label>
+
+                    {form.horas_analistas_ativo && (
+                      <div className="mt-3 space-y-2">
+                        <div className="grid grid-cols-[1fr_100px_130px_110px_28px] gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wide px-1">
+                          <span>Analista</span>
+                          <span>Horas</span>
+                          <span>Custo/hora (R$)</span>
+                          <span>Custo Total</span>
+                          <span />
+                        </div>
+                        {form.horas_analistas_lista.map((analista, idx) => {
+                          const custo = (analista.horas ?? 0) * (analista.custo_hora ?? 0)
+                          return (
+                            <div key={analista.id} className="grid grid-cols-[1fr_100px_130px_110px_28px] gap-2 items-center">
+                              <input
+                                type="text"
+                                className="input text-sm"
+                                placeholder="Nome do analista"
+                                value={analista.nome}
+                                onChange={e => setForm(f => ({
+                                  ...f,
+                                  horas_analistas_lista: f.horas_analistas_lista.map((a, i) =>
+                                    i === idx ? { ...a, nome: e.target.value } : a
+                                  ),
+                                }))}
+                              />
+                              <input
+                                type="number"
+                                min="0"
+                                step="1"
+                                className="input text-sm"
+                                placeholder="0"
+                                value={analista.horas ?? ''}
+                                onChange={e => setForm(f => ({
+                                  ...f,
+                                  horas_analistas_lista: f.horas_analistas_lista.map((a, i) =>
+                                    i === idx ? { ...a, horas: e.target.value ? parseFloat(e.target.value) : null } : a
+                                  ),
+                                }))}
+                              />
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                className="input text-sm"
+                                placeholder="0,00"
+                                value={analista.custo_hora ?? ''}
+                                onChange={e => setForm(f => ({
+                                  ...f,
+                                  horas_analistas_lista: f.horas_analistas_lista.map((a, i) =>
+                                    i === idx ? { ...a, custo_hora: e.target.value ? parseFloat(e.target.value) : null } : a
+                                  ),
+                                }))}
+                              />
+                              <span className="text-sm font-medium text-gray-700 tabular-nums">
+                                {custo > 0 ? fBRL(custo) : '—'}
+                              </span>
+                              <button
+                                type="button"
+                                title="Remover analista"
+                                className="text-red-400 hover:text-red-600 text-lg leading-none"
+                                onClick={() => setForm(f => ({
+                                  ...f,
+                                  horas_analistas_lista: f.horas_analistas_lista.filter((_, i) => i !== idx),
+                                }))}
+                              >×</button>
+                            </div>
+                          )
+                        })}
+                        <button
+                          type="button"
+                          className="text-sm font-medium hover:underline mt-1"
+                          style={{ color: '#003087' }}
+                          onClick={() => setForm(f => ({
+                            ...f,
+                            horas_analistas_lista: [
+                              ...f.horas_analistas_lista,
+                              { id: crypto.randomUUID(), nome: '', horas: null, custo_hora: null },
+                            ],
+                          }))}
+                        >
+                          + Adicionar analista
+                        </button>
+                        {custoDesenvolvimentoInterno > 0 && (
+                          <div className="mt-2 p-2 bg-amber-50 rounded-lg flex justify-between items-center">
+                            <span className="text-xs font-medium text-amber-800">Custo de Desenvolvimento Interno</span>
+                            <span className="text-sm font-bold text-amber-900 tabular-nums">{fBRL(custoDesenvolvimentoInterno)}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
                   <div className="mt-4 p-3 bg-blue-50 rounded-lg flex justify-between items-center">
                     <div>
-                      <span className="text-sm font-medium text-blue-800">Investimento Total (CAPEX + OPEX)</span>
-                      <p className="text-xs text-blue-600 mt-0.5">Calculado automaticamente</p>
+                      <span className="text-sm font-medium text-blue-800">Investimento Total</span>
+                      <p className="text-xs text-blue-600 mt-0.5">CAPEX + OPEX{form.horas_analistas_ativo ? ' + Desenvolvimento Interno' : ''} — calculado automaticamente</p>
                     </div>
                     <span className="text-sm font-bold text-blue-900 tabular-nums">
                       {fBRL(investimentoTotalCalc > 0 ? investimentoTotalCalc : null)}

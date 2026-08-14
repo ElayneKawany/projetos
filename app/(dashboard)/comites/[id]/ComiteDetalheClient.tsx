@@ -40,6 +40,7 @@ interface ProjetoPropostaDetalhe {
   riscos_iniciais?: string
   payback_meses?: number | null
   beneficios_tap?: string
+  data_limite_tap?: string
   areas_envolvidas?: string
 }
 
@@ -2067,6 +2068,7 @@ function SlidePropostasDetalhe({
           {[
             { icon: Building2, label: 'Diretoria',         value: proj.diretoria },
             { icon: Layers,    label: 'Área',              value: proj.area },
+            ...(d.data_limite_tap ? [{ icon: Calendar, label: 'Prazo TAP', value: new Date(d.data_limite_tap + 'T00:00:00').toLocaleDateString('pt-BR') }] : []),
             { icon: User,      label: 'Solicitante',       value: d.solicitante_nome },
             { icon: Briefcase, label: 'Gerente do Projeto',value: proj.gerente_nome },
           ].map(({ icon: Icon, label, value }) => (

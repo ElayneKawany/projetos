@@ -715,6 +715,7 @@ export type PaybackStatus = 'SEM_LANCAMENTOS' | 'EM_ANDAMENTO' | 'CONCLUIDO'
 export interface PaybackLancamentosResumo {
   capex_aprovado: number
   opex_aprovado: number
+  custo_desenvolvimento_interno: number
   investimento_aprovado: number
   beneficio_previsto: number | null
   payback_previsto_meses: number | null

@@ -5,6 +5,8 @@ interface BaseViabilidade {
   opex?: number | null
   economia_estimada?: number | null
   payback_meses?: number | null
+  horas_analistas_ativo?: number | null
+  horas_analistas_total?: number | null
 }
 
 interface BaseProjeto {
@@ -20,7 +22,10 @@ export function calcularResumoPayback(
 ): PaybackLancamentosResumo {
   const capex = viabilidade?.capex ?? projeto?.capex_aprovado ?? 0
   const opex  = viabilidade?.opex  ?? projeto?.opex_aprovado  ?? 0
-  const investimento_aprovado = (capex ?? 0) + (opex ?? 0)
+  const custo_desenvolvimento_interno = viabilidade?.horas_analistas_ativo
+    ? (viabilidade?.horas_analistas_total ?? 0)
+    : 0
+  const investimento_aprovado = (capex ?? 0) + (opex ?? 0) + custo_desenvolvimento_interno
 
   const beneficio_previsto    = viabilidade?.economia_estimada ?? null
   const payback_previsto_meses = viabilidade?.payback_meses   ?? null
@@ -63,6 +68,7 @@ export function calcularResumoPayback(
   return {
     capex_aprovado: capex ?? 0,
     opex_aprovado:  opex  ?? 0,
+    custo_desenvolvimento_interno,
     investimento_aprovado,
     beneficio_previsto,
     payback_previsto_meses,

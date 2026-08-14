@@ -42,7 +42,7 @@ const CAMPO_LABELS: Record<string, string> = {
   nome: 'Nome', ponto_focal: 'Ponto Focal', contato: 'Contato',
   objetivo: 'Objetivo', justificativa: 'Justificativa', descricao: 'Descrição',
   beneficios: 'Benefícios', gerente_id: 'Gerente', capex_aprovado: 'CAPEX Aprovado',
-  opex_aprovado: 'OPEX Aprovado', data_inicio_prev: 'Previsão de Início',
+  opex_aprovado: 'OPEX Aprovado', data_inicio_prev: 'Data de Início',
   data_fim_prev: 'Previsão de Entrega', classificacao: 'Classificação',
   complexidade: 'Complexidade', prioridade: 'Prioridade', status: 'Status',
   tap_status: 'Status da TAP', viabilidade_status: 'Status do Estudo de Viabilidade',
@@ -103,6 +103,7 @@ interface Props {
   areas: { id: number; nome: string; diretoria_id: number }[]
   usuarios: { id: number; nome: string; cargo: string }[]
   usuariosPmo: { id: number; nome: string }[]
+  fasePrazos: { status: string; data_limite: string | null }[]
   workflowTap: import('@/lib/workflow').WorkflowAprovacao | null
   workflowViabilidade: import('@/lib/workflow').WorkflowAprovacao | null
   workflowCronograma: import('@/lib/workflow').WorkflowAprovacao | null
@@ -152,7 +153,7 @@ export default function ProjetoDetalheClient(props: Props) {
   const {
     projeto, historicoStatus, historicoPrioridade, historicoAlteracoes,
     configStatus, tapVersoes, triagem, viabilidadeData, cronogramaData, lancamentos,
-    capexRealizado, opexRealizado, usuarios, usuariosPmo, session, aprovacoesProjeto,
+    capexRealizado, opexRealizado, usuarios, usuariosPmo, fasePrazos, session, aprovacoesProjeto,
     workflowTap, workflowViabilidade, workflowCronograma, cronogramaAprovadoData,
     snapshotFinal, tarefasPendentes, initialTab,
   } = props
@@ -197,7 +198,7 @@ export default function ProjetoDetalheClient(props: Props) {
   const [formVG, setFormVG] = useState(vgInicial)
   const [vgOriginal, setVgOriginal] = useState<typeof vgInicial | null>(null)
 
-  const VG_OBRIGATORIOS = ['nome', 'descricao', 'objetivo', 'solicitante_id', 'diretoria_id', 'area_id', 'gerente_id', 'pmo_responsavel_id', 'prioridade', 'tipo_beneficio'] as const
+  const VG_OBRIGATORIOS = ['nome', 'descricao', 'objetivo', 'solicitante_id', 'diretoria_id', 'area_id', 'gerente_id', 'pmo_responsavel_id', 'prioridade', 'tipo_beneficio', 'data_inicio_prev'] as const
   const canSaveVG = VG_OBRIGATORIOS.every(c => String(formVG[c] ?? '').trim() !== '')
 
   function vgFieldCls(campo: keyof typeof vgInicial, required = false): string {
@@ -206,6 +207,48 @@ export default function ProjetoDetalheClient(props: Props) {
     if (empty) return 'input ring-2 ring-red-400 focus:ring-red-500'
     if (changed) return 'input ring-2 ring-blue-400 focus:ring-blue-500'
     return 'input'
+  }
+
+  // Prazos das Macro Fases
+  const MACRO_FASES_PRAZO = [
+    { status: 'PROPOSTA',               label: 'Proposta / Ideia' },
+    { status: 'TRIAGEM',                label: 'Triagem' },
+    { status: 'COMITE_IDEIAS',          label: 'Comitê de Ideias' },
+    { status: 'VIABILIDADE',            label: 'Estudo de Viabilidade' },
+    { status: 'ESTRUTURACAO',           label: 'Estruturação' },
+    { status: 'CRONOGRAMA',             label: 'Cronograma' },
+    { status: 'EXECUCAO',               label: 'Execução' },
+    { status: 'PAYBACK_ACOMPANHAMENTO', label: 'Payback' },
+  ]
+  const [fasePrazosForm, setFasePrazosForm] = useState<Record<string, string>>(() => {
+    const map: Record<string, string> = {}
+    for (const fp of fasePrazos) map[fp.status] = fp.data_limite ?? ''
+    return map
+  })
+  const [salvandoPrazos, setSalvandoPrazos] = useState(false)
+  const [erroPrazos, setErroPrazos]         = useState<string | null>(null)
+  const [sucessoPrazos, setSucessoPrazos]   = useState(false)
+
+  async function handleSalvarPrazos() {
+    setSalvandoPrazos(true); setErroPrazos(null); setSucessoPrazos(false)
+    try {
+      const prazos = MACRO_FASES_PRAZO.map(f => ({
+        status: f.status,
+        data_limite: fasePrazosForm[f.status] || null,
+      }))
+      const res = await fetch(`/api/projetos/${projeto.id}/fase-prazo`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prazos }),
+      })
+      if (!res.ok) throw new Error((await res.json()).error ?? 'Erro ao salvar prazos')
+      setSucessoPrazos(true)
+      setTimeout(() => setSucessoPrazos(false), 3000)
+    } catch (e: unknown) {
+      setErroPrazos(e instanceof Error ? e.message : 'Erro ao salvar prazos')
+    } finally {
+      setSalvandoPrazos(false)
+    }
   }
 
   // Projeto encerrado bloqueia edição de artefatos (TAP, Viabilidade, Cronograma)
@@ -354,6 +397,7 @@ export default function ProjetoDetalheClient(props: Props) {
       } else {
         setEditandoVG(false)
         setVgOriginal(null)
+        setAbaAtiva('TAP')
         router.refresh()
       }
     } catch {
@@ -753,7 +797,7 @@ export default function ProjetoDetalheClient(props: Props) {
                     </div>
                   )}
                   <div className="md:col-span-2">
-                    <label className="input-label">Nome <span className="text-red-500">*</span></label>
+                    <label className="input-label">Nome do projeto <span className="text-red-500">*</span></label>
                     <input type="text" className={vgFieldCls('nome', true)} value={formVG.nome}
                       onChange={e => setFormVG(f => ({ ...f, nome: e.target.value }))} />
                   </div>
@@ -835,14 +879,16 @@ export default function ProjetoDetalheClient(props: Props) {
                     </select>
                   </div>
                   <div>
-                    <label className="input-label">Data Prevista de Início</label>
-                    <input type="date" className={vgFieldCls('data_inicio_prev')} value={formVG.data_inicio_prev}
-                      onChange={e => setFormVG(f => ({ ...f, data_inicio_prev: e.target.value }))} />
-                  </div>
-                  <div>
-                    <label className="input-label">Data Prevista de Término</label>
-                    <input type="date" className={vgFieldCls('data_fim_prev')} value={formVG.data_fim_prev}
-                      onChange={e => setFormVG(f => ({ ...f, data_fim_prev: e.target.value }))} />
+                    <label className="input-label">Data de Início *</label>
+                    {projeto.data_inicio_prev ? (
+                      <div className="input bg-gray-50 text-gray-700 flex items-center gap-2 cursor-not-allowed select-none">
+                        <span>{fmtDataBR(projeto.data_inicio_prev)}</span>
+                        <span className="ml-auto text-xs text-gray-400">bloqueado</span>
+                      </div>
+                    ) : (
+                      <input type="date" className={vgFieldCls('data_inicio_prev', true)} value={formVG.data_inicio_prev}
+                        onChange={e => setFormVG(f => ({ ...f, data_inicio_prev: e.target.value }))} />
+                    )}
                   </div>
                   <div>
                     <label className="input-label">Complexidade</label>
@@ -873,8 +919,7 @@ export default function ProjetoDetalheClient(props: Props) {
                     ['Gerente',           projeto.gerente_nome || 'Não definido'],
                     ['PMO Responsável',   projeto.pmo_responsavel_nome || projeto.pmo_responsavel || '—'],
                     ['Tipo de Benefício', projeto.tipo_beneficio || '—'],
-                    ['Previsão Início',   fmtDataBR(projeto.data_inicio_prev)],
-                    ['Conclusão (Cronograma)', projeto.data_fim_efetiva ? fmtDataBR(projeto.data_fim_efetiva) : 'Sem cronograma'],
+                    ['Data de Início',    fmtDataBR(projeto.data_inicio_prev)],
                     ['Classificação',     projeto.classificacao?.replace('_', ' ') || '—'],
                     ['Complexidade',      projeto.complexidade || '—'],
                     ...(projeto.status === 'PAUSADO' ? [
@@ -918,6 +963,51 @@ export default function ProjetoDetalheClient(props: Props) {
                     <p className="text-sm text-megag-cinza-escuro leading-relaxed">{projeto.beneficios}</p>
                   </div>
                 )}
+
+                {/* Prazos das Macro Fases */}
+                <div className="card">
+                  <div className="card-header flex items-center justify-between gap-2">
+                    <span className="card-title">Prazos das Macro Fases</span>
+                    {podeGerenciar && (
+                      <div className="flex items-center gap-2">
+                        {erroPrazos && <span className="text-xs text-red-600">{erroPrazos}</span>}
+                        {sucessoPrazos && <span className="text-xs text-green-600">Salvo!</span>}
+                        <button
+                          className="btn-primary text-xs px-3 py-1"
+                          disabled={salvandoPrazos}
+                          onClick={handleSalvarPrazos}
+                        >
+                          {salvandoPrazos ? 'Salvando…' : 'Salvar prazos'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <div className="divide-y divide-gray-100">
+                    {MACRO_FASES_PRAZO.map(fase => {
+                      const isCurrent = projeto.status === fase.status
+                      return (
+                        <div key={fase.status} className={`flex items-center justify-between gap-4 px-4 py-2.5 ${isCurrent ? 'bg-blue-50' : ''}`}>
+                          <span className={`text-sm ${isCurrent ? 'font-semibold text-megag-azul' : 'text-gray-700'}`}>
+                            {isCurrent && <span className="mr-1.5 text-xs font-bold text-megag-azul">▶</span>}
+                            {fase.label}
+                          </span>
+                          {podeGerenciar ? (
+                            <input
+                              type="date"
+                              className="input text-sm py-1 w-40"
+                              value={fasePrazosForm[fase.status] ?? ''}
+                              onChange={e => setFasePrazosForm(f => ({ ...f, [fase.status]: e.target.value }))}
+                            />
+                          ) : (
+                            <span className="text-sm text-gray-600">
+                              {fasePrazosForm[fase.status] ? fmtDataBR(fasePrazosForm[fase.status]) : '—'}
+                            </span>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
               </>
             )}
           </div>
@@ -1094,6 +1184,10 @@ export default function ProjetoDetalheClient(props: Props) {
             sessionUser={sessionUser}
             usuarios={usuarios as { id: number; nome: string }[]}
             onRefresh={() => router.refresh()}
+            projetoObjetivo={projeto.objetivo}
+            projetoDescricao={projeto.descricao ?? undefined}
+            projetoBeneficios={projeto.beneficios ?? undefined}
+            projetoDataInicio={projeto.data_inicio_prev ?? undefined}
           />
           {tapVersoes.length > 1 && (
             <div className="card mt-4">

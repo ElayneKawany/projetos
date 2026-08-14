@@ -29,6 +29,7 @@ interface TapData {
   pontos_atencao?: string
   pontos_definir?: string
   beneficios_tap?: string
+  data_limite_tap?: string
   created_at: string
 }
 
@@ -44,6 +45,10 @@ interface Props {
   sessionUser: { id: number; nome: string }
   usuarios: { id: number; nome: string }[]
   onRefresh: () => void
+  projetoObjetivo?: string
+  projetoDescricao?: string
+  projetoBeneficios?: string
+  projetoDataInicio?: string
 }
 
 function parseJsonArray(val?: string): string[] {
@@ -103,6 +108,10 @@ export default function TapEditor({
   sessionUser,
   usuarios,
   onRefresh,
+  projetoObjetivo,
+  projetoDescricao,
+  projetoBeneficios,
+  projetoDataInicio,
 }: Props) {
   const [editing, setEditing]   = useState(false)
   const [saving, setSaving]     = useState(false)
@@ -120,19 +129,40 @@ export default function TapEditor({
   const [showImportModal, setShowImportModal] = useState(false)
   const { baixar, baixando, erroDownload, setErroDownload } = useDownload()
 
+  const [dataLimiteTap, setDataLimiteTap] = useState(tap?.data_limite_tap ?? '')
+  const [dataLimiteTapBloqueada, setDataLimiteTapBloqueada] = useState(!!tap?.data_limite_tap)
+  const [savingDataLimite, setSavingDataLimite] = useState(false)
+
   const [form, setForm] = useState({
-    objetivo_detalhado: tap?.objetivo_detalhado ?? '',
-    situacao_atual: tap?.situacao_atual ?? '',
+    objetivo_detalhado: tap?.objetivo_detalhado || projetoObjetivo || '',
+    situacao_atual: tap?.situacao_atual || projetoDescricao || '',
     escopo_fisico: tap?.escopo_fisico ?? '',
     escopo_sistemico: tap?.escopo_sistemico ?? '',
     escopo_processo: tap?.escopo_processo ?? '',
-    beneficios_tap: tap?.beneficios_tap ?? '',
+    beneficios_tap: tap?.beneficios_tap || projetoBeneficios || '',
     setores_envolvidos: parseJsonArray(tap?.setores_envolvidos),
     etapas_projeto: parseJsonArray(tap?.etapas_projeto),
     entregaveis: parseJsonArray(tap?.entregaveis),
     pontos_atencao: parseJsonArray(tap?.pontos_atencao),
     pontos_definir: parseJsonArray(tap?.pontos_definir),
   })
+
+  async function handleSaveDataLimite() {
+    if (!tap || !dataLimiteTap) return
+    setSavingDataLimite(true)
+    try {
+      const res = await fetch(`/api/projetos/${projetoId}/tap/${tap.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data_limite_tap: dataLimiteTap }),
+      })
+      if (res.ok) {
+        setDataLimiteTapBloqueada(true)
+      }
+    } finally {
+      setSavingDataLimite(false)
+    }
+  }
 
   // Botão "Editar" visível para RASCUNHO e APROVADO (quando canEdit).
   // Em APROVADO, handleEditar exibe mensagem sem habilitar campos.
@@ -431,15 +461,52 @@ export default function TapEditor({
 
       {/* TAP content */}
       <div className="card p-4">
-        <div className="flex items-center gap-3 mb-6 pb-4 border-b border-gray-200">
-          <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: '#003087' }}>
+        <div className="flex items-start gap-3 mb-6 pb-4 border-b border-gray-200">
+          <div className="w-10 h-10 rounded-lg flex-shrink-0 flex items-center justify-center" style={{ backgroundColor: '#003087' }}>
             <span className="text-white font-bold text-sm">TAP</span>
           </div>
-          <div>
+          <div className="flex-1 min-w-0">
             <h2 className="font-bold text-gray-900">Escopo de Projeto</h2>
             <p className="text-xs text-gray-500">
               Criado em {new Date(tap.created_at).toLocaleDateString('pt-BR')} · Fase: {tap.fase_origem} · Versão {tap.versao}
             </p>
+            <div className="flex flex-wrap gap-4 mt-2">
+              {projetoDataInicio && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-medium text-gray-500">Data de Início:</span>
+                  <span className="text-xs font-semibold text-gray-800">
+                    {new Date(projetoDataInicio + 'T00:00:00').toLocaleDateString('pt-BR')}
+                  </span>
+                </div>
+              )}
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-medium text-gray-500">Data limite do TAP:</span>
+                {dataLimiteTapBloqueada || !canEdit ? (
+                  <span className="text-xs font-semibold text-gray-800">
+                    {dataLimiteTap
+                      ? new Date(dataLimiteTap + 'T00:00:00').toLocaleDateString('pt-BR')
+                      : <span className="text-gray-400 italic">Não definido</span>}
+                  </span>
+                ) : (
+                  <>
+                    <input
+                      type="date"
+                      className="text-xs border border-gray-200 rounded px-1.5 py-0.5 text-gray-800"
+                      value={dataLimiteTap}
+                      onChange={e => setDataLimiteTap(e.target.value)}
+                      disabled={savingDataLimite}
+                    />
+                    <button
+                      onClick={handleSaveDataLimite}
+                      disabled={savingDataLimite || !dataLimiteTap}
+                      className="text-xs px-2 py-0.5 rounded bg-megag-azul text-white font-medium disabled:opacity-50 hover:opacity-90 transition-opacity"
+                    >
+                      {savingDataLimite ? 'Salvando…' : 'Salvar'}
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
           </div>
         </div>
 
