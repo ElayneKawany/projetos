@@ -102,6 +102,7 @@ interface Props {
   diretorias: { id: number; nome: string; sigla: string }[]
   areas: { id: number; nome: string; diretoria_id: number }[]
   usuarios: { id: number; nome: string; cargo: string }[]
+  usuariosPmo: { id: number; nome: string }[]
   workflowTap: import('@/lib/workflow').WorkflowAprovacao | null
   workflowViabilidade: import('@/lib/workflow').WorkflowAprovacao | null
   workflowCronograma: import('@/lib/workflow').WorkflowAprovacao | null
@@ -151,7 +152,7 @@ export default function ProjetoDetalheClient(props: Props) {
   const {
     projeto, historicoStatus, historicoPrioridade, historicoAlteracoes,
     configStatus, tapVersoes, triagem, viabilidadeData, cronogramaData, lancamentos,
-    capexRealizado, opexRealizado, usuarios, session, aprovacoesProjeto,
+    capexRealizado, opexRealizado, usuarios, usuariosPmo, session, aprovacoesProjeto,
     workflowTap, workflowViabilidade, workflowCronograma, cronogramaAprovadoData,
     snapshotFinal, tarefasPendentes, initialTab,
   } = props
@@ -792,7 +793,7 @@ export default function ProjetoDetalheClient(props: Props) {
                     <select className={vgFieldCls('pmo_responsavel_id', true)} value={String(formVG.pmo_responsavel_id)}
                       onChange={e => setFormVG(f => ({ ...f, pmo_responsavel_id: e.target.value }))}>
                       <option value="">— Não definido —</option>
-                      {props.usuarios.map(u => <option key={u.id} value={String(u.id)}>{u.nome}</option>)}
+                      {usuariosPmo.map(u => <option key={u.id} value={String(u.id)}>{u.nome}</option>)}
                     </select>
                   </div>
                   <div>

@@ -1054,27 +1054,41 @@ export default function TIAgendaClient({
     const janela = new Date(hoje)
     janela.setDate(janela.getDate() + 30)
 
-    function calcComprometidas(
+    // Conta dias úteis (seg-sex) entre duas datas, inclusive
+    function diasUteis(ini: Date, fim: Date): number {
+      if (ini > fim) return 0
+      let count = 0
+      const cur = new Date(ini)
+      while (cur <= fim) {
+        const dow = cur.getDay()
+        if (dow !== 0 && dow !== 6) count++
+        cur.setDate(cur.getDate() + 1)
+      }
+      return count
+    }
+
+    // Conta dias úteis no mês de referência (30 dias a partir de hoje)
+    const diasUteisJanela = diasUteis(hoje, janela)
+
+    function calcComprometidos(
       tCron: Array<{ data_inicio: string | null; data_fim: string | null }>,
-      tDev: Array<{ inicio_dev?: string | null; fim_dev?: string | null }>,
+      tDev: Array<{ inicio_dev?: string | null; fim_dev?: string | null; concluida?: boolean }>,
     ): number {
-      let horas = 0
       const pares: Array<{ ini: string | null; fim: string | null }> = [
         ...tCron.map(t => ({ ini: t.data_inicio, fim: t.data_fim })),
-        ...tDev.map(a => ({ ini: a.inicio_dev ?? null, fim: a.fim_dev ?? null })),
+        ...tDev.filter(a => !a.concluida).map(a => ({ ini: a.inicio_dev ?? null, fim: a.fim_dev ?? null })),
       ]
+      let total = 0
       pares.forEach(({ ini, fim }) => {
         if (!ini || !fim) return
         const dIni = new Date(ini + 'T00:00:00')
         const dFim = new Date(fim + 'T00:00:00')
+        // somente o overlap com a janela futura (hoje..hoje+30)
         const ovIni = dIni > hoje ? dIni : hoje
         const ovFim = dFim < janela ? dFim : janela
-        if (ovIni <= ovFim) {
-          const dias = Math.ceil((ovFim.getTime() - ovIni.getTime()) / 86400000) + 1
-          horas += dias * 8
-        }
+        if (ovIni <= ovFim) total += diasUteis(ovIni, ovFim)
       })
-      return horas
+      return total
     }
 
     return ANALISTAS_TI.map(nome => {
@@ -1082,9 +1096,9 @@ export default function TIAgendaClient({
       const tDev = dev2026Normalizadas.filter(a => a.analistaNorm === nome && !a.concluida)
       const emAndamento = tCron.filter(t => t.percentual > 0).length + tDev.filter(a => a.progresso === 'Em andamento').length
       const naoConcluidas = tCron.length + tDev.length
-      const comprometidas = calcComprometidas(tCron, tDev)
-      const disponiveis = Math.max(0, 176 - comprometidas)
-      return { nome, emAndamento, naoConcluidas, comprometidas, disponiveis, cor: COR_ANALISTA[nome] }
+      const comprometidos = calcComprometidos(tCron, tDev)
+      const disponiveis = Math.max(0, diasUteisJanela - comprometidos)
+      return { nome, emAndamento, naoConcluidas, comprometidos, disponiveis, cor: COR_ANALISTA[nome] }
     })
   }, [tarefasNormalizadas, dev2026Normalizadas])
 
@@ -1135,11 +1149,11 @@ export default function TIAgendaClient({
                 <p className="text-xs text-gray-500">Pendentes</p>
               </div>
               <div className="bg-orange-50 rounded-lg p-2">
-                <p className="text-base font-black text-orange-600">{a.comprometidas}h</p>
-                <p className="text-xs text-gray-500">Comprometidas</p>
+                <p className="text-base font-black text-orange-600">{a.comprometidos}d</p>
+                <p className="text-xs text-gray-500">Comprometidos</p>
               </div>
               <div className="bg-green-50 rounded-lg p-2">
-                <p className="text-base font-black text-green-600">{a.disponiveis}h</p>
+                <p className="text-base font-black text-green-600">{a.disponiveis}d</p>
                 <p className="text-xs text-gray-500">Disponíveis</p>
               </div>
             </div>
