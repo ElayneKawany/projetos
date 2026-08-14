@@ -9,7 +9,8 @@ import {
   TrendingUp, DollarSign, BarChart2, Layers, FileCheck, History,
   Sparkles, Check, Ban, Pause, Play, Loader2, RefreshCw,
   Building2, User, Briefcase, Target, ShieldAlert, Lightbulb,
-  Banknote, Tags, ScanText, Wallet,
+  Banknote, Tags, ScanText, Wallet, Monitor, ChevronDown, ExternalLink,
+  Lock, ShieldCheck,
 } from 'lucide-react'
 import type { SessionUser, temPermissao as TPermissao } from '@/lib/auth'
 import type {
@@ -70,6 +71,12 @@ interface ProjetoExecucaoDetalhe {
   opex_aprovado?: number | null
   total_contratado?: number | null
   total_pago?: number | null
+  capex_executado?: number | null
+  opex_executado?: number | null
+  economia_mensal_esperada?: number | null
+  payback_informado?: number | null
+  payback_meses?: number | null
+  payback_unidade?: string | null
 }
 
 interface MacroTarefa {
@@ -98,6 +105,28 @@ interface HistoricoComite {
   status: string; num_projetos: number
 }
 
+interface TIAtividadeComite {
+  id: number; nome: string; progresso: string; requisito: string
+  responsavel: string; status: string; concluido_em: string
+  inicio_dev: string; fim_dev: string
+  prioridade: number | ''
+  prioridade_db_id: number | null
+  prioridade_confirmada: boolean
+  confirmada_por_nome: string | null
+  confirmada_comite_id: number | null
+  solicitacao_alteracao: boolean
+  solicitacao_nova_prioridade: number | null
+  solicitacao_motivo: string | null
+  projeto_codigo?: string; projeto_nome?: string
+}
+
+interface TITarefaCronogramaComite {
+  id: number; nome: string; percentual: number
+  data_inicio: string | null; data_fim: string | null; data_conclusao: string | null
+  observacoes: string | null; prazo_status: string | null
+  analista: string; projeto_codigo: string; projeto_nome: string
+}
+
 interface Props {
   comite: Comite & { criador_nome?: string }
   participantes: (ComiteParticipante & { nome_exibicao?: string })[]
@@ -115,22 +144,28 @@ interface Props {
   diretorias: { id: number; nome: string }[]
   projetosLista: { id: number; codigo: string; nome: string }[]
   historico: HistoricoComite[]
+  tiEmDesenvolvimento: TIAtividadeComite[]
+  tiAguardandoPrioridade: TIAtividadeComite[]
+  tiTarefasCronograma: TITarefaCronogramaComite[]
+  comiteId: number
   session: SessionUser
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const SLIDES = [
-  { id: 'abertura',    label: 'Abertura',            icon: Presentation },
-  { id: 'resumo',      label: 'Resumo Executivo',    icon: TrendingUp },
-  { id: 'logistica',   label: 'Dir. Logística',      icon: Building2 },
-  { id: 'financeira',  label: 'Dir. Financeira',     icon: Building2 },
-  { id: 'comercial',   label: 'Dir. Comercial',      icon: Building2 },
-  { id: 'marketing',   label: 'MKT e Novos Neg.',    icon: Building2 },
-  { id: 'decisoes',    label: 'Decisões',            icon: CheckCircle },
-  { id: 'pendencias',  label: 'Pendências',          icon: Clock },
-  { id: 'ata',         label: 'Ata Automática',      icon: FileCheck },
-  { id: 'historico',   label: 'Histórico',           icon: History },
+  { id: 'abertura',           label: 'Abertura',            icon: Presentation },
+  { id: 'resumo',             label: 'Resumo Executivo',    icon: TrendingUp },
+  { id: 'logistica',          label: 'Dir. Logística',      icon: Building2 },
+  { id: 'financeira',         label: 'Dir. Financeira',     icon: Building2 },
+  { id: 'comercial',          label: 'Dir. Comercial',      icon: Building2 },
+  { id: 'marketing',          label: 'MKT e Novos Neg.',    icon: Building2 },
+  { id: 'ti_desenvolvimento', label: 'TI – Desenvolvimento',icon: Monitor },
+  { id: 'ti_prioridades',     label: 'TI – Prioridades',    icon: Target },
+  { id: 'decisoes',           label: 'Decisões',            icon: CheckCircle },
+  { id: 'pendencias',         label: 'Pendências',          icon: Clock },
+  { id: 'ata',                label: 'Ata Automática',      icon: FileCheck },
+  { id: 'historico',          label: 'Histórico',           icon: History },
 ] as const
 
 type SlideId = (typeof SLIDES)[number]['id']
@@ -217,7 +252,9 @@ export default function ComiteDetalheClient({
   ataHistorico: ataHistoricoInicial = [],
   todosProjetos, projetosViabilidadeDetalhe, projetosPropostaDetalhe,
   projetosExecucaoDetalhe, macroTarefasExecucao,
-  usuarios, diretorias, projetosLista, historico, session,
+  usuarios, diretorias, projetosLista, historico,
+  tiEmDesenvolvimento, tiAguardandoPrioridade, tiTarefasCronograma,
+  comiteId, session,
 }: Props) {
   const router = useRouter()
   const [comite, setComite] = useState(comiteInicial)
@@ -343,8 +380,10 @@ export default function ComiteDetalheClient({
 
   // Map de slide → lista de projetos para calcular capas
   const slideProjetosMap: Record<SlideId, ProjetoResumo[]> = {
-    abertura:   [],
-    resumo:     [],
+    abertura:           [],
+    resumo:             [],
+    ti_desenvolvimento: [],
+    ti_prioridades:     [],
     financeira: porDiretoria['Diretoria Financeira'] || [],
     comercial:  porDiretoria['Diretoria Comercial']  || [],
     marketing:  porDiretoria['MKT e Novos Negócios']  || [],
@@ -466,6 +505,21 @@ export default function ComiteDetalheClient({
           />
         )
       }
+      case 'ti_desenvolvimento': return (
+        <SlideTIDesenvolvimento
+          atividades={tiEmDesenvolvimento}
+          tarefasCronograma={tiTarefasCronograma}
+        />
+      )
+      case 'ti_prioridades': return (
+        <SlideTIPrioridades
+          atividades={tiAguardandoPrioridade}
+          comiteId={comiteId}
+          podeConfirmar={podeGerenciar || podeDirigir}
+          onRefresh={refresh}
+          session={session}
+        />
+      )
       case 'pendencias': return (
         <SlidePendencias
           pendencias={pendencias} podeGerenciar={podeGerenciar}
@@ -3438,13 +3492,18 @@ function SlideExecucaoDetalhe({
   }
   const prazo = prazoInfo()
 
-  // Financial
-  const budgetAprovado = (det.capex_aprovado ?? 0) + (det.opex_aprovado ?? 0)
-  const totalContratado = det.total_contratado ?? 0
-  const totalPago = det.total_pago ?? 0
-  const saldo = budgetAprovado > 0 ? budgetAprovado - totalPago : totalContratado - totalPago
-  const percFinanceiro = (budgetAprovado || totalContratado) > 0
-    ? Math.round((totalPago / (budgetAprovado || totalContratado)) * 100)
+  // Financial — mesma lógica do FinanceiroTab (lib/financeiro/dashboard.ts)
+  const capexPlanejado   = det.capex_aprovado  ?? 0
+  const opexPlanejado    = det.opex_aprovado   ?? 0
+  const capexExecutado   = det.capex_executado ?? 0
+  const opexExecutado    = det.opex_executado  ?? 0
+  const saldoCapex       = capexPlanejado - capexExecutado
+  const saldoOpex        = opexPlanejado  - opexExecutado
+  const totalPlanejado   = capexPlanejado + opexPlanejado
+  const totalExecutado   = capexExecutado + opexExecutado
+  const saldoGeral       = totalPlanejado - totalExecutado
+  const percFinanceiro   = totalPlanejado > 0
+    ? Math.round((totalExecutado / totalPlanejado) * 100)
     : 0
 
   // Pontos críticos
@@ -3787,25 +3846,81 @@ function SlideExecucaoDetalhe({
           <div className="px-5 pt-4 pb-3 border-b border-gray-100 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-[#003087]">
             <DollarSign size={13} className="shrink-0" /><span>Resumo Financeiro</span>
           </div>
-          <div className="p-5">
-            <div className="grid grid-cols-3 gap-4 mb-4">
-              {([
-                { label: 'Budget Lançado/Aprovado', value: budgetAprovado || totalContratado, color: '#003087' },
-                { label: 'Budget Utilizado',         value: totalPago,                         color: totalPago > (budgetAprovado || totalContratado) ? '#DC2626' : '#059669' },
-                { label: 'Saldo Atual',               value: saldo,                             color: saldo >= 0 ? '#059669' : '#DC2626' },
-              ] as const).map(card => (
-                <div key={card.label} className="flex flex-col items-center p-4 rounded-xl bg-gray-50 border border-gray-100 text-center">
-                  <p className="text-xs font-semibold text-gray-500 mb-2">{card.label}</p>
-                  <p className="font-black" style={{ fontSize: '20px', color: card.color }}>
-                    {fmtR(card.value ?? 0)}
-                  </p>
-                </div>
-              ))}
+          <div className="p-5 space-y-3">
+            {/* CAPEX */}
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wider text-blue-700 mb-1.5">CAPEX</p>
+              <div className="grid grid-cols-3 gap-2">
+                {([
+                  { label: 'Planejado',  value: capexPlanejado, color: '#1D4ED8' },
+                  { label: 'Executado',  value: capexExecutado, color: capexExecutado > capexPlanejado ? '#DC2626' : '#059669' },
+                  { label: 'Saldo',      value: saldoCapex,     color: saldoCapex >= 0 ? '#059669' : '#DC2626' },
+                ] as const).map(card => (
+                  <div key={card.label} className="flex flex-col items-center p-3 rounded-lg bg-blue-50 border border-blue-100 text-center">
+                    <p className="text-xs font-semibold text-gray-500 mb-1">{card.label}</p>
+                    <p className="font-black text-sm" style={{ color: card.color }}>{fmtR(card.value)}</p>
+                  </div>
+                ))}
+              </div>
             </div>
-            {((det.capex_aprovado ?? 0) > 0 || (det.opex_aprovado ?? 0) > 0) && (
-              <div className="flex gap-6 text-xs text-gray-500 pt-3 border-t border-gray-100">
-                <span>CAPEX aprovado: <strong className="text-gray-700">{fmtR(det.capex_aprovado ?? 0)}</strong></span>
-                <span>OPEX aprovado: <strong className="text-gray-700">{fmtR(det.opex_aprovado ?? 0)}</strong></span>
+            {/* OPEX */}
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wider text-purple-700 mb-1.5">OPEX</p>
+              <div className="grid grid-cols-3 gap-2">
+                {([
+                  { label: 'Planejado',  value: opexPlanejado, color: '#7C3AED' },
+                  { label: 'Executado',  value: opexExecutado, color: opexExecutado > opexPlanejado ? '#DC2626' : '#059669' },
+                  { label: 'Saldo',      value: saldoOpex,     color: saldoOpex >= 0 ? '#059669' : '#DC2626' },
+                ] as const).map(card => (
+                  <div key={card.label} className="flex flex-col items-center p-3 rounded-lg bg-purple-50 border border-purple-100 text-center">
+                    <p className="text-xs font-semibold text-gray-500 mb-1">{card.label}</p>
+                    <p className="font-black text-sm" style={{ color: card.color }}>{fmtR(card.value)}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+            {/* Total */}
+            <div className="pt-1 border-t border-gray-100">
+              <p className="text-xs font-bold uppercase tracking-wider text-gray-600 mb-1.5">Total</p>
+              <div className="grid grid-cols-3 gap-2">
+                {([
+                  { label: 'Planejado',  value: totalPlanejado, color: '#003087' },
+                  { label: 'Executado',  value: totalExecutado, color: totalExecutado > totalPlanejado ? '#DC2626' : '#059669' },
+                  { label: 'Saldo Geral',value: saldoGeral,     color: saldoGeral >= 0 ? '#059669' : '#DC2626' },
+                ] as const).map(card => (
+                  <div key={card.label} className="flex flex-col items-center p-3 rounded-xl bg-gray-50 border border-gray-200 text-center">
+                    <p className="text-xs font-semibold text-gray-500 mb-1">{card.label}</p>
+                    <p className="font-black text-sm" style={{ color: card.color }}>{fmtR(card.value)}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+            {/* Retorno — dados do Payback */}
+            {(det.economia_mensal_esperada != null || det.payback_informado != null || det.payback_meses != null) && (
+              <div className="pt-1 border-t border-gray-100">
+                <p className="text-xs font-bold uppercase tracking-wider text-green-700 mb-1.5">Retorno Esperado</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {det.economia_mensal_esperada != null && (
+                    <div className="flex flex-col items-center p-3 rounded-xl bg-green-50 border border-green-100 text-center">
+                      <p className="text-xs font-semibold text-gray-500 mb-1">Economia Mensal</p>
+                      <p className="font-black text-sm text-green-700">{fmtR(det.economia_mensal_esperada)}</p>
+                    </div>
+                  )}
+                  {(det.payback_informado != null || det.payback_meses != null) && (
+                    <div className="flex flex-col items-center p-3 rounded-xl bg-green-50 border border-green-100 text-center">
+                      <p className="text-xs font-semibold text-gray-500 mb-1">Payback</p>
+                      <p className="font-black text-sm text-green-700">
+                        {(() => {
+                          const pb = det.payback_informado ?? det.payback_meses
+                          if (pb == null) return '—'
+                          const unit = det.payback_unidade ?? 'MESES'
+                          if (unit === 'ANOS') return `${pb} anos`
+                          return pb < 12 ? `${pb} meses` : `${(pb / 12).toFixed(1).replace('.', ',')} anos`
+                        })()}
+                      </p>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -4199,6 +4314,386 @@ function SlideCapa({
     </div>
   )
 }
+
+// ─── TI – Desenvolvimento ────────────────────────────────────────────────────
+
+function SlideTIDesenvolvimento({
+  atividades,
+  tarefasCronograma,
+}: {
+  atividades: TIAtividadeComite[]
+  tarefasCronograma: TITarefaCronogramaComite[]
+}) {
+  const progBadge = (p: string) => {
+    const map: Record<string, string> = {
+      'Em andamento': 'bg-blue-100 text-blue-700',
+      'Em validação': 'bg-purple-100 text-purple-700',
+      'Em treinamento': 'bg-orange-100 text-orange-700',
+      'Em acompanhamento': 'bg-teal-100 text-teal-700',
+    }
+    return map[p] ?? 'bg-gray-100 text-gray-600'
+  }
+
+  const pctBadge = (pct: number) => {
+    if (pct >= 80) return 'bg-green-100 text-green-700'
+    if (pct >= 40) return 'bg-yellow-100 text-yellow-700'
+    return 'bg-red-100 text-red-700'
+  }
+
+  return (
+    <div>
+      <h2 className="text-xl font-bold text-[#003087] mb-4 flex items-center gap-2">
+        <Monitor size={20} /> TI – Projetos em Desenvolvimento
+      </h2>
+
+      {/* DEV2026 em andamento */}
+      {atividades.length > 0 && (
+        <div className="mb-6">
+          <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-2">
+            Atividades DEV2026
+          </h3>
+          <div className="overflow-x-auto">
+            <table className="table-megag text-sm">
+              <thead>
+                <tr>
+                  <th>Projeto / Requisito</th>
+                  <th>Atividade</th>
+                  <th>Analista</th>
+                  <th>Início</th>
+                  <th>Fim</th>
+                  <th>Situação</th>
+                </tr>
+              </thead>
+              <tbody>
+                {atividades.map(a => (
+                  <tr key={a.id}>
+                    <td className="text-xs text-gray-500">{a.requisito || '—'}</td>
+                    <td className="font-medium">{a.nome}</td>
+                    <td>{a.responsavel || '—'}</td>
+                    <td className="text-xs">{a.inicio_dev ? fmtDate(a.inicio_dev) : '—'}</td>
+                    <td className="text-xs">{a.fim_dev ? fmtDate(a.fim_dev) : '—'}</td>
+                    <td>
+                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${progBadge(a.progresso)}`}>
+                        {a.progresso}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Tarefas de cronograma de TI em andamento */}
+      {tarefasCronograma.length > 0 && (
+        <div>
+          <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-2">
+            Tarefas de Cronograma
+          </h3>
+          <div className="overflow-x-auto">
+            <table className="table-megag text-sm">
+              <thead>
+                <tr>
+                  <th>Projeto</th>
+                  <th>Tarefa</th>
+                  <th>Analista</th>
+                  <th>Início</th>
+                  <th>Fim</th>
+                  <th>% Concluído</th>
+                  <th>Prazo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tarefasCronograma.map(t => (
+                  <tr key={t.id}>
+                    <td className="text-xs">
+                      <span className="font-mono text-[#003087]">{t.projeto_codigo}</span>{' '}
+                      <span className="text-gray-500">{t.projeto_nome}</span>
+                    </td>
+                    <td className="font-medium">{t.nome}</td>
+                    <td>{t.analista || '—'}</td>
+                    <td className="text-xs">{t.data_inicio ? fmtDate(t.data_inicio) : '—'}</td>
+                    <td className="text-xs">{t.data_fim ? fmtDate(t.data_fim) : '—'}</td>
+                    <td>
+                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${pctBadge(t.percentual)}`}>
+                        {t.percentual}%
+                      </span>
+                    </td>
+                    <td>
+                      {t.prazo_status ? (
+                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                          t.prazo_status === 'ATRASADO' ? 'bg-red-100 text-red-700' :
+                          t.prazo_status === 'EM_RISCO'  ? 'bg-yellow-100 text-yellow-700' :
+                          'bg-green-100 text-green-700'
+                        }`}>{t.prazo_status}</span>
+                      ) : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {atividades.length === 0 && tarefasCronograma.length === 0 && (
+        <p className="text-center text-gray-400 py-8 text-sm">Nenhum item em desenvolvimento no momento</p>
+      )}
+    </div>
+  )
+}
+
+// ─── TI – Prioridades ─────────────────────────────────────────────────────────
+
+const PRIORIDADE_LABELS: Record<number, string> = {
+  0: 'Prioridade 0 — Crítica',
+  1: 'Prioridade 1 — Alta',
+  2: 'Prioridade 2 — Média',
+  3: 'Prioridade 3 — Baixa',
+  4: 'Prioridade 4 — Mínima',
+}
+
+const PRIORIDADE_COLORS: Record<number, string> = {
+  0: 'bg-red-100 text-red-800',
+  1: 'bg-orange-100 text-orange-700',
+  2: 'bg-yellow-100 text-yellow-700',
+  3: 'bg-blue-100 text-blue-700',
+  4: 'bg-gray-100 text-gray-600',
+}
+
+function CardTIPrioridade({
+  atividade,
+  comiteId,
+  podeConfirmar,
+  session,
+  onRefresh,
+}: {
+  atividade: TIAtividadeComite
+  comiteId: number
+  podeConfirmar: boolean
+  session: SessionUser
+  onRefresh: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [prioSelecionada, setPrioSelecionada] = useState<number | ''>(
+    typeof atividade.prioridade === 'number' ? atividade.prioridade : ''
+  )
+  const [saving, setSaving] = useState(false)
+  const [confirming, setConfirming] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [sucesso, setSucesso] = useState<string | null>(null)
+
+  const jaTemPrioridade = typeof atividade.prioridade === 'number'
+  const confirmada = atividade.prioridade_confirmada
+  const dbId = atividade.prioridade_db_id
+
+  const handleDefinir = async () => {
+    if (prioSelecionada === '') return
+    setSaving(true); setError(null)
+    try {
+      const res = await fetch('/api/ti/prioridades', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ atividade_id: atividade.id, prioridade: prioSelecionada }),
+      })
+      if (!res.ok) {
+        const d = await res.json()
+        setError(d.error ?? 'Erro ao salvar prioridade')
+      } else {
+        setSucesso('Prioridade definida!')
+        setTimeout(() => { setSucesso(null); onRefresh() }, 1200)
+      }
+    } catch { setError('Erro de rede') }
+    finally { setSaving(false) }
+  }
+
+  const handleConfirmar = async () => {
+    if (!dbId) return
+    setConfirming(true); setError(null)
+    try {
+      const res = await fetch(`/api/ti/prioridades/${dbId}/confirmar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ comite_id: comiteId }),
+      })
+      if (!res.ok) {
+        const d = await res.json()
+        setError(d.error ?? 'Erro ao confirmar prioridade')
+      } else {
+        setSucesso('Prioridade confirmada no comitê!')
+        setTimeout(() => { setSucesso(null); onRefresh() }, 1500)
+      }
+    } catch { setError('Erro de rede') }
+    finally { setConfirming(false) }
+  }
+
+  return (
+    <div className="border rounded-xl bg-white shadow-sm overflow-hidden">
+      {/* Header clicável */}
+      <button
+        className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-gray-50 transition-colors"
+        onClick={() => setOpen(o => !o)}
+      >
+        <ChevronDown
+          size={16}
+          className={`text-gray-400 flex-shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
+        />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-medium text-sm text-gray-900">{atividade.nome}</span>
+            {confirmada && (
+              <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-700">
+                <ShieldCheck size={11} /> CONFIRMADA
+              </span>
+            )}
+            {jaTemPrioridade && !confirmada && (
+              <span className={`px-2 py-0.5 rounded text-xs font-medium ${PRIORIDADE_COLORS[atividade.prioridade as number]}`}>
+                {PRIORIDADE_LABELS[atividade.prioridade as number]}
+              </span>
+            )}
+            {!jaTemPrioridade && (
+              <span className="px-2 py-0.5 rounded text-xs bg-gray-100 text-gray-500">Sem prioridade</span>
+            )}
+          </div>
+          {atividade.requisito && (
+            <p className="text-xs text-gray-500 mt-0.5 truncate">{atividade.requisito}</p>
+          )}
+        </div>
+        <span className="text-xs text-gray-400 flex-shrink-0">{atividade.responsavel || '—'}</span>
+      </button>
+
+      {/* Conteúdo expandido */}
+      {open && (
+        <div className="px-4 pb-4 border-t bg-gray-50 space-y-3">
+          <div className="pt-3 grid grid-cols-2 gap-3 text-sm">
+            <div>
+              <span className="text-xs text-gray-500">Analista</span>
+              <p className="font-medium">{atividade.responsavel || '—'}</p>
+            </div>
+            <div>
+              <span className="text-xs text-gray-500">Situação</span>
+              <p className="font-medium">{atividade.progresso}</p>
+            </div>
+            {atividade.inicio_dev && (
+              <div>
+                <span className="text-xs text-gray-500">Início previsto</span>
+                <p className="font-medium">{fmtDate(atividade.inicio_dev)}</p>
+              </div>
+            )}
+            {atividade.fim_dev && (
+              <div>
+                <span className="text-xs text-gray-500">Fim previsto</span>
+                <p className="font-medium">{fmtDate(atividade.fim_dev)}</p>
+              </div>
+            )}
+          </div>
+
+          {/* Confirmada — apenas exibe */}
+          {confirmada && (
+            <div className="flex items-center gap-2 p-3 rounded-lg bg-green-50 border border-green-200">
+              <Lock size={14} className="text-green-600" />
+              <div className="text-sm">
+                <span className="font-semibold text-green-700">Prioridade confirmada no comitê</span>
+                {atividade.confirmada_por_nome && (
+                  <span className="text-green-600"> · por {atividade.confirmada_por_nome}</span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Definir / ajustar prioridade (só se não confirmada) */}
+          {!confirmada && podeConfirmar && (
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-gray-600">Definir prioridade</label>
+              <div className="flex gap-2">
+                <select
+                  className="input text-sm flex-1"
+                  value={prioSelecionada}
+                  onChange={e => setPrioSelecionada(e.target.value === '' ? '' : Number(e.target.value))}
+                >
+                  <option value="">— Selecionar —</option>
+                  {[0, 1, 2, 3, 4].map(n => (
+                    <option key={n} value={n}>{PRIORIDADE_LABELS[n]}</option>
+                  ))}
+                </select>
+                <button
+                  className="btn-primary text-sm px-3 py-1.5"
+                  disabled={prioSelecionada === '' || saving}
+                  onClick={handleDefinir}
+                >
+                  {saving ? <Loader2 size={14} className="animate-spin" /> : 'Salvar'}
+                </button>
+              </div>
+
+              {/* Confirmar no comitê (só se já tem DB id e prioridade definida) */}
+              {jaTemPrioridade && dbId && (
+                <button
+                  className="btn-secondary text-sm w-full flex items-center justify-center gap-1.5 py-2"
+                  disabled={confirming}
+                  onClick={handleConfirmar}
+                >
+                  {confirming ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
+                  Confirmar Prioridade no Comitê
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Erros / Sucesso */}
+          {error && <p className="text-xs text-red-600 font-medium">{error}</p>}
+          {sucesso && <p className="text-xs text-green-600 font-medium">{sucesso}</p>}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function SlideTIPrioridades({
+  atividades,
+  comiteId,
+  podeConfirmar,
+  onRefresh,
+  session,
+}: {
+  atividades: TIAtividadeComite[]
+  comiteId: number
+  podeConfirmar: boolean
+  onRefresh: () => void
+  session: SessionUser
+}) {
+  return (
+    <div>
+      <h2 className="text-xl font-bold text-[#003087] mb-1 flex items-center gap-2">
+        <Target size={20} /> TI – Prioridades Aguardando Definição
+      </h2>
+      <p className="text-sm text-gray-500 mb-5">
+        Itens sem prioridade definida. Defina e confirme a prioridade neste comitê para mover o item para Aguardando Desenvolvimento.
+      </p>
+
+      {atividades.length === 0 ? (
+        <div className="text-center py-10 text-gray-400 text-sm">
+          Nenhum item aguardando definição de prioridade.
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {atividades.map(a => (
+            <CardTIPrioridade
+              key={a.id}
+              atividade={a}
+              comiteId={comiteId}
+              podeConfirmar={podeConfirmar}
+              session={session}
+              onRefresh={onRefresh}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Histórico ────────────────────────────────────────────────────────────────
 
 function SlideHistorico({ historico }: { historico: HistoricoComite[] }) {
   return (

@@ -610,12 +610,49 @@ function runMigrations(db: Database.Database) {
      VALUES ('PAUSADO', 'Pausado', 99, 0, 1)`
   ).run()
 
+  // ── TI – Prioridades de atividades DEV2026 ───────────────────────────────────
+  db.exec(`CREATE TABLE IF NOT EXISTS ti_prioridades (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    atividade_id                INTEGER NOT NULL,
+    fonte                       TEXT    NOT NULL DEFAULT 'dev2026',
+    prioridade                  INTEGER,
+    confirmada                  INTEGER NOT NULL DEFAULT 0,
+    confirmada_em               TEXT,
+    confirmada_por              INTEGER,
+    confirmada_por_nome         TEXT,
+    confirmada_comite_id        INTEGER,
+    solicitacao_alteracao       INTEGER NOT NULL DEFAULT 0,
+    solicitacao_por             INTEGER,
+    solicitacao_por_nome        TEXT,
+    solicitacao_em              TEXT,
+    solicitacao_motivo          TEXT,
+    solicitacao_nova_prioridade INTEGER,
+    workflow_id                 INTEGER,
+    created_at                  TEXT DEFAULT (datetime('now')),
+    updated_at                  TEXT DEFAULT (datetime('now')),
+    UNIQUE(atividade_id, fonte)
+  )`)
+
   // ── Módulo Payback v2 — Leituras periódicas do indicador ─────────────────────
   // Campos de base para cálculo automático (adicionados na viabilidade)
   addCol('viabilidade', 'baseline_valor',         'REAL')            // valor do indicador ANTES do projeto
   addCol('viabilidade', 'meta_valor',             'REAL')            // valor-alvo do indicador após o projeto
   addCol('viabilidade', 'tipo_indicador',         "TEXT DEFAULT 'ABSOLUTO'")  // PERCENTUAL | ABSOLUTO
   addCol('viabilidade', 'economia_mensal_esperada', 'REAL')           // benefício financeiro mensal esperado (R$)
+
+  // Indicador Ganho Tarefa (redução de tempo de atividade)
+  addCol('viabilidade', 'ganho_tarefa_ativo',       'INTEGER DEFAULT 0')
+  addCol('viabilidade', 'ganho_tarefa_salario',      'REAL')
+  addCol('viabilidade', 'ganho_tarefa_horas_antes',  'REAL')
+  addCol('viabilidade', 'ganho_tarefa_horas_depois', 'REAL')
+  addCol('viabilidade', 'ganho_tarefa_freq_mensal',  "REAL DEFAULT 1")
+  // Indicador HC (redução de Headcount)
+  addCol('viabilidade', 'hc_ativo',                 'INTEGER DEFAULT 0')
+  addCol('viabilidade', 'hc_quantidade',             "INTEGER DEFAULT 1")
+  addCol('viabilidade', 'hc_salario_mensal',         'REAL')
+  addCol('viabilidade', 'hc_encargos_pct',           'REAL')
+  addCol('viabilidade', 'hc_beneficios_mensais',     'REAL')
+  addCol('viabilidade', 'hc_outros_mensais',         'REAL')
 
   // Leituras reais do indicador mês a mês (substitui entrada manual na planilha)
   db.exec(`CREATE TABLE IF NOT EXISTS payback_registros (

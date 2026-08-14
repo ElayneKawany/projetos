@@ -10,6 +10,10 @@ const CAMPOS_FINANCEIROS = [
   'economia_estimada', 'economia_periodicidade',
   'tipo_payback', 'payback_informado', 'payback_unidade',
   'baseline_valor', 'meta_valor', 'tipo_indicador', 'economia_mensal_esperada',
+  'ganho_tarefa_ativo', 'ganho_tarefa_salario', 'ganho_tarefa_horas_antes',
+  'ganho_tarefa_horas_depois', 'ganho_tarefa_freq_mensal',
+  'hc_ativo', 'hc_quantidade', 'hc_salario_mensal', 'hc_encargos_pct',
+  'hc_beneficios_mensais', 'hc_outros_mensais',
 ]
 
 export async function PATCH(
@@ -41,6 +45,10 @@ export async function PATCH(
     'tipo_payback', 'payback_informado', 'payback_unidade',
     'tipo_payback_quantitativo', 'tipo_payback_qualitativo', 'beneficios_esperados',
     'baseline_valor', 'meta_valor', 'tipo_indicador', 'economia_mensal_esperada',
+    'ganho_tarefa_ativo', 'ganho_tarefa_salario', 'ganho_tarefa_horas_antes',
+    'ganho_tarefa_horas_depois', 'ganho_tarefa_freq_mensal',
+    'hc_ativo', 'hc_quantidade', 'hc_salario_mensal', 'hc_encargos_pct',
+    'hc_beneficios_mensais', 'hc_outros_mensais',
   ]
 
   const dados: Record<string, unknown> = {}

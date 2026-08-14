@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation'
 import { getSession } from '@/lib/auth'
 import getDb from '@/lib/db'
 import ComiteDetalheClient from './ComiteDetalheClient'
+import { DEV2026_ATIVIDADES } from '@/lib/ti/dev2026-data'
 
 export default async function ComiteDetalhePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -142,7 +143,31 @@ export default async function ComiteDetalhePage({ params }: { params: Promise<{ 
          WHERE fc3.projeto_id = p.id
            AND fp2.contrato_id IS NOT NULL
            AND (fp2.ativo IS NULL OR fp2.ativo = 1)), 0
-      ) AS total_pago
+      ) AS total_pago,
+      COALESCE(
+        (SELECT SUM(fp3.valor_pago)
+         FROM financeiro_pagamentos fp3
+         JOIN financeiro_contratos fc4 ON fc4.id = fp3.contrato_id
+         WHERE fc4.projeto_id = p.id
+           AND fc4.natureza_financeira = 'CAPEX'
+           AND fc4.ativo = 1
+           AND fp3.contrato_id IS NOT NULL
+           AND (fp3.ativo IS NULL OR fp3.ativo = 1)), 0
+      ) AS capex_executado,
+      COALESCE(
+        (SELECT SUM(fp4.valor_pago)
+         FROM financeiro_pagamentos fp4
+         JOIN financeiro_contratos fc5 ON fc5.id = fp4.contrato_id
+         WHERE fc5.projeto_id = p.id
+           AND fc5.natureza_financeira = 'OPEX'
+           AND fc5.ativo = 1
+           AND fp4.contrato_id IS NOT NULL
+           AND (fp4.ativo IS NULL OR fp4.ativo = 1)), 0
+      ) AS opex_executado,
+      (SELECT v.economia_mensal_esperada FROM viabilidade v WHERE v.projeto_id = p.id ORDER BY v.versao DESC LIMIT 1) AS economia_mensal_esperada,
+      (SELECT v.payback_informado FROM viabilidade v WHERE v.projeto_id = p.id ORDER BY v.versao DESC LIMIT 1) AS payback_informado,
+      (SELECT v.payback_meses FROM viabilidade v WHERE v.projeto_id = p.id ORDER BY v.versao DESC LIMIT 1) AS payback_meses,
+      (SELECT v.payback_unidade FROM viabilidade v WHERE v.projeto_id = p.id ORDER BY v.versao DESC LIMIT 1) AS payback_unidade
     FROM projetos p
     LEFT JOIN diretorias d ON d.id = p.diretoria_id
     LEFT JOIN areas a ON a.id = p.area_id
@@ -180,6 +205,68 @@ export default async function ComiteDetalhePage({ params }: { params: Promise<{ 
   const diretorias = db.prepare("SELECT id, nome FROM diretorias WHERE ativo = 1 ORDER BY ordem, nome").all()
   const projetosLista = db.prepare("SELECT id, codigo, nome FROM projetos WHERE ativo = 1 ORDER BY nome").all()
 
+  // ── TI: atividades DEV2026 com prioridades do DB ─────────────────────────────
+  const tiPrioridades = db.prepare('SELECT * FROM ti_prioridades WHERE fonte = ?').all('dev2026') as any[]
+  const tiPrioMap = new Map<number, any>(tiPrioridades.map((p: any) => [p.atividade_id, p]))
+
+  const dev2026ComPrio = DEV2026_ATIVIDADES.map(a => {
+    const dbPrio = tiPrioMap.get(a.id)
+    return {
+      ...a,
+      prioridade: (dbPrio && dbPrio.prioridade !== null) ? dbPrio.prioridade : a.prioridade,
+      prioridade_db_id: dbPrio?.id ?? null,
+      prioridade_confirmada: dbPrio?.confirmada === 1,
+      confirmada_por_nome: dbPrio?.confirmada_por_nome ?? null,
+      confirmada_comite_id: dbPrio?.confirmada_comite_id ?? null,
+      solicitacao_alteracao: dbPrio?.solicitacao_alteracao === 1,
+      solicitacao_nova_prioridade: dbPrio?.solicitacao_nova_prioridade ?? null,
+      solicitacao_motivo: dbPrio?.solicitacao_motivo ?? null,
+    }
+  })
+
+  // TI em Desenvolvimento: itens em dev, validação, treinamento, acompanhamento
+  const tiEmDesenvolvimento = dev2026ComPrio.filter(a => {
+    if (a.progresso === 'Concluído' || a.progresso === 'Não iniciado') return false
+    return true
+  })
+
+  // TI Aguardando Prioridade: itens Não iniciados sem prioridade definida (prioridade = '')
+  const tiAguardandoPrioridade = dev2026ComPrio.filter(a =>
+    a.progresso === 'Não iniciado' && a.prioridade === ''
+  )
+
+  // Tarefas de TI dos cronogramas (para slide TI em Desenvolvimento)
+  const tiTarefasCronograma = db.prepare(`
+    SELECT
+      t.id, t.nome, t.percentual, t.data_inicio, t.data_fim, t.data_conclusao,
+      t.observacoes, t.prazo_status,
+      COALESCE(u.nome, t.responsavel_nome_ext) AS analista,
+      p.codigo AS projeto_codigo, p.nome AS projeto_nome
+    FROM cronograma_tarefas t
+    JOIN cronogramas c ON c.id = t.cronograma_id
+    JOIN projetos p ON p.id = c.projeto_id
+    LEFT JOIN usuarios u ON u.id = t.responsavel_id
+    WHERE (t.ativo IS NULL OR t.ativo = 1)
+      AND (c.ativo IS NULL OR c.ativo = 1)
+      AND p.ativo = 1
+      AND t.percentual > 0 AND t.percentual < 100
+      AND c.versao = (
+        SELECT MAX(c2.versao) FROM cronogramas c2
+        WHERE c2.projeto_id = c.projeto_id AND (c2.ativo IS NULL OR c2.ativo = 1)
+      )
+      AND (
+        LOWER(COALESCE(u.nome, ''))                    LIKE '%michel%'
+        OR LOWER(COALESCE(u.nome, ''))                 LIKE '%divonzi%'
+        OR LOWER(COALESCE(u.nome, ''))                 LIKE '%plinio%'
+        OR LOWER(COALESCE(u.nome, ''))                 LIKE '%plínio%'
+        OR LOWER(COALESCE(t.responsavel_nome_ext, '')) LIKE '%michel%'
+        OR LOWER(COALESCE(t.responsavel_nome_ext, '')) LIKE '%divonzi%'
+        OR LOWER(COALESCE(t.responsavel_nome_ext, '')) LIKE '%plinio%'
+        OR LOWER(COALESCE(t.responsavel_nome_ext, '')) LIKE '%plínio%'
+      )
+    ORDER BY p.nome, t.data_inicio
+  `).all()
+
   // Previous comitês for history
   const historico = db.prepare(`
     SELECT id, titulo, tipo, data_realizacao, status,
@@ -207,6 +294,10 @@ export default async function ComiteDetalhePage({ params }: { params: Promise<{ 
       diretorias={diretorias as any}
       projetosLista={projetosLista as any}
       historico={historico as any}
+      tiEmDesenvolvimento={tiEmDesenvolvimento as any}
+      tiAguardandoPrioridade={tiAguardandoPrioridade as any}
+      tiTarefasCronograma={tiTarefasCronograma as any}
+      comiteId={comiteId}
       session={session}
     />
   )

@@ -6,7 +6,7 @@ import { useState } from 'react'
 import {
   LayoutDashboard, FolderKanban, Users, CalendarDays,
   DollarSign, FileText, CheckSquare, ShieldCheck, Settings,
-  ChevronLeft, ChevronRight, LogOut, Bell
+  ChevronLeft, ChevronRight, LogOut, Bell, Monitor, Calculator
 } from 'lucide-react'
 
 interface MenuItem {
@@ -24,6 +24,8 @@ const MENU_ITEMS: MenuItem[] = [
   { label: 'Financeiro',   href: '/financeiro',      icon: DollarSign },
   { label: 'Documentos',   href: '/documentos',      icon: FileText },
   { label: 'Aprovações',   href: '/aprovacoes',      icon: CheckSquare },
+  { label: 'TI / Agenda',  href: '/ti',              icon: Monitor },
+  { label: 'Calculadora',  href: '/ti/calculadora',  icon: Calculator },
   { label: 'Auditoria',    href: '/auditoria',       icon: ShieldCheck },
   { label: 'Configurações',href: '/configuracoes',   icon: Settings },
 ]

@@ -54,6 +54,19 @@ interface ViabilidadeData {
   meta_valor?: number | null
   tipo_indicador?: string
   economia_mensal_esperada?: number | null
+  // Indicador Ganho Tarefa
+  ganho_tarefa_ativo?: number | null
+  ganho_tarefa_salario?: number | null
+  ganho_tarefa_horas_antes?: number | null
+  ganho_tarefa_horas_depois?: number | null
+  ganho_tarefa_freq_mensal?: number | null
+  // Indicador HC
+  hc_ativo?: number | null
+  hc_quantidade?: number | null
+  hc_salario_mensal?: number | null
+  hc_encargos_pct?: number | null
+  hc_beneficios_mensais?: number | null
+  hc_outros_mensais?: number | null
   created_at: string
 }
 
@@ -536,6 +549,19 @@ export default function ViabilidadeEditor({ viabilidade, projetoId, canEdit, can
     meta_valor: (viabilidade?.meta_valor ?? null) as number | null,
     tipo_indicador: viabilidade?.tipo_indicador ?? 'ABSOLUTO',
     economia_mensal_esperada: (viabilidade?.economia_mensal_esperada ?? null) as number | null,
+    // Indicador Ganho Tarefa
+    ganho_tarefa_ativo: Boolean(viabilidade?.ganho_tarefa_ativo),
+    ganho_tarefa_salario: (viabilidade?.ganho_tarefa_salario ?? null) as number | null,
+    ganho_tarefa_horas_antes: (viabilidade?.ganho_tarefa_horas_antes ?? null) as number | null,
+    ganho_tarefa_horas_depois: (viabilidade?.ganho_tarefa_horas_depois ?? null) as number | null,
+    ganho_tarefa_freq_mensal: (viabilidade?.ganho_tarefa_freq_mensal ?? 1) as number,
+    // Indicador HC
+    hc_ativo: Boolean(viabilidade?.hc_ativo),
+    hc_quantidade: (viabilidade?.hc_quantidade ?? 1) as number,
+    hc_salario_mensal: (viabilidade?.hc_salario_mensal ?? null) as number | null,
+    hc_encargos_pct: (viabilidade?.hc_encargos_pct ?? null) as number | null,
+    hc_beneficios_mensais: (viabilidade?.hc_beneficios_mensais ?? null) as number | null,
+    hc_outros_mensais: (viabilidade?.hc_outros_mensais ?? null) as number | null,
   })
 
   // V1 aprovada pode ser editada para regularização de base histórica
@@ -559,6 +585,34 @@ export default function ViabilidadeEditor({ viabilidade, projetoId, canEdit, can
     form.tipo_payback === 'QUANTITATIVO' && investimentoTotalCalc > 0 && economiaMensal > 0
       ? investimentoTotalCalc / economiaMensal
       : null
+
+  // Cálculo Ganho Tarefa (44h/semana → 220h/mês)
+  const valorHoraGT = form.ganho_tarefa_salario && form.ganho_tarefa_salario > 0
+    ? form.ganho_tarefa_salario / 220
+    : null
+  const horasEconomizadasGT = (form.ganho_tarefa_horas_antes !== null && form.ganho_tarefa_horas_depois !== null)
+    ? Math.max(0, (form.ganho_tarefa_horas_antes ?? 0) - (form.ganho_tarefa_horas_depois ?? 0))
+    : null
+  const economiaMensalGT = valorHoraGT !== null && horasEconomizadasGT !== null
+    ? valorHoraGT * horasEconomizadasGT * (form.ganho_tarefa_freq_mensal ?? 1)
+    : null
+
+  // Cálculo HC
+  const custoTotalHCUnitario = form.hc_salario_mensal !== null
+    ? (form.hc_salario_mensal ?? 0)
+      + (form.hc_encargos_pct ? (form.hc_salario_mensal ?? 0) * (form.hc_encargos_pct / 100) : 0)
+      + (form.hc_beneficios_mensais ?? 0)
+      + (form.hc_outros_mensais ?? 0)
+    : null
+  const economiaMensalHC = custoTotalHCUnitario !== null
+    ? custoTotalHCUnitario * (form.hc_quantidade ?? 1)
+    : null
+
+  // Economia mensal total dos indicadores automáticos
+  const economiaMensalIndicadores = (
+    (form.ganho_tarefa_ativo ? (economiaMensalGT ?? 0) : 0)
+    + (form.hc_ativo ? (economiaMensalHC ?? 0) : 0)
+  ) || null
 
   // Divergence check
   const divergencia =
@@ -758,6 +812,19 @@ export default function ViabilidadeEditor({ viabilidade, projetoId, canEdit, can
           meta_valor: form.meta_valor,
           tipo_indicador: form.tipo_indicador,
           economia_mensal_esperada: form.economia_mensal_esperada,
+          // Ganho Tarefa
+          ganho_tarefa_ativo: form.ganho_tarefa_ativo ? 1 : 0,
+          ganho_tarefa_salario: form.ganho_tarefa_salario,
+          ganho_tarefa_horas_antes: form.ganho_tarefa_horas_antes,
+          ganho_tarefa_horas_depois: form.ganho_tarefa_horas_depois,
+          ganho_tarefa_freq_mensal: form.ganho_tarefa_freq_mensal,
+          // HC
+          hc_ativo: form.hc_ativo ? 1 : 0,
+          hc_quantidade: form.hc_quantidade,
+          hc_salario_mensal: form.hc_salario_mensal,
+          hc_encargos_pct: form.hc_encargos_pct,
+          hc_beneficios_mensais: form.hc_beneficios_mensais,
+          hc_outros_mensais: form.hc_outros_mensais,
         }),
       })
       if (!res.ok) throw new Error((await res.json()).error ?? 'Erro ao salvar')
@@ -1167,6 +1234,184 @@ export default function ViabilidadeEditor({ viabilidade, projetoId, canEdit, can
                           />
                           <p className="text-xs text-gray-400 mt-1">Se informado, substitui o cálculo automático a partir da Economia Estimada.</p>
                         </div>
+                      </div>
+
+                      {/* Indicadores de Ganho */}
+                      <div className="mt-4 pt-4 border-t border-blue-100">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-blue-700 mb-3">
+                          Indicadores de Ganho (opcional)
+                        </p>
+
+                        {/* Ganho Tarefa */}
+                        <div className="mb-4">
+                          <label className="flex items-center gap-2 cursor-pointer mb-2">
+                            <input
+                              type="checkbox"
+                              checked={!!form.ganho_tarefa_ativo}
+                              onChange={e => setForm(f => ({ ...f, ganho_tarefa_ativo: e.target.checked }))}
+                            />
+                            <span className="text-sm font-medium text-gray-700">Ganho Tarefa — redução de tempo em atividade</span>
+                          </label>
+                          {form.ganho_tarefa_ativo && (
+                            <div className="ml-6 p-3 bg-blue-50 rounded-lg">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                                <div>
+                                  <label className="input-label">Salário Mensal (R$)</label>
+                                  <CurrencyInput
+                                    value={form.ganho_tarefa_salario}
+                                    onChange={v => setForm(f => ({ ...f, ganho_tarefa_salario: v }))}
+                                    placeholder="Ex.: 5000"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="input-label">Frequência Mensal (vezes/mês)</label>
+                                  <input
+                                    type="number" step="0.5" min="0.5" className="input w-full"
+                                    value={form.ganho_tarefa_freq_mensal ?? 1}
+                                    onChange={e => setForm(f => ({ ...f, ganho_tarefa_freq_mensal: e.target.value ? parseFloat(e.target.value) : 1 }))}
+                                    placeholder="Ex.: 22"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="input-label">Horas Atuais (por execução)</label>
+                                  <input
+                                    type="number" step="0.25" min="0" className="input w-full"
+                                    value={form.ganho_tarefa_horas_antes ?? ''}
+                                    onChange={e => setForm(f => ({ ...f, ganho_tarefa_horas_antes: e.target.value ? parseFloat(e.target.value) : null }))}
+                                    placeholder="Ex.: 2"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="input-label">Horas Previstas após projeto (por execução)</label>
+                                  <input
+                                    type="number" step="0.25" min="0" className="input w-full"
+                                    value={form.ganho_tarefa_horas_depois ?? ''}
+                                    onChange={e => setForm(f => ({ ...f, ganho_tarefa_horas_depois: e.target.value ? parseFloat(e.target.value) : null }))}
+                                    placeholder="Ex.: 0.5"
+                                  />
+                                </div>
+                              </div>
+                              {valorHoraGT !== null && (
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs bg-white rounded p-2 border border-blue-200">
+                                  <div>
+                                    <span className="text-gray-500">Valor/hora</span>
+                                    <p className="font-semibold text-gray-800">
+                                      R$ {valorHoraGT.toFixed(2).replace('.', ',')}
+                                    </p>
+                                    <p className="text-gray-400">salário ÷ 220h</p>
+                                  </div>
+                                  {horasEconomizadasGT !== null && (
+                                    <div>
+                                      <span className="text-gray-500">Horas economizadas/exec.</span>
+                                      <p className="font-semibold text-gray-800">
+                                        {horasEconomizadasGT.toFixed(2).replace('.', ',')}h
+                                      </p>
+                                    </div>
+                                  )}
+                                  {economiaMensalGT !== null && (
+                                    <div>
+                                      <span className="text-gray-500">Economia mensal</span>
+                                      <p className="font-semibold text-green-700">
+                                        R$ {economiaMensalGT.toFixed(2).replace('.', ',')}
+                                      </p>
+                                      <p className="text-gray-400">valor/h × horas × freq.</p>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* HC — Headcount */}
+                        <div>
+                          <label className="flex items-center gap-2 cursor-pointer mb-2">
+                            <input
+                              type="checkbox"
+                              checked={!!form.hc_ativo}
+                              onChange={e => setForm(f => ({ ...f, hc_ativo: e.target.checked }))}
+                            />
+                            <span className="text-sm font-medium text-gray-700">HC — redução de Headcount</span>
+                          </label>
+                          {form.hc_ativo && (
+                            <div className="ml-6 p-3 bg-blue-50 rounded-lg">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                                <div>
+                                  <label className="input-label">Quantidade de Colaboradores (HC)</label>
+                                  <input
+                                    type="number" step="1" min="1" className="input w-full"
+                                    value={form.hc_quantidade ?? 1}
+                                    onChange={e => setForm(f => ({ ...f, hc_quantidade: e.target.value ? parseInt(e.target.value) : 1 }))}
+                                    placeholder="Ex.: 2"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="input-label">Salário Mensal por Colaborador (R$)</label>
+                                  <CurrencyInput
+                                    value={form.hc_salario_mensal}
+                                    onChange={v => setForm(f => ({ ...f, hc_salario_mensal: v }))}
+                                    placeholder="Ex.: 4000"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="input-label">Encargos (%)</label>
+                                  <input
+                                    type="number" step="0.1" min="0" max="200" className="input w-full"
+                                    value={form.hc_encargos_pct ?? ''}
+                                    onChange={e => setForm(f => ({ ...f, hc_encargos_pct: e.target.value ? parseFloat(e.target.value) : null }))}
+                                    placeholder="Ex.: 68 (INSS+FGTS+férias)"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="input-label">Benefícios Mensais por Colaborador (R$)</label>
+                                  <CurrencyInput
+                                    value={form.hc_beneficios_mensais}
+                                    onChange={v => setForm(f => ({ ...f, hc_beneficios_mensais: v }))}
+                                    placeholder="VT + VR + plano de saúde..."
+                                  />
+                                </div>
+                                <div>
+                                  <label className="input-label">Outros Custos Mensais por Colaborador (R$)</label>
+                                  <CurrencyInput
+                                    value={form.hc_outros_mensais}
+                                    onChange={v => setForm(f => ({ ...f, hc_outros_mensais: v }))}
+                                    placeholder="Ex.: equipamentos, licenças..."
+                                  />
+                                </div>
+                              </div>
+                              {custoTotalHCUnitario !== null && (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs bg-white rounded p-2 border border-blue-200">
+                                  <div>
+                                    <span className="text-gray-500">Custo unitário/mês</span>
+                                    <p className="font-semibold text-gray-800">
+                                      R$ {custoTotalHCUnitario.toFixed(2).replace('.', ',')}
+                                    </p>
+                                    <p className="text-gray-400">salário + encargos + benefícios + outros</p>
+                                  </div>
+                                  {economiaMensalHC !== null && (
+                                    <div>
+                                      <span className="text-gray-500">Economia mensal total ({form.hc_quantidade ?? 1} HC)</span>
+                                      <p className="font-semibold text-green-700">
+                                        R$ {economiaMensalHC.toFixed(2).replace('.', ',')}
+                                      </p>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Resultado combinado dos indicadores */}
+                        {economiaMensalIndicadores !== null && economiaMensalIndicadores > 0 && (
+                          <div className="mt-3 p-2 bg-green-50 border border-green-200 rounded text-xs">
+                            <span className="text-gray-600">Economia mensal total dos indicadores: </span>
+                            <span className="font-semibold text-green-700">
+                              R$ {economiaMensalIndicadores.toFixed(2).replace('.', ',')}
+                            </span>
+                            <span className="text-gray-400 ml-2">— use este valor no campo "Economia Mensal Esperada" acima para acionar o gráfico de Payback.</span>
+                          </div>
+                        )}
                       </div>
 
                     </div>
