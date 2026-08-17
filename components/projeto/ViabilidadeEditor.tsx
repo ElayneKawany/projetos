@@ -554,8 +554,8 @@ export default function ViabilidadeEditor({ viabilidade, projetoId, canEdit, can
     tipo_indicador: (() => {
       const raw = viabilidade?.tipo_indicador ?? null
       if (!raw) {
-        // Backward compat: derive from boolean flags
-        const arr: string[] = ['ABSOLUTO']
+        // Backward compat: derive only from boolean flags — never default to ABSOLUTO
+        const arr: string[] = []
         if (viabilidade?.ganho_tarefa_ativo) arr.push('GANHO_TAREFA')
         if (viabilidade?.hc_ativo) arr.push('HC')
         return arr
@@ -1367,7 +1367,7 @@ export default function ViabilidadeEditor({ viabilidade, projetoId, canEdit, can
                                     const arr = tipoIndicadorArr.includes(opt.value)
                                       ? tipoIndicadorArr.filter(v => v !== opt.value)
                                       : [...tipoIndicadorArr, opt.value]
-                                    setForm(f => ({ ...f, tipo_indicador: arr.length ? arr : ['ABSOLUTO'] }))
+                                    setForm(f => ({ ...f, tipo_indicador: arr }))
                                   }}
                                   className={`text-xs px-3 py-1.5 rounded-full border font-medium transition-colors ${selected ? 'bg-megag-azul text-white border-megag-azul' : 'bg-white text-gray-600 border-gray-300 hover:border-megag-azul'}`}
                                 >
@@ -1377,35 +1377,39 @@ export default function ViabilidadeEditor({ viabilidade, projetoId, canEdit, can
                             })}
                           </div>
                         </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-3">
-                          <div>
-                            <label className="input-label">Valor Baseline (antes do projeto)</label>
-                            <input
-                              type="number" step="0.01" min="0" className="input w-full"
-                              value={form.baseline_valor ?? ''}
-                              onChange={e => setForm(f => ({ ...f, baseline_valor: e.target.value ? parseFloat(e.target.value) : null }))}
-                              placeholder={tipoIndicadorArr.includes('PERCENTUAL') ? 'Ex: 15 (%)' : 'Ex: 250'}
-                            />
-                          </div>
-                          <div>
-                            <label className="input-label">Valor Meta (alvo após projeto)</label>
-                            <input
-                              type="number" step="0.01" min="0" className="input w-full"
-                              value={form.meta_valor ?? ''}
-                              onChange={e => setForm(f => ({ ...f, meta_valor: e.target.value ? parseFloat(e.target.value) : null }))}
-                              placeholder={tipoIndicadorArr.includes('PERCENTUAL') ? 'Ex: 3 (%)' : 'Ex: 50'}
-                            />
-                          </div>
-                        </div>
-                        <div>
-                          <label className="input-label">Economia Mensal Esperada (R$)</label>
-                          <CurrencyInput
-                            value={form.economia_mensal_esperada}
-                            onChange={v => setForm(f => ({ ...f, economia_mensal_esperada: v }))}
-                            placeholder="Benefício financeiro mensal esperado"
-                          />
-                          <p className="text-xs text-gray-400 mt-1">Se informado, substitui o cálculo automático a partir da Economia Estimada.</p>
-                        </div>
+                        {(tipoIndicadorArr.includes('ABSOLUTO') || tipoIndicadorArr.includes('PERCENTUAL')) && (
+                          <>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-3">
+                              <div>
+                                <label className="input-label">Valor Baseline (antes do projeto)</label>
+                                <input
+                                  type="number" step="0.01" min="0" className="input w-full"
+                                  value={form.baseline_valor ?? ''}
+                                  onChange={e => setForm(f => ({ ...f, baseline_valor: e.target.value ? parseFloat(e.target.value) : null }))}
+                                  placeholder={tipoIndicadorArr.includes('PERCENTUAL') ? 'Ex: 15 (%)' : 'Ex: 250'}
+                                />
+                              </div>
+                              <div>
+                                <label className="input-label">Valor Meta (alvo após projeto)</label>
+                                <input
+                                  type="number" step="0.01" min="0" className="input w-full"
+                                  value={form.meta_valor ?? ''}
+                                  onChange={e => setForm(f => ({ ...f, meta_valor: e.target.value ? parseFloat(e.target.value) : null }))}
+                                  placeholder={tipoIndicadorArr.includes('PERCENTUAL') ? 'Ex: 3 (%)' : 'Ex: 50'}
+                                />
+                              </div>
+                            </div>
+                            <div>
+                              <label className="input-label">Economia Mensal Esperada (R$)</label>
+                              <CurrencyInput
+                                value={form.economia_mensal_esperada}
+                                onChange={v => setForm(f => ({ ...f, economia_mensal_esperada: v }))}
+                                placeholder="Benefício financeiro mensal esperado"
+                              />
+                              <p className="text-xs text-gray-400 mt-1">Se informado, substitui o cálculo automático a partir da Economia Estimada.</p>
+                            </div>
+                          </>
+                        )}
                       </div>
 
                       {/* Campos dinâmicos — abrem conforme seleção no Tipo de Indicador */}

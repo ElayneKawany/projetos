@@ -1397,6 +1397,9 @@ function UsuariosTab({
 }) {
   const [lista, setLista] = useState(initialUsuarios)
   const [busca, setBusca] = useState('')
+  const [filtroCargo, setFiltroCargo] = useState('')
+  const [filtroPerfil, setFiltroPerfil] = useState('')
+  const [filtroDiretoria, setFiltroDiretoria] = useState('')
   const [showModal, setShowModal] = useState(false)
   const [editId, setEditId] = useState<number | null>(null)
   const [confirmExcluirId, setConfirmExcluirId] = useState<number | null>(null)
@@ -1404,8 +1407,19 @@ function UsuariosTab({
   const [form, setForm] = useState({ nome: '', cpf: '', email: '', cargo: '', perfil_id: '2', diretoria_id: '', area_id: '', ativo: 1, senha: '' })
   const [loading, setLoading] = useState(false)
 
+  // Valores distintos para os dropdowns (derivados da lista real)
+  const cargosDistinct = [...new Set(lista.map(u => u.cargo).filter(Boolean))].sort() as string[]
+  const perfisDistinct = [...new Set(lista.map(u => u.perfil_codigo).filter(Boolean))].sort() as string[]
+  const diretoriasDistinct = [...new Set(lista.map(u => u.diretoria_nome).filter(Boolean))].sort() as string[]
+
   const filtrados = lista
-    .filter(u => !busca || u.nome.toLowerCase().includes(busca.toLowerCase()) || u.email.toLowerCase().includes(busca.toLowerCase()))
+    .filter(u => {
+      if (busca && !u.nome.toLowerCase().includes(busca.toLowerCase()) && !u.email.toLowerCase().includes(busca.toLowerCase())) return false
+      if (filtroCargo && u.cargo !== filtroCargo) return false
+      if (filtroPerfil && u.perfil_codigo !== filtroPerfil) return false
+      if (filtroDiretoria && u.diretoria_nome !== filtroDiretoria) return false
+      return true
+    })
     .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
 
   function abrirNovo() {
@@ -1517,14 +1531,51 @@ function UsuariosTab({
         )}
       </div>
 
-      <div className="px-4 pb-3">
-        <input
-          type="text"
-          placeholder="Pesquisar por nome ou e-mail…"
-          value={busca}
-          onChange={e => setBusca(e.target.value)}
-          className="input py-2 text-sm w-full max-w-xs"
-        />
+      <div className="px-4 pb-3 space-y-2">
+        <div className="flex flex-wrap gap-2 items-center">
+          <input
+            type="text"
+            placeholder="Pesquisar por nome ou e-mail…"
+            value={busca}
+            onChange={e => setBusca(e.target.value)}
+            className="input py-2 text-sm w-full max-w-xs"
+          />
+          <select
+            value={filtroCargo}
+            onChange={e => setFiltroCargo(e.target.value)}
+            className="input py-2 text-sm"
+          >
+            <option value="">Todos os cargos</option>
+            {cargosDistinct.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+          <select
+            value={filtroPerfil}
+            onChange={e => setFiltroPerfil(e.target.value)}
+            className="input py-2 text-sm"
+          >
+            <option value="">Todos os perfis</option>
+            {perfisDistinct.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+          <select
+            value={filtroDiretoria}
+            onChange={e => setFiltroDiretoria(e.target.value)}
+            className="input py-2 text-sm"
+          >
+            <option value="">Todas as diretorias</option>
+            {diretoriasDistinct.map(d => <option key={d} value={d}>{d}</option>)}
+          </select>
+          {(filtroCargo || filtroPerfil || filtroDiretoria) && (
+            <button
+              onClick={() => { setFiltroCargo(''); setFiltroPerfil(''); setFiltroDiretoria('') }}
+              className="text-xs px-2.5 py-2 rounded-lg font-medium bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 transition"
+            >
+              ✕ Limpar filtros
+            </button>
+          )}
+        </div>
+        {(filtroCargo || filtroPerfil || filtroDiretoria) && (
+          <p className="text-xs text-gray-400">{filtrados.length} usuário{filtrados.length !== 1 ? 's' : ''} encontrado{filtrados.length !== 1 ? 's' : ''}</p>
+        )}
       </div>
 
       <div className="overflow-x-auto">

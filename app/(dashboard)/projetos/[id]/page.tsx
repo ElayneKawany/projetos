@@ -111,8 +111,19 @@ export default async function ProjetoDetalhePage({
   `).all()
 
   const fasePrazos = db.prepare(
-    'SELECT status, data_limite FROM projeto_fase_prazo WHERE projeto_id = ?'
-  ).all(projeto.id) as { status: string; data_limite: string | null }[]
+    'SELECT status, data_limite, data_baseline FROM projeto_fase_prazo WHERE projeto_id = ?'
+  ).all(projeto.id) as { status: string; data_limite: string | null; data_baseline: string | null }[]
+
+  const fasePrazosHistorico = db.prepare(`
+    SELECT h.id, h.status, h.data_anterior, h.nova_data, h.justificativa,
+           h.usuario_nome, h.created_at
+    FROM projeto_fase_prazo_historico h
+    WHERE h.projeto_id = ?
+    ORDER BY h.created_at ASC
+  `).all(projeto.id) as {
+    id: number; status: string; data_anterior: string; nova_data: string
+    justificativa: string; usuario_nome: string | null; created_at: string
+  }[]
 
   // Workflows ativos por documento
   const tapAtualId = (tapVersoes[0] as { id?: number } | undefined)?.id
@@ -157,6 +168,7 @@ export default async function ProjetoDetalhePage({
       usuarios={usuarios as never[]}
       usuariosPmo={usuariosPmo as never[]}
       fasePrazos={fasePrazos}
+      fasePrazosHistorico={fasePrazosHistorico}
       workflowTap={workflowTap as never}
       workflowViabilidade={workflowViabilidade as never}
       workflowCronograma={workflowCronograma as never}

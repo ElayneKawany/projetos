@@ -12,13 +12,17 @@ export interface ProjetoFiltros {
   offset?: number
 }
 
-// Data de conclusão = maior data_fim entre todas as tarefas do cronograma ativo.
-// NULL quando não há cronograma cadastrado (exibido como "Sem cronograma" na UI).
+// Conclusão: em EXECUCAO usa o cronograma; demais fases usam o prazo da macro fase atual,
+// caindo para o cronograma quando nenhum prazo foi definido.
 const DATA_FIM_EFETIVA_SQL = `
-  (SELECT MAX(ct.data_fim)
-   FROM cronograma_tarefas ct
-   JOIN cronogramas c ON ct.cronograma_id = c.id
-   WHERE c.projeto_id = p.id AND (c.ativo IS NULL OR c.ativo = 1)) AS data_fim_efetiva`
+  CASE
+    WHEN p.status = 'EXECUCAO'
+      THEN (SELECT MAX(ct.data_fim) FROM cronograma_tarefas ct JOIN cronogramas c ON ct.cronograma_id = c.id WHERE c.projeto_id = p.id AND (c.ativo IS NULL OR c.ativo = 1))
+    ELSE COALESCE(
+      (SELECT pfp.data_limite FROM projeto_fase_prazo pfp WHERE pfp.projeto_id = p.id AND pfp.status = p.status),
+      (SELECT MAX(ct.data_fim) FROM cronograma_tarefas ct JOIN cronogramas c ON ct.cronograma_id = c.id WHERE c.projeto_id = p.id AND (c.ativo IS NULL OR c.ativo = 1))
+    )
+  END AS data_fim_efetiva`
 
 export const ProjetosRepository = {
   // ── Leitura simples ───────────────────────────────────────────────────────

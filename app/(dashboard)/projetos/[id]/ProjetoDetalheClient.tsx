@@ -103,7 +103,8 @@ interface Props {
   areas: { id: number; nome: string; diretoria_id: number }[]
   usuarios: { id: number; nome: string; cargo: string }[]
   usuariosPmo: { id: number; nome: string }[]
-  fasePrazos: { status: string; data_limite: string | null }[]
+  fasePrazos: { status: string; data_limite: string | null; data_baseline: string | null }[]
+  fasePrazosHistorico: { id: number; status: string; data_anterior: string; nova_data: string; justificativa: string; usuario_nome: string | null; created_at: string }[]
   workflowTap: import('@/lib/workflow').WorkflowAprovacao | null
   workflowViabilidade: import('@/lib/workflow').WorkflowAprovacao | null
   workflowCronograma: import('@/lib/workflow').WorkflowAprovacao | null
@@ -153,7 +154,7 @@ export default function ProjetoDetalheClient(props: Props) {
   const {
     projeto, historicoStatus, historicoPrioridade, historicoAlteracoes,
     configStatus, tapVersoes, triagem, viabilidadeData, cronogramaData, lancamentos,
-    capexRealizado, opexRealizado, usuarios, usuariosPmo, fasePrazos, session, aprovacoesProjeto,
+    capexRealizado, opexRealizado, usuarios, usuariosPmo, fasePrazos, fasePrazosHistorico, session, aprovacoesProjeto,
     workflowTap, workflowViabilidade, workflowCronograma, cronogramaAprovadoData,
     snapshotFinal, tarefasPendentes, initialTab,
   } = props
@@ -225,29 +226,72 @@ export default function ProjetoDetalheClient(props: Props) {
     for (const fp of fasePrazos) map[fp.status] = fp.data_limite ?? ''
     return map
   })
+  const [fasePrazosBloqueados, setFasePrazosBloqueados] = useState<Set<string>>(() => {
+    const s = new Set<string>()
+    for (const fp of fasePrazos) { if (fp.data_baseline) s.add(fp.status) }
+    return s
+  })
   const [salvandoPrazos, setSalvandoPrazos] = useState(false)
   const [erroPrazos, setErroPrazos]         = useState<string | null>(null)
   const [sucessoPrazos, setSucessoPrazos]   = useState(false)
 
+  // Reprogramação
+  const [showReprogramarModal, setShowReprogramarModal] = useState(false)
+  const [reprogramarStatus, setReprogramarStatus]       = useState<string | null>(null)
+  const [reprogramarFaseLabel, setReprogramarFaseLabel] = useState('')
+  const [novaDataReprogramar, setNovaDataReprogramar]   = useState('')
+  const [justificativaReprogramar, setJustificativaReprogramar] = useState('')
+  const [salvandoReprogramar, setSalvandoReprogramar]   = useState(false)
+  const [erroReprogramar, setErroReprogramar]           = useState<string | null>(null)
+
   async function handleSalvarPrazos() {
     setSalvandoPrazos(true); setErroPrazos(null); setSucessoPrazos(false)
     try {
-      const prazos = MACRO_FASES_PRAZO.map(f => ({
-        status: f.status,
-        data_limite: fasePrazosForm[f.status] || null,
-      }))
+      const prazos = MACRO_FASES_PRAZO
+        .filter(f => !fasePrazosBloqueados.has(f.status) && !!fasePrazosForm[f.status])
+        .map(f => ({ status: f.status, data_limite: fasePrazosForm[f.status] }))
+      if (!prazos.length) { setSalvandoPrazos(false); return }
       const res = await fetch(`/api/projetos/${projeto.id}/fase-prazo`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prazos }),
       })
       if (!res.ok) throw new Error((await res.json()).error ?? 'Erro ao salvar prazos')
+      // Lock saved phases locally
+      setFasePrazosBloqueados(prev => {
+        const next = new Set(prev)
+        for (const p of prazos) next.add(p.status)
+        return next
+      })
       setSucessoPrazos(true)
       setTimeout(() => setSucessoPrazos(false), 3000)
     } catch (e: unknown) {
       setErroPrazos(e instanceof Error ? e.message : 'Erro ao salvar prazos')
     } finally {
       setSalvandoPrazos(false)
+    }
+  }
+
+  async function handleReprogramar() {
+    if (!reprogramarStatus || !novaDataReprogramar || !justificativaReprogramar.trim()) return
+    setSalvandoReprogramar(true); setErroReprogramar(null)
+    try {
+      const res = await fetch(`/api/projetos/${projeto.id}/fase-prazo/reprogramar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: reprogramarStatus, nova_data: novaDataReprogramar, justificativa: justificativaReprogramar }),
+      })
+      if (!res.ok) throw new Error((await res.json()).error ?? 'Erro ao reprogramar')
+      setFasePrazosForm(f => ({ ...f, [reprogramarStatus]: novaDataReprogramar }))
+      setShowReprogramarModal(false)
+      setReprogramarStatus(null)
+      setNovaDataReprogramar('')
+      setJustificativaReprogramar('')
+      router.refresh()
+    } catch (e: unknown) {
+      setErroReprogramar(e instanceof Error ? e.message : 'Erro ao reprogramar')
+    } finally {
+      setSalvandoReprogramar(false)
     }
   }
 
@@ -972,42 +1016,142 @@ export default function ProjetoDetalheClient(props: Props) {
                       <div className="flex items-center gap-2">
                         {erroPrazos && <span className="text-xs text-red-600">{erroPrazos}</span>}
                         {sucessoPrazos && <span className="text-xs text-green-600">Salvo!</span>}
-                        <button
-                          className="btn-primary text-xs px-3 py-1"
-                          disabled={salvandoPrazos}
-                          onClick={handleSalvarPrazos}
-                        >
-                          {salvandoPrazos ? 'Salvando…' : 'Salvar prazos'}
-                        </button>
+                        {/* Show save button only if there are unlocked phases with dates */}
+                        {MACRO_FASES_PRAZO.some(f => !fasePrazosBloqueados.has(f.status) && !!fasePrazosForm[f.status]) && (
+                          <button
+                            className="btn-primary text-xs px-3 py-1"
+                            disabled={salvandoPrazos}
+                            onClick={handleSalvarPrazos}
+                          >
+                            {salvandoPrazos ? 'Salvando…' : 'Salvar prazos'}
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
                   <div className="divide-y divide-gray-100">
                     {MACRO_FASES_PRAZO.map(fase => {
                       const isCurrent = projeto.status === fase.status
+                      const faseIdx   = STATUS_ORDER.indexOf(fase.status as import('@/types').StatusProjeto)
+                      const projIdx   = STATUS_ORDER.indexOf(projeto.status)
+                      const isPast    = projIdx > faseIdx && faseIdx >= 0
+                      const bloqueada = fasePrazosBloqueados.has(fase.status)
+                      const dataLimite = fasePrazosForm[fase.status] ?? ''
+                      const today = new Date().toISOString().slice(0, 10)
+                      const atrasada = bloqueada && dataLimite && !isPast && dataLimite < today
+                      const historico = fasePrazosHistorico.filter(h => h.status === fase.status)
+
                       return (
-                        <div key={fase.status} className={`flex items-center justify-between gap-4 px-4 py-2.5 ${isCurrent ? 'bg-blue-50' : ''}`}>
-                          <span className={`text-sm ${isCurrent ? 'font-semibold text-megag-azul' : 'text-gray-700'}`}>
-                            {isCurrent && <span className="mr-1.5 text-xs font-bold text-megag-azul">▶</span>}
-                            {fase.label}
-                          </span>
-                          {podeGerenciar ? (
-                            <input
-                              type="date"
-                              className="input text-sm py-1 w-40"
-                              value={fasePrazosForm[fase.status] ?? ''}
-                              onChange={e => setFasePrazosForm(f => ({ ...f, [fase.status]: e.target.value }))}
-                            />
-                          ) : (
-                            <span className="text-sm text-gray-600">
-                              {fasePrazosForm[fase.status] ? fmtDataBR(fasePrazosForm[fase.status]) : '—'}
-                            </span>
+                        <div key={fase.status} className={`px-4 py-2.5 ${isCurrent ? 'bg-blue-50' : ''}`}>
+                          <div className="flex items-center justify-between gap-4">
+                            <div className="flex items-center gap-2 min-w-0">
+                              {isCurrent && <span className="text-xs font-bold text-megag-azul">▶</span>}
+                              <span className={`text-sm truncate ${isCurrent ? 'font-semibold text-megag-azul' : 'text-gray-700'}`}>
+                                {fase.label}
+                              </span>
+                              {atrasada && (
+                                <span className="shrink-0 text-xs font-semibold text-white bg-red-600 px-1.5 py-0.5 rounded">
+                                  ATRASADA
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              {bloqueada ? (
+                                <>
+                                  <span className={`text-sm ${atrasada ? 'text-red-600 font-semibold' : 'text-gray-700'}`}>
+                                    {dataLimite ? fmtDataBR(dataLimite) : '—'}
+                                  </span>
+                                  {podeGerenciar && (
+                                    <button
+                                      className="btn-ghost text-xs px-2 py-0.5 border border-gray-300"
+                                      onClick={() => {
+                                        setReprogramarStatus(fase.status)
+                                        setReprogramarFaseLabel(fase.label)
+                                        setNovaDataReprogramar(dataLimite)
+                                        setJustificativaReprogramar('')
+                                        setErroReprogramar(null)
+                                        setShowReprogramarModal(true)
+                                      }}
+                                    >
+                                      Reprogramar
+                                    </button>
+                                  )}
+                                </>
+                              ) : podeGerenciar ? (
+                                <input
+                                  type="date"
+                                  className="input text-sm py-1 w-40"
+                                  value={dataLimite}
+                                  onChange={e => setFasePrazosForm(f => ({ ...f, [fase.status]: e.target.value }))}
+                                />
+                              ) : (
+                                <span className="text-sm text-gray-600">
+                                  {dataLimite ? fmtDataBR(dataLimite) : '—'}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          {/* Reprogramação history */}
+                          {historico.length > 0 && (
+                            <div className="mt-1.5 ml-4 space-y-0.5">
+                              {historico.map(h => (
+                                <p key={h.id} className="text-xs text-gray-500">
+                                  Reprogramado de {fmtDataBR(h.data_anterior)} → {fmtDataBR(h.nova_data)}
+                                  {h.usuario_nome ? ` por ${h.usuario_nome}` : ''}: {h.justificativa}
+                                </p>
+                              ))}
+                            </div>
                           )}
                         </div>
                       )
                     })}
                   </div>
                 </div>
+
+                {/* Reprogramar modal */}
+                {showReprogramarModal && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+                    <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 space-y-4">
+                      <h3 className="font-bold text-lg text-megag-azul">Reprogramar prazo</h3>
+                      <p className="text-sm text-gray-600">Fase: <span className="font-semibold">{reprogramarFaseLabel}</span></p>
+                      <div>
+                        <label className="input-label">Nova data limite</label>
+                        <input
+                          type="date"
+                          className="input w-full"
+                          value={novaDataReprogramar}
+                          onChange={e => setNovaDataReprogramar(e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <label className="input-label">Justificativa <span className="text-red-500">*</span></label>
+                        <textarea
+                          className="input w-full min-h-[80px] resize-y"
+                          placeholder="Explique o motivo da reprogramação..."
+                          value={justificativaReprogramar}
+                          onChange={e => setJustificativaReprogramar(e.target.value)}
+                        />
+                      </div>
+                      {erroReprogramar && <p className="text-sm text-red-600">{erroReprogramar}</p>}
+                      <div className="flex gap-3 justify-end pt-2">
+                        <button
+                          className="btn-secondary"
+                          onClick={() => setShowReprogramarModal(false)}
+                          disabled={salvandoReprogramar}
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          className="btn-primary"
+                          onClick={handleReprogramar}
+                          disabled={salvandoReprogramar || !novaDataReprogramar || !justificativaReprogramar.trim()}
+                        >
+                          {salvandoReprogramar ? 'Salvando…' : 'Confirmar reprogramação'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </>
             )}
           </div>

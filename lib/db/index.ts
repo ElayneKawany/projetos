@@ -790,6 +790,20 @@ function runMigrations(db: Database.Database) {
   // Data limite do TAP — campo de controle no cabeçalho do TAP
   addCol('tap_versoes', 'data_limite_tap', 'TEXT')
 
+  // Prazos das Macro Fases — baseline (data original bloqueada) + histórico de reprogramações
+  addCol('projeto_fase_prazo', 'data_baseline', 'TEXT')
+  db.exec(`CREATE TABLE IF NOT EXISTS projeto_fase_prazo_historico (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    projeto_id    INTEGER NOT NULL REFERENCES projetos(id),
+    status        TEXT    NOT NULL,
+    data_anterior TEXT    NOT NULL,
+    nova_data     TEXT    NOT NULL,
+    justificativa TEXT    NOT NULL,
+    usuario_id    INTEGER REFERENCES usuarios(id),
+    usuario_nome  TEXT,
+    created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`)
+
   // Prazos das Macro Fases — data limite por fase por projeto
   db.exec(`CREATE TABLE IF NOT EXISTS projeto_fase_prazo (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,

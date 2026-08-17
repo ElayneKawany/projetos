@@ -8,7 +8,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   const { id } = await params
   const db = getDb()
   const rows = db.prepare(
-    'SELECT status, data_limite FROM projeto_fase_prazo WHERE projeto_id = ?'
+    'SELECT status, data_limite, data_baseline FROM projeto_fase_prazo WHERE projeto_id = ?'
   ).all(Number(id))
   return NextResponse.json(rows)
 }
@@ -24,17 +24,28 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (!Array.isArray(prazos)) return NextResponse.json({ error: 'prazos inválido' }, { status: 400 })
 
   const db = getDb()
-  const upsert = db.prepare(`
-    INSERT INTO projeto_fase_prazo (projeto_id, status, data_limite, usuario_id, updated_at)
-    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+
+  // Only upsert phases that have a date AND are not yet locked (no data_baseline)
+  const checkExisting = db.prepare(
+    'SELECT data_baseline FROM projeto_fase_prazo WHERE projeto_id = ? AND status = ?'
+  )
+  const insert = db.prepare(`
+    INSERT INTO projeto_fase_prazo (projeto_id, status, data_limite, data_baseline, usuario_id, updated_at)
+    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(projeto_id, status) DO UPDATE SET
-      data_limite = excluded.data_limite,
-      usuario_id  = excluded.usuario_id,
-      updated_at  = CURRENT_TIMESTAMP
+      data_limite  = excluded.data_limite,
+      data_baseline = excluded.data_baseline,
+      usuario_id   = excluded.usuario_id,
+      updated_at   = CURRENT_TIMESTAMP
+    WHERE projeto_fase_prazo.data_baseline IS NULL
   `)
+
   const tx = db.transaction(() => {
     for (const p of prazos) {
-      upsert.run(Number(id), p.status, p.data_limite || null, session.id)
+      if (!p.data_limite) continue  // skip phases with no date
+      const existing = checkExisting.get(Number(id), p.status) as { data_baseline: string | null } | undefined
+      if (existing?.data_baseline) continue  // already locked — cannot overwrite via PATCH
+      insert.run(Number(id), p.status, p.data_limite, p.data_limite, session.id)
     }
   })
   tx()
