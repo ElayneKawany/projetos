@@ -42,6 +42,19 @@ export default async function ProjetoDetalhePage({
     'SELECT * FROM viabilidade WHERE projeto_id = ? ORDER BY versao DESC LIMIT 1'
   ).get(projeto.id)
 
+  const capexProjecoes = viabilidadeData
+    ? db.prepare(`
+        SELECT id, viabilidade_id, projeto_id, periodo_ref, valor, descricao, usuario_nome, created_at
+        FROM viabilidade_capex_projecoes
+        WHERE viabilidade_id = ? AND projeto_id = ?
+        ORDER BY created_at ASC
+      `).all((viabilidadeData as { id: number }).id, projeto.id) as {
+        id: number; viabilidade_id: number; projeto_id: number
+        periodo_ref: string; valor: number; descricao: string
+        usuario_nome: string | null; created_at: string
+      }[]
+    : []
+
   const cronogramaData = db.prepare(
     'SELECT * FROM cronogramas WHERE projeto_id = ? ORDER BY versao DESC LIMIT 1'
   ).get(projeto.id) as { id: number } | undefined
@@ -157,6 +170,8 @@ export default async function ProjetoDetalhePage({
       tapVersoes={tapVersoes as never[]}
       triagem={triagem as never}
       viabilidadeData={viabilidadeData as never}
+      capexAprovado={projeto.capex_aprovado ?? null}
+      capexProjecoes={capexProjecoes}
       cronogramaData={cronogramaData as never}
       cronogramaTarefas={cronogramaTarefas as never[]}
       lancamentos={lancamentos as never[]}

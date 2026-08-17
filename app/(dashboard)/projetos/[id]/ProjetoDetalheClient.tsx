@@ -93,6 +93,8 @@ interface Props {
   tapVersoes: TapVersao[]
   triagem: { escopo_inicial: string; escopo_fora: string; beneficios: string; classificacao: string; complexidade: string } | null
   viabilidadeData: Record<string, unknown> | null
+  capexAprovado: number | null
+  capexProjecoes: { id: number; viabilidade_id: number; projeto_id: number; periodo_ref: string; valor: number; descricao: string; usuario_nome: string | null; created_at: string }[]
   cronogramaData: Record<string, unknown> | null
   cronogramaTarefas: Record<string, unknown>[]
   lancamentos: { id: number; tipo: string; descricao: string; valor: number; data_lancamento: string; criador_nome: string }[]
@@ -153,7 +155,7 @@ const TABS = [
 export default function ProjetoDetalheClient(props: Props) {
   const {
     projeto, historicoStatus, historicoPrioridade, historicoAlteracoes,
-    configStatus, tapVersoes, triagem, viabilidadeData, cronogramaData, lancamentos,
+    configStatus, tapVersoes, triagem, viabilidadeData, capexAprovado, capexProjecoes, cronogramaData, lancamentos,
     capexRealizado, opexRealizado, usuarios, usuariosPmo, fasePrazos, fasePrazosHistorico, session, aprovacoesProjeto,
     workflowTap, workflowViabilidade, workflowCronograma, cronogramaAprovadoData,
     snapshotFinal, tarefasPendentes, initialTab,
@@ -1363,6 +1365,8 @@ export default function ProjetoDetalheClient(props: Props) {
           <ViabilidadeEditor
             viabilidade={viabilidadeData as never}
             projetoId={projeto.id}
+            capexAprovado={capexAprovado}
+            capexProjecoes={capexProjecoes}
             canEdit={canEditArtefatos}
             canSubmit={podeSubmeter}
             workflow={workflowViabilidade as never}

@@ -74,9 +74,22 @@ interface ViabilidadeData {
   created_at: string
 }
 
+interface CapexProjecao {
+  id: number
+  viabilidade_id: number
+  projeto_id: number
+  periodo_ref: string
+  valor: number
+  descricao: string
+  usuario_nome: string | null
+  created_at: string
+}
+
 interface Props {
   viabilidade: ViabilidadeData | null
   projetoId: number
+  capexAprovado?: number | null
+  capexProjecoes?: CapexProjecao[]
   canEdit: boolean
   canSubmit: boolean
   workflow: WorkflowInfo | null
@@ -494,12 +507,50 @@ function OrcamentoTab({ projetoId, viabilidadeId, canEdit, viabilidadeStatus, vi
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function ViabilidadeEditor({ viabilidade, projetoId, canEdit, canSubmit, workflow, sessionUser, usuarios, onRefresh }: Props) {
+export default function ViabilidadeEditor({ viabilidade, projetoId, capexAprovado, capexProjecoes: capexProjecoesInit = [], canEdit, canSubmit, workflow, sessionUser, usuarios, onRefresh }: Props) {
   const [abaAtiva, setAbaAtiva] = useState<'viabilidade' | 'orcamento'>('viabilidade')
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showImportModal, setShowImportModal] = useState(false)
+
+  // CAPEX Projeções
+  const [capexProjecoes, setCapexProjecoes] = useState<CapexProjecao[]>(capexProjecoesInit)
+  const [showNovaProjecao, setShowNovaProjecao] = useState(false)
+  const [novaProjecao, setNovaProjecao] = useState({ periodo_ref: '', valor: '', descricao: '' })
+  const [salvandoProjecao, setSalvandoProjecao] = useState(false)
+  const [erroProjecao, setErroProjecao] = useState<string | null>(null)
+
+  async function handleSalvarProjecao() {
+    if (!viabilidade) return
+    const valor = parseFloat(novaProjecao.valor.replace(/\./g, '').replace(',', '.'))
+    if (!novaProjecao.periodo_ref) { setErroProjecao('Informe o período de referência.'); return }
+    if (isNaN(valor) || valor <= 0) { setErroProjecao('Informe um valor válido.'); return }
+    if (!novaProjecao.descricao.trim()) { setErroProjecao('Descrição é obrigatória.'); return }
+    setSalvandoProjecao(true); setErroProjecao(null)
+    try {
+      const res = await fetch(`/api/projetos/${projetoId}/viabilidade/${viabilidade.id}/capex-projecoes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ periodo_ref: novaProjecao.periodo_ref, valor, descricao: novaProjecao.descricao }),
+      })
+      if (!res.ok) { setErroProjecao((await res.json()).error ?? 'Erro ao salvar.'); return }
+      const data = await res.json()
+      const nova: CapexProjecao = {
+        id: data.id as number,
+        viabilidade_id: viabilidade.id,
+        projeto_id: projetoId,
+        periodo_ref: novaProjecao.periodo_ref,
+        valor,
+        descricao: novaProjecao.descricao,
+        usuario_nome: sessionUser.nome,
+        created_at: new Date().toISOString(),
+      }
+      setCapexProjecoes(prev => [...prev, nova])
+      setShowNovaProjecao(false)
+      setNovaProjecao({ periodo_ref: '', valor: '', descricao: '' })
+    } finally { setSalvandoProjecao(false) }
+  }
   const { baixar, baixando, erroDownload, setErroDownload } = useDownload()
 
   // Validação e modais de aprovação
@@ -1652,6 +1703,130 @@ export default function ViabilidadeEditor({ viabilidade, projetoId, canEdit, can
                 </SectionBlock>
 
                 <FinancialPremisesView v={viabilidade} />
+
+                {/* Histórico de Projeções de CAPEX */}
+                <div className="border border-gray-200 rounded-lg p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="font-semibold text-sm" style={{ color: '#003087' }}>Projeções de CAPEX</h4>
+                    {canEdit && (
+                      <button
+                        onClick={() => setShowNovaProjecao(true)}
+                        className="btn-secondary text-xs px-3 py-1"
+                      >
+                        + Nova Projeção
+                      </button>
+                    )}
+                  </div>
+
+                  {/* CAPEX Aprovado vs Projeção Atual */}
+                  <div className="grid grid-cols-2 gap-3 mb-4">
+                    <div className="bg-blue-50 rounded-lg p-3">
+                      <p className="text-xs text-gray-500 mb-1">CAPEX Aprovado (Baseline)</p>
+                      <p className="text-sm font-semibold text-megag-azul">{fBRL(capexAprovado ?? viabilidade.capex)}</p>
+                    </div>
+                    <div className="bg-amber-50 rounded-lg p-3">
+                      <p className="text-xs text-gray-500 mb-1">Projeção Atual</p>
+                      <p className="text-sm font-semibold text-amber-700">
+                        {capexProjecoes.length > 0
+                          ? fBRL(capexProjecoes[capexProjecoes.length - 1].valor)
+                          : fBRL(viabilidade.capex)}
+                      </p>
+                      {capexProjecoes.length > 0 && (
+                        <p className="text-xs text-gray-400 mt-0.5 truncate">
+                          {capexProjecoes[capexProjecoes.length - 1].periodo_ref}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Tabela de histórico */}
+                  {capexProjecoes.length === 0 ? (
+                    <p className="text-xs text-gray-400 text-center py-3">Nenhuma projeção registrada ainda.</p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="table-megag w-full text-xs">
+                        <thead>
+                          <tr>
+                            <th>Período</th>
+                            <th>Valor Projetado</th>
+                            <th>Referente a</th>
+                            <th>Usuário</th>
+                            <th>Data</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {capexProjecoes.map((p, i) => (
+                            <tr key={p.id} className={i === capexProjecoes.length - 1 ? 'bg-amber-50 font-medium' : ''}>
+                              <td>{p.periodo_ref}</td>
+                              <td className="tabular-nums">{fBRL(p.valor)}</td>
+                              <td className="max-w-xs truncate">{p.descricao}</td>
+                              <td>{p.usuario_nome ?? '—'}</td>
+                              <td className="whitespace-nowrap">
+                                {new Date(p.created_at).toLocaleDateString('pt-BR')}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {/* Modal nova projeção */}
+                  {showNovaProjecao && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+                      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4">
+                        <h3 className="font-semibold text-megag-preto">Nova Projeção de CAPEX</h3>
+                        {erroProjecao && <p className="text-sm text-red-600">{erroProjecao}</p>}
+                        <div>
+                          <label className="input-label">Período de referência *</label>
+                          <input
+                            type="month"
+                            className="input w-full"
+                            value={novaProjecao.periodo_ref}
+                            onChange={e => setNovaProjecao(p => ({ ...p, periodo_ref: e.target.value }))}
+                          />
+                          <p className="text-xs text-gray-400 mt-1">Ex.: Agosto/2026 → selecione 2026-08</p>
+                        </div>
+                        <div>
+                          <label className="input-label">Valor projetado (R$) *</label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            className="input w-full"
+                            placeholder="0,00"
+                            value={novaProjecao.valor}
+                            onChange={e => setNovaProjecao(p => ({ ...p, valor: e.target.value }))}
+                          />
+                        </div>
+                        <div>
+                          <label className="input-label">Descrição / Justificativa *</label>
+                          <textarea
+                            className="input w-full min-h-[80px]"
+                            placeholder="Ex.: Segunda etapa — aquisição de equipamentos adicionais"
+                            value={novaProjecao.descricao}
+                            onChange={e => setNovaProjecao(p => ({ ...p, descricao: e.target.value }))}
+                          />
+                        </div>
+                        <div className="flex gap-2 justify-end">
+                          <button
+                            onClick={() => { setShowNovaProjecao(false); setErroProjecao(null) }}
+                            className="btn-secondary text-sm"
+                          >
+                            Cancelar
+                          </button>
+                          <button
+                            onClick={handleSalvarProjecao}
+                            disabled={salvandoProjecao}
+                            className="btn-primary text-sm"
+                          >
+                            {salvandoProjecao ? 'Salvando…' : 'Salvar Projeção'}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
 
                 <SectionBlock number="4" title="Análise de Viabilidade">
                   <div className="space-y-4">

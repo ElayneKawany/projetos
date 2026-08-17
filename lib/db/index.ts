@@ -804,6 +804,19 @@ function runMigrations(db: Database.Database) {
     created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
   )`)
 
+  // Histórico de projeções de CAPEX do Estudo de Viabilidade
+  db.exec(`CREATE TABLE IF NOT EXISTS viabilidade_capex_projecoes (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    viabilidade_id INTEGER NOT NULL REFERENCES viabilidade(id),
+    projeto_id     INTEGER NOT NULL REFERENCES projetos(id),
+    periodo_ref    TEXT    NOT NULL,
+    valor          REAL    NOT NULL,
+    descricao      TEXT    NOT NULL,
+    usuario_id     INTEGER REFERENCES usuarios(id),
+    usuario_nome   TEXT,
+    created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`)
+
   // Prazos das Macro Fases — data limite por fase por projeto
   db.exec(`CREATE TABLE IF NOT EXISTS projeto_fase_prazo (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
