@@ -1404,6 +1404,7 @@ function UsuariosTab({
   const [editId, setEditId] = useState<number | null>(null)
   const [confirmExcluirId, setConfirmExcluirId] = useState<number | null>(null)
   const [podeInativar, setPodeInativar] = useState(false)
+  const [projetosVinculados, setProjetosVinculados] = useState<{ id: number; codigo: string; nome: string; diretoria_nome: string | null; status: string; papeis: string[] }[]>([])
   const [form, setForm] = useState({ nome: '', cpf: '', email: '', cargo: '', perfil_id: '2', diretoria_id: '', area_id: '', ativo: 1, senha: '' })
   const [loading, setLoading] = useState(false)
 
@@ -1485,6 +1486,11 @@ function UsuariosTab({
         if (data.pode_inativar) {
           setPodeInativar(true)
           onErro(data.error)
+          // Fetch linked projects to display in modal
+          try {
+            const r = await fetch(`/api/usuarios/${confirmExcluirId}/projetos-vinculados`)
+            if (r.ok) setProjetosVinculados((await r.json()).projetos ?? [])
+          } catch { /* ignore */ }
         } else {
           onErro(data.error || 'Erro ao excluir.')
           setConfirmExcluirId(null)
@@ -1494,6 +1500,7 @@ function UsuariosTab({
       onSucesso('Usuário excluído.')
       setConfirmExcluirId(null)
       setPodeInativar(false)
+      setProjetosVinculados([])
       await recarregar()
     } finally { setLoading(false) }
   }
@@ -1511,6 +1518,7 @@ function UsuariosTab({
       onSucesso('Usuário inativado.')
       setConfirmExcluirId(null)
       setPodeInativar(false)
+      setProjetosVinculados([])
       await recarregar()
     } finally { setLoading(false) }
   }
@@ -1720,19 +1728,54 @@ function UsuariosTab({
 
       {/* Modal confirmação exclusão */}
       {confirmExcluirId !== null && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm mx-4 p-6 space-y-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4 p-6 space-y-4">
             <h2 className="font-semibold text-megag-preto">Excluir Usuário</h2>
             <p className="text-sm text-megag-cinza-texto">
               Tem certeza que deseja excluir o usuário <strong className="text-megag-preto">{nomeUsuExcluir}</strong>?
-              {podeInativar && (
-                <span className="block mt-2 text-amber-700 font-medium">
-                  Este usuário possui vínculos com projetos ou registros do sistema e não pode ser excluído. Você pode apenas inativá-lo.
-                </span>
-              )}
             </p>
+            {podeInativar && (
+              <>
+                <p className="text-sm text-amber-700 font-medium">
+                  Este usuário possui vínculos com projetos ou registros do sistema e não pode ser excluído. Você pode apenas inativá-lo.
+                </p>
+                <div>
+                  <p className="text-xs font-semibold text-megag-azul uppercase tracking-wide mb-2">Projetos Vinculados</p>
+                  {projetosVinculados.length === 0 ? (
+                    <p className="text-xs text-gray-500">Nenhum projeto vinculado.</p>
+                  ) : (
+                    <div className="max-h-56 overflow-y-auto divide-y divide-gray-100 border border-gray-200 rounded-lg">
+                      {projetosVinculados.map(proj => (
+                        <a
+                          key={proj.id}
+                          href={`/projetos/${proj.id}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="block px-3 py-2.5 hover:bg-blue-50 transition-colors"
+                        >
+                          <p className="text-sm font-medium text-megag-azul">
+                            {proj.codigo} — {proj.nome}
+                          </p>
+                          <p className="text-xs text-gray-500 mt-0.5">
+                            {proj.diretoria_nome ?? 'Sem diretoria'}
+                          </p>
+                          <div className="flex flex-wrap gap-1.5 mt-1">
+                            <span className="text-xs text-gray-600">Status: <span className="font-medium">{proj.status}</span></span>
+                            {proj.papeis.map(p => (
+                              <span key={p} className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">
+                                {p}
+                              </span>
+                            ))}
+                          </div>
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
             <div className="flex gap-2 justify-end flex-wrap">
-              <button onClick={() => { setConfirmExcluirId(null); setPodeInativar(false) }} className="btn-secondary text-sm">Cancelar</button>
+              <button onClick={() => { setConfirmExcluirId(null); setPodeInativar(false); setProjetosVinculados([]) }} className="btn-secondary text-sm">Cancelar</button>
               {podeInativar ? (
                 <button onClick={inativarUsuario} disabled={loading} className="btn-primary text-sm bg-amber-600 hover:bg-amber-700">
                   {loading ? 'Inativando…' : 'Inativar'}
