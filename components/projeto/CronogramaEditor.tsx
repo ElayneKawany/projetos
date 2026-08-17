@@ -2392,27 +2392,39 @@ export default function CronogramaEditor({
                                   </button>
                                 </div>
                               ) : (
-                                !concluida && (
-                                  <div className="flex flex-col items-end gap-1">
+                                <div className="flex flex-col items-end gap-1">
+                                  {canEdit && t.id && !isVersaoHistorica && (
                                     <button
-                                      className="text-xs text-green-700 border border-green-200 rounded px-2 py-0.5 hover:bg-green-50 disabled:opacity-50"
-                                      disabled={isConcluindo || !t.id}
-                                      onClick={() => t.id && handleConcluirTarefa(t.id)}
+                                      type="button"
+                                      className="text-xs text-blue-600 hover:text-blue-800 border border-blue-200 rounded px-1.5 py-0.5"
+                                      title="Adicionar subtarefa a esta tarefa"
+                                      onClick={() => { setSubtarefaDialogTarefa({ id: t.id!, nome: t.nome }); setShowSubtarefaDialog(true) }}
                                     >
-                                      {isConcluindo ? '…' : 'Concluir'}
+                                      + Sub
                                     </button>
-                                    {canEdit && t.id && reprogramarId !== t.id && (
+                                  )}
+                                  {!concluida && (
+                                    <>
                                       <button
-                                        type="button"
-                                        className="text-[10px] text-orange-600 border border-orange-200 rounded px-1.5 py-0.5 hover:bg-orange-50"
-                                        title="Informar nova data de entrega (mantém linha de base)"
-                                        onClick={() => { setReprogramarId(t.id!); setNovaDataRepr('') }}
+                                        className="text-xs text-green-700 border border-green-200 rounded px-2 py-0.5 hover:bg-green-50 disabled:opacity-50"
+                                        disabled={isConcluindo || !t.id}
+                                        onClick={() => t.id && handleConcluirTarefa(t.id)}
                                       >
-                                        Reprog.
+                                        {isConcluindo ? '…' : 'Concluir'}
                                       </button>
-                                    )}
-                                  </div>
-                                )
+                                      {canEdit && t.id && reprogramarId !== t.id && (
+                                        <button
+                                          type="button"
+                                          className="text-[10px] text-orange-600 border border-orange-200 rounded px-1.5 py-0.5 hover:bg-orange-50"
+                                          title="Informar nova data de entrega (mantém linha de base)"
+                                          onClick={() => { setReprogramarId(t.id!); setNovaDataRepr('') }}
+                                        >
+                                          Reprog.
+                                        </button>
+                                      )}
+                                    </>
+                                  )}
+                                </div>
                               )}
                             </td>
                           </tr>
