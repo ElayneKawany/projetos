@@ -1603,7 +1603,7 @@ export default function ViabilidadeEditor({ viabilidade, projetoId, capexAprovad
                         <div className="mt-3 p-2 bg-green-50 border border-green-200 rounded text-xs">
                           <span className="text-gray-600">Economia mensal total dos indicadores: </span>
                           <span className="font-semibold text-green-700">R$ {economiaMensalIndicadores.toFixed(2).replace('.', ',')}</span>
-                          <span className="text-gray-400 ml-2">— use este valor no campo "Economia Mensal Esperada" acima para acionar o gráfico de Payback.</span>
+                          <span className="text-gray-400 ml-2">— use este valor no campo &ldquo;Economia Mensal Esperada&rdquo; acima para acionar o gráfico de Payback.</span>
                         </div>
                       )}
 
