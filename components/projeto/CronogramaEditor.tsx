@@ -750,6 +750,10 @@ export default function CronogramaEditor({
   const [novaDataRepr, setNovaDataRepr]             = useState('')
   const [salvandoRepr, setSalvandoRepr]             = useState(false)
 
+  // Exclusão de item em RASCUNHO
+  const [confirmDeleteItem, setConfirmDeleteItem]   = useState<{ id: number; nivel: string; nome: string; filhos: number } | null>(null)
+  const [deletandoItem, setDeletandoItem]           = useState(false)
+
   // Erros detalhados por tarefa — recalculado dinamicamente conforme campos são preenchidos
   const tarefasComErroDetalhado = useMemo(() => {
     if (!validacaoErros.length) return []
@@ -1045,6 +1049,30 @@ export default function CronogramaEditor({
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Erro ao reprogramar.')
     } finally { setSalvandoRepr(false) }
+  }
+
+  // ── Exclusão de item (apenas RASCUNHO) ────────────────────────────────────
+
+  async function handleExcluirItem(id: number, nivel: string, nome: string, comFilhos: boolean) {
+    if (!cronograma) return
+    setDeletandoItem(true)
+    setError(null)
+    try {
+      const url = `/api/projetos/${projetoId}/cronograma/${cronograma.id}/tarefas/${id}${comFilhos ? '?comFilhos=true' : ''}`
+      const res = await fetch(url, { method: 'DELETE' })
+      if (!res.ok) {
+        const d = await res.json()
+        if (d.error === 'item_tem_filhos') {
+          setConfirmDeleteItem({ id, nivel, nome, filhos: d.filhos })
+          return
+        }
+        throw new Error(d.error ?? 'Erro ao excluir.')
+      }
+      setConfirmDeleteItem(null)
+      await fetchCronograma()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Erro ao excluir item.')
+    } finally { setDeletandoItem(false) }
   }
 
   // ── Edição inline ──────────────────────────────────────────────────────────
@@ -1478,8 +1506,9 @@ export default function CronogramaEditor({
     return <div className="card p-6 text-center text-sm text-gray-500">Carregando cronograma…</div>
   }
 
-  const isBaseline = cronograma?.is_baseline === 1
-  const fases      = tarefas.filter(t => t.nivel === 'FASE')
+  const isBaseline  = cronograma?.is_baseline === 1
+  const isRascunho  = cronograma?.status === 'RASCUNHO'
+  const fases       = tarefas.filter(t => t.nivel === 'FASE')
   const wbsPreview = calcWBSPreview(linhas)
 
   return (
@@ -1976,6 +2005,24 @@ export default function CronogramaEditor({
                                       onClick={() => { setReprogramarId(t.id!); setNovaDataRepr(''); setNovaDataInicioRepr('') }}
                                     >Reprog.</button>
                                   )}
+                                  {isRascunho && !isVersaoHistorica && (
+                                    <button
+                                      type="button"
+                                      className="text-[10px] text-red-500 border border-red-200 rounded px-1.5 py-0.5 hover:bg-red-50"
+                                      title="Excluir esta fase"
+                                      onClick={() => setConfirmDeleteItem({ id: t.id!, nivel: 'FASE', nome: t.nome, filhos: summary.totalFilhos })}
+                                    >Excluir</button>
+                                  )}
+                                </div>
+                              )}
+                              {!editando && summary.totalFilhos > 0 && isRascunho && canEdit && t.id && !isVersaoHistorica && (
+                                <div className="flex flex-col items-end gap-1">
+                                  <button
+                                    type="button"
+                                    className="text-[10px] text-red-500 border border-red-200 rounded px-1.5 py-0.5 hover:bg-red-50"
+                                    title="Excluir esta fase e seus itens"
+                                    onClick={() => setConfirmDeleteItem({ id: t.id!, nivel: 'FASE', nome: t.nome, filhos: summary.totalFilhos })}
+                                  >Excluir</button>
                                 </div>
                               )}
                             </td>
@@ -2122,25 +2169,35 @@ export default function CronogramaEditor({
                                     className="text-xs text-red-400 hover:text-red-600 border border-red-200 rounded px-1.5 py-0.5"
                                     onClick={() => handleRemoverItem(i)}>✕</button>
                                 ) : (
-                                  !subConcluida && (
-                                    <div className="flex flex-col items-end gap-1">
-                                      <button
-                                        className="text-xs text-green-700 border border-green-200 rounded px-2 py-0.5 hover:bg-green-50 disabled:opacity-50"
-                                        disabled={isConcluindoSub || !t.id}
-                                        onClick={() => t.id && handleConcluirTarefa(t.id)}
-                                      >
-                                        {isConcluindoSub ? '…' : 'Concluir'}
-                                      </button>
-                                      {canEdit && t.id && reprogramarId !== t.id && (
+                                  <div className="flex flex-col items-end gap-1">
+                                    {!subConcluida && (
+                                      <>
                                         <button
-                                          type="button"
-                                          className="text-[10px] text-orange-600 border border-orange-200 rounded px-1.5 py-0.5 hover:bg-orange-50"
-                                          title="Informar nova data de entrega"
-                                          onClick={() => { setReprogramarId(t.id!); setNovaDataRepr('') }}
-                                        >Reprog.</button>
-                                      )}
-                                    </div>
-                                  )
+                                          className="text-xs text-green-700 border border-green-200 rounded px-2 py-0.5 hover:bg-green-50 disabled:opacity-50"
+                                          disabled={isConcluindoSub || !t.id}
+                                          onClick={() => t.id && handleConcluirTarefa(t.id)}
+                                        >
+                                          {isConcluindoSub ? '…' : 'Concluir'}
+                                        </button>
+                                        {canEdit && t.id && reprogramarId !== t.id && (
+                                          <button
+                                            type="button"
+                                            className="text-[10px] text-orange-600 border border-orange-200 rounded px-1.5 py-0.5 hover:bg-orange-50"
+                                            title="Informar nova data de entrega"
+                                            onClick={() => { setReprogramarId(t.id!); setNovaDataRepr('') }}
+                                          >Reprog.</button>
+                                        )}
+                                      </>
+                                    )}
+                                    {isRascunho && canEdit && t.id && !isVersaoHistorica && (
+                                      <button
+                                        type="button"
+                                        className="text-[10px] text-red-500 border border-red-200 rounded px-1.5 py-0.5 hover:bg-red-50"
+                                        title="Excluir esta subtarefa"
+                                        onClick={() => setConfirmDeleteItem({ id: t.id!, nivel: 'SUBTAREFA', nome: t.nome, filhos: 0 })}
+                                      >Excluir</button>
+                                    )}
+                                  </div>
                                 )}
                               </td>
                             </tr>
@@ -2424,6 +2481,17 @@ export default function CronogramaEditor({
                                       )}
                                     </>
                                   )}
+                                  {isRascunho && canEdit && t.id && !isVersaoHistorica && (() => {
+                                    const nSub = tarefas.filter(s => s.nivel === 'SUBTAREFA' && s.parent_id === t.id).length
+                                    return (
+                                      <button
+                                        type="button"
+                                        className="text-[10px] text-red-500 border border-red-200 rounded px-1.5 py-0.5 hover:bg-red-50"
+                                        title="Excluir esta tarefa"
+                                        onClick={() => setConfirmDeleteItem({ id: t.id!, nivel: 'TAREFA', nome: t.nome, filhos: nSub })}
+                                      >Excluir</button>
+                                    )
+                                  })()}
                                 </div>
                               )}
                             </td>
@@ -2960,6 +3028,45 @@ export default function CronogramaEditor({
         usuarios={usuarios}
         submitting={submitting}
       />
+
+      {/* Modal: Confirmar exclusão de item (apenas RASCUNHO) */}
+      {confirmDeleteItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-md">
+            <h3 className="font-semibold text-gray-900 mb-2">Excluir {confirmDeleteItem.nivel === 'FASE' ? 'fase' : confirmDeleteItem.nivel === 'TAREFA' ? 'tarefa' : 'subtarefa'}</h3>
+            {confirmDeleteItem.filhos > 0 ? (
+              <>
+                <p className="text-sm text-gray-600 mb-1">
+                  <strong>&ldquo;{confirmDeleteItem.nome}&rdquo;</strong> possui <strong>{confirmDeleteItem.filhos} item(ns) vinculado(s)</strong>.
+                </p>
+                <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-4">
+                  Ao confirmar, o item e todos os seus filhos serão excluídos permanentemente do rascunho.
+                </p>
+              </>
+            ) : (
+              <p className="text-sm text-gray-600 mb-4">
+                Tem certeza que deseja excluir <strong>&ldquo;{confirmDeleteItem.nome}&rdquo;</strong>? Esta ação não pode ser desfeita.
+              </p>
+            )}
+            <div className="flex gap-2 justify-end">
+              <button
+                className="btn-ghost text-sm text-gray-500"
+                disabled={deletandoItem}
+                onClick={() => setConfirmDeleteItem(null)}
+              >
+                Cancelar
+              </button>
+              <button
+                className="btn-primary text-sm bg-red-600 hover:bg-red-700 border-red-600"
+                disabled={deletandoItem}
+                onClick={() => handleExcluirItem(confirmDeleteItem.id, confirmDeleteItem.nivel, confirmDeleteItem.nome, confirmDeleteItem.filhos > 0)}
+              >
+                {deletandoItem ? 'Excluindo…' : confirmDeleteItem.filhos > 0 ? `Excluir item e ${confirmDeleteItem.filhos} filho(s)` : 'Excluir'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Dialog: Esta tarefa não possui subtarefas */}
       {showSubtarefaDialog && subtarefaDialogTarefa && (
