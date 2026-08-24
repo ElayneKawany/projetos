@@ -161,7 +161,7 @@ export default function ProjetoDetalheClient(props: Props) {
     snapshotFinal, tarefasPendentes, initialTab,
   } = props
 
-  const sessionUser = { id: session.id, nome: session.nome }
+  const sessionUser = { id: session.id, nome: session.nome, perfil: session.perfil }
 
   const router = useRouter()
   const [abaAtiva, setAbaAtiva] = useState(() => resolveInitialTab(initialTab))

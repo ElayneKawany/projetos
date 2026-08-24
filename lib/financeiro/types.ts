@@ -11,8 +11,13 @@ export interface CriarContratoInput {
   tipo_contrato?: TipoContrato
   natureza_financeira: NaturezaFinanceira
   descricao_servico?: string | null
+  /** Critério de enquadramento (ex.: "Aço e Cordoalha"). Omitido/null = sem restrição de categoria. */
+  categoria?: string | null
   valor_aprovado: number
   observacao?: string | null
+  /** Projeção de pagamentos — 'NENHUMA' (default) | 'PARCELADO'. Nunca é pagamento real. */
+  tipo_projecao?: 'NENHUMA' | 'PARCELADO'
+  parcelas_projecao?: Array<{ numero: number; competencia: string; valor_projetado: number }>
 }
 
 export interface AtualizarContratoInput {
@@ -21,13 +26,15 @@ export interface AtualizarContratoInput {
   tipo_contrato?: TipoContrato
   natureza_financeira?: NaturezaFinanceira
   descricao_servico?: string | null
+  categoria?: string | null
   valor_aprovado?: number
   status?: StatusContrato
   observacao?: string | null
 }
 
 export interface CriarPagamentoInput {
-  contrato_id: number
+  /** null = ainda não enquadrado (AGUARDANDO_ANALISE ou SEM_CONTRATO) — ver lib/financeiro/enquadramento.ts */
+  contrato_id: number | null
   projeto_id: number
   numero_documento?: string | null
   tipo_documento?: TipoDocumentoFinanceiro
@@ -37,6 +44,10 @@ export interface CriarPagamentoInput {
   valor_pago: number
   observacao?: string | null
   arquivo_path?: string | null
+  /** Fornecedor que emitiu este lançamento — usado pelo enquadramento; omitido/null em fluxos onde o contrato já define o fornecedor. */
+  fornecedor?: string | null
+  enquadramento_status?: 'AUTOMATICO' | 'AGUARDANDO_ANALISE' | 'SEM_CONTRATO' | 'MANUAL' | null
+  contratos_candidatos?: number[] | null
 }
 
 export interface AtualizarPagamentoInput {

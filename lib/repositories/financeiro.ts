@@ -517,7 +517,7 @@ export const FinanceiroRepository = {
     return db.queryMany(
       `SELECT id, projeto_id, numero_contrato, contratado, tipo_contrato,
               COALESCE(natureza_financeira, 'CAPEX') AS natureza_financeira,
-              descricao_servico, valor_aprovado, status,
+              descricao_servico, categoria, valor_aprovado, status,
               COALESCE(observacao, observacoes) AS observacao,
               ativo, criado_por, created_at, updated_at
        FROM financeiro_contratos
@@ -530,7 +530,7 @@ export const FinanceiroRepository = {
     return db.queryOne(
       `SELECT id, projeto_id, numero_contrato, contratado, tipo_contrato,
               COALESCE(natureza_financeira, 'CAPEX') AS natureza_financeira,
-              descricao_servico, valor_aprovado, status,
+              descricao_servico, categoria, valor_aprovado, status,
               COALESCE(observacao, observacoes) AS observacao,
               ativo, criado_por, created_at, updated_at
        FROM financeiro_contratos WHERE id = ?`,
@@ -541,26 +541,46 @@ export const FinanceiroRepository = {
   insertContratoCompleto(dados: {
     projeto_id: number; numero_contrato?: string | null; contratado: string
     tipo_contrato?: string; natureza_financeira: string; descricao_servico?: string | null
-    valor_aprovado: number; observacao?: string | null; criado_por: number
+    categoria?: string | null; valor_aprovado: number; observacao?: string | null; criado_por: number
+    tipo_projecao?: string | null
   }): number | bigint {
     const result = db.execute(
       `INSERT INTO financeiro_contratos
          (projeto_id, numero_contrato, contratado, tipo_contrato, natureza_financeira,
-          descricao_servico, valor_aprovado, status, observacao, criado_por, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'ATIVO', ?, ?, datetime('now'), datetime('now'))`,
+          descricao_servico, categoria, valor_aprovado, status, observacao, criado_por, created_at, updated_at, tipo_projecao)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ATIVO', ?, ?, datetime('now'), datetime('now'), ?)`,
       [
         dados.projeto_id, dados.numero_contrato ?? null, dados.contratado,
         dados.tipo_contrato ?? 'SERVICO', dados.natureza_financeira,
-        dados.descricao_servico ?? null, dados.valor_aprovado,
-        dados.observacao ?? null, dados.criado_por,
+        dados.descricao_servico ?? null, dados.categoria ?? null, dados.valor_aprovado,
+        dados.observacao ?? null, dados.criado_por, dados.tipo_projecao ?? 'NENHUMA',
       ]
     )
     return result.lastInsertRowid
   },
 
+  insertProjecaoParcela(dados: {
+    contrato_id: number; numero: number; competencia: string; valor_projetado: number
+  }): void {
+    db.execute(
+      `INSERT INTO financeiro_contrato_projecao_parcelas (contrato_id, numero, competencia, valor_projetado)
+       VALUES (?, ?, ?, ?)`,
+      [dados.contrato_id, dados.numero, dados.competencia, dados.valor_projetado]
+    )
+  },
+
+  findProjecaoParcelasByContratoId(contratoId: number): Array<{
+    id: number; contrato_id: number; numero: number; competencia: string; valor_projetado: number
+  }> {
+    return db.queryMany(
+      `SELECT * FROM financeiro_contrato_projecao_parcelas WHERE contrato_id = ? ORDER BY numero ASC`,
+      [contratoId]
+    )
+  },
+
   updateContratoCompleto(id: number, dados: {
     numero_contrato?: string | null; contratado?: string; tipo_contrato?: string
-    natureza_financeira?: string; descricao_servico?: string | null
+    natureza_financeira?: string; descricao_servico?: string | null; categoria?: string | null
     valor_aprovado?: number; status?: string; observacao?: string | null
   }): void {
     db.execute(
@@ -570,6 +590,7 @@ export const FinanceiroRepository = {
          tipo_contrato       = COALESCE(?, tipo_contrato),
          natureza_financeira = COALESCE(?, natureza_financeira),
          descricao_servico   = COALESCE(?, descricao_servico),
+         categoria           = COALESCE(?, categoria),
          valor_aprovado      = COALESCE(?, valor_aprovado),
          status              = COALESCE(?, status),
          observacao          = COALESCE(?, observacao),
@@ -577,7 +598,7 @@ export const FinanceiroRepository = {
        WHERE id = ?`,
       [
         dados.numero_contrato, dados.contratado, dados.tipo_contrato,
-        dados.natureza_financeira, dados.descricao_servico, dados.valor_aprovado,
+        dados.natureza_financeira, dados.descricao_servico, dados.categoria, dados.valor_aprovado,
         dados.status, dados.observacao, id,
       ]
     )
@@ -605,7 +626,7 @@ export const FinanceiroRepository = {
     return db.queryMany(
       `SELECT id, projeto_id, numero_contrato, contratado, tipo_contrato,
               COALESCE(natureza_financeira, 'CAPEX') AS natureza_financeira,
-              descricao_servico, valor_aprovado, status,
+              descricao_servico, categoria, valor_aprovado, status,
               COALESCE(observacao, observacoes) AS observacao,
               ativo, criado_por, created_at, updated_at
        FROM financeiro_contratos
@@ -618,7 +639,7 @@ export const FinanceiroRepository = {
     return db.queryMany(
       `SELECT id, contrato_id, projeto_id, numero_documento, tipo_documento, nota_fiscal,
               data_pagamento, competencia, valor_pago, observacao, arquivo_path,
-              ativo, criado_por, created_at
+              ativo, criado_por, created_at, fornecedor, enquadramento_status, contratos_candidatos
        FROM financeiro_pagamentos
        WHERE projeto_id = ? AND contrato_id IS NOT NULL AND (ativo IS NULL OR ativo = 1)
        ORDER BY data_pagamento ASC`,
@@ -661,7 +682,7 @@ export const FinanceiroRepository = {
   findPagamentosPorContrato(projetoId: number, contratoId?: number): Record<string, unknown>[] {
     const sel = `SELECT id, contrato_id, projeto_id, numero_documento, tipo_documento, nota_fiscal,
                         data_pagamento, competencia, valor_pago, observacao, arquivo_path,
-                        ativo, criado_por, created_at
+                        ativo, criado_por, created_at, fornecedor, enquadramento_status, contratos_candidatos
                  FROM financeiro_pagamentos`
     if (contratoId !== undefined) {
       return db.queryMany(
@@ -681,9 +702,23 @@ export const FinanceiroRepository = {
     return db.queryOne(
       `SELECT id, contrato_id, projeto_id, numero_documento, tipo_documento, nota_fiscal,
               data_pagamento, competencia, valor_pago, observacao, arquivo_path,
-              ativo, criado_por, created_at
+              ativo, criado_por, created_at, fornecedor, enquadramento_status, contratos_candidatos
        FROM financeiro_pagamentos WHERE id = ?`,
       [id]
+    )
+  },
+
+  /** Pagamentos sem contrato vinculado (AGUARDANDO_ANALISE ou SEM_CONTRATO) — para as seções de enquadramento pendente. */
+  findPagamentosSemContrato(projetoId: number): Record<string, unknown>[] {
+    return db.queryMany(
+      `SELECT id, contrato_id, projeto_id, numero_documento, tipo_documento, nota_fiscal,
+              data_pagamento, competencia, valor_pago, observacao, arquivo_path,
+              ativo, criado_por, created_at, fornecedor, enquadramento_status, contratos_candidatos
+       FROM financeiro_pagamentos
+       WHERE projeto_id = ? AND contrato_id IS NULL AND (ativo IS NULL OR ativo = 1)
+         AND enquadramento_status IN ('AGUARDANDO_ANALISE', 'SEM_CONTRATO')
+       ORDER BY created_at DESC`,
+      [projetoId]
     )
   },
 
@@ -694,24 +729,53 @@ export const FinanceiroRepository = {
     )
   },
 
+  /**
+   * Contratos compatíveis com um lançamento — usados pelo enquadramento (lib/financeiro/enquadramento.ts).
+   * Uma única query filtrada por projeto/status/categoria/fornecedor/saldo — sem busca textual pesada.
+   * Fornecedor: contrato com `contratado` vazio aceita qualquer fornecedor; senão exige igualdade exata.
+   * Saldo: contrato precisa ter saldo suficiente para cobrir o valor do lançamento.
+   */
+  findContratosCompativeis(criterios: {
+    projeto_id: number; categoria: string | null; fornecedor: string; valor: number
+  }): Record<string, unknown>[] {
+    return db.queryMany(
+      `SELECT fc.id, fc.projeto_id, fc.numero_contrato, fc.contratado, fc.tipo_contrato,
+              COALESCE(fc.natureza_financeira, 'CAPEX') AS natureza_financeira,
+              fc.descricao_servico, fc.categoria, fc.valor_aprovado, fc.status,
+              COALESCE(fc.observacao, fc.observacoes) AS observacao,
+              fc.ativo, fc.criado_por, fc.created_at, fc.updated_at
+       FROM financeiro_contratos fc
+       WHERE fc.projeto_id = ? AND fc.ativo = 1 AND fc.status = 'ATIVO'
+         AND (fc.categoria IS NULL OR fc.categoria = ?)
+         AND (fc.contratado = '' OR fc.contratado = ?)
+         AND fc.valor_aprovado - COALESCE((
+               SELECT SUM(fp.valor_pago) FROM financeiro_pagamentos fp
+               WHERE fp.contrato_id = fc.id AND (fp.ativo IS NULL OR fp.ativo = 1)
+             ), 0) >= ?
+       ORDER BY fc.created_at ASC`,
+      [criterios.projeto_id, criterios.categoria, criterios.fornecedor, criterios.valor]
+    )
+  },
+
   insertPagamentoCompleto(dados: {
-    contrato_id: number; projeto_id: number; numero_documento?: string | null
+    contrato_id: number | null; projeto_id: number; numero_documento?: string | null
     tipo_documento?: string; nota_fiscal?: string | null; data_pagamento?: string | null
     competencia?: string | null; valor_pago: number; observacao?: string | null
     arquivo_path?: string | null; criado_por: number
+    fornecedor?: string | null; enquadramento_status?: string | null; contratos_candidatos?: string | null
   }): number | bigint {
     const result = db.execute(
       `INSERT INTO financeiro_pagamentos
          (movimento_id, contrato_id, projeto_id, numero_documento, tipo_documento, nota_fiscal,
           data_pagamento, competencia, valor_pago, observacao, arquivo_path,
-          ativo, criado_por, created_at)
-       VALUES (0, ?, ?, ?, ?, ?, COALESCE(?, date('now')), ?, ?, ?, ?, 1, ?, datetime('now'))`,
+          ativo, criado_por, created_at, fornecedor, enquadramento_status, contratos_candidatos)
+       VALUES (0, ?, ?, ?, ?, ?, COALESCE(?, date('now')), ?, ?, ?, ?, 1, ?, datetime('now'), ?, ?, ?)`,
       [
         dados.contrato_id, dados.projeto_id, dados.numero_documento ?? null,
         dados.tipo_documento ?? 'NF', dados.nota_fiscal ?? null,
         dados.data_pagamento ?? null, dados.competencia ?? null,
         dados.valor_pago, dados.observacao ?? null, dados.arquivo_path ?? null,
-        dados.criado_por,
+        dados.criado_por, dados.fornecedor ?? null, dados.enquadramento_status ?? null, dados.contratos_candidatos ?? null,
       ]
     )
     return result.lastInsertRowid
@@ -741,8 +805,54 @@ export const FinanceiroRepository = {
     )
   },
 
+  /** Atualiza o contrato vinculado a um pagamento (enquadramento automático ou correção manual). Saldo é sempre derivado — não há nada para recalcular aqui além do vínculo. */
+  updatePagamentoContrato(
+    id: number,
+    contratoId: number | null,
+    status: string,
+    contratosCandidatos: string | null = null
+  ): void {
+    db.execute(
+      `UPDATE financeiro_pagamentos
+       SET contrato_id = ?, enquadramento_status = ?, contratos_candidatos = ?
+       WHERE id = ?`,
+      [contratoId, status, contratosCandidatos, id]
+    )
+  },
+
   softDeletePagamentoCompleto(id: number): void {
     db.execute('UPDATE financeiro_pagamentos SET ativo = 0 WHERE id = ?', [id])
+  },
+
+  // ── Histórico de enquadramento ─────────────────────────────────────────────
+
+  insertHistoricoEnquadramento(dados: {
+    pagamento_id: number; projeto_id: number
+    contrato_id_anterior: number | null; contrato_id_novo: number | null
+    tipo_acao: string; regra_utilizada?: string | null
+    usuario_id?: number | null; usuario_nome?: string | null
+  }): number | bigint {
+    const result = db.execute(
+      `INSERT INTO financeiro_enquadramento_historico
+         (pagamento_id, projeto_id, contrato_id_anterior, contrato_id_novo,
+          tipo_acao, regra_utilizada, usuario_id, usuario_nome, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+      [
+        dados.pagamento_id, dados.projeto_id, dados.contrato_id_anterior, dados.contrato_id_novo,
+        dados.tipo_acao, dados.regra_utilizada ?? null, dados.usuario_id ?? null, dados.usuario_nome ?? null,
+      ]
+    )
+    return result.lastInsertRowid
+  },
+
+  findHistoricoEnquadramento(pagamentoId: number): Record<string, unknown>[] {
+    return db.queryMany(
+      `SELECT id, pagamento_id, projeto_id, contrato_id_anterior, contrato_id_novo,
+              tipo_acao, regra_utilizada, usuario_id, usuario_nome, created_at
+       FROM financeiro_enquadramento_historico
+       WHERE pagamento_id = ? ORDER BY created_at ASC`,
+      [pagamentoId]
+    )
   },
 
   // ── Importador (para lib/financeiro/importador.ts) ────────────────────────
@@ -758,6 +868,22 @@ export const FinanceiroRepository = {
          AND (numero_contrato = ? OR (numero_contrato IS NULL AND ? IS NULL))
          AND ativo = 1 LIMIT 1`,
       [projetoId, contratado, numeroContrato ?? null, numeroContrato ?? null]
+    )
+  },
+
+  /**
+   * Busca contrato existente só pelo número do contrato (sem exigir fornecedor igual) —
+   * usada pela importação quando a linha tem "Número Contrato" preenchido, para que
+   * fornecedores diferentes de uma mesma obra/contrato caiam no mesmo registro.
+   */
+  findContratoExistentePorNumero(
+    projetoId: number,
+    numeroContrato: string
+  ): { id: number } | undefined {
+    return db.queryOne<{ id: number }>(
+      `SELECT id FROM financeiro_contratos
+       WHERE projeto_id = ? AND numero_contrato = ? AND ativo = 1 LIMIT 1`,
+      [projetoId, numeroContrato]
     )
   },
 
@@ -791,19 +917,46 @@ export const FinanceiroRepository = {
     contrato_id: number; projeto_id: number; numero_documento?: string | null
     tipo_documento?: string; nota_fiscal?: string | null; data_pagamento?: string | null
     competencia?: string | null; valor_pago: number; observacao?: string | null
-    criado_por: number
+    criado_por: number; fornecedor?: string | null
   }): void {
     db.execute(
       `INSERT INTO financeiro_pagamentos
          (movimento_id, contrato_id, projeto_id, numero_documento, tipo_documento, nota_fiscal,
-          data_pagamento, competencia, valor_pago, observacao, ativo, criado_por, created_at)
-       VALUES (0, ?, ?, ?, ?, ?, COALESCE(?, date('now')), ?, ?, ?, 1, ?, datetime('now'))`,
+          data_pagamento, competencia, valor_pago, observacao, ativo, criado_por, created_at, fornecedor)
+       VALUES (0, ?, ?, ?, ?, ?, COALESCE(?, date('now')), ?, ?, ?, 1, ?, datetime('now'), ?)`,
       [
         dados.contrato_id, dados.projeto_id, dados.numero_documento ?? null,
         dados.tipo_documento ?? 'NF', dados.nota_fiscal ?? null,
         dados.data_pagamento ?? null, dados.competencia ?? null,
-        dados.valor_pago, dados.observacao ?? null, dados.criado_por,
+        dados.valor_pago, dados.observacao ?? null, dados.criado_por, dados.fornecedor ?? null,
       ]
     )
+  },
+
+  /**
+   * Detecta se um lançamento equivalente já foi importado para este contrato — usada para
+   * reimportação idempotente (mesma planilha importada de novo não deve duplicar lançamentos).
+   * Chave de igualdade: contrato + número do documento + valor pago + data + observação.
+   * Não usa só (contrato + número do documento) porque um mesmo documento legitimamente pode
+   * ter várias linhas distintas na planilha (ex.: valor principal + impostos retidos separados).
+   */
+  existePagamentoImportado(dados: {
+    contrato_id: number; numero_documento: string | null; valor_pago: number
+    data_pagamento: string | null; observacao: string | null
+  }): boolean {
+    const row = db.queryOne<{ id: number }>(
+      `SELECT id FROM financeiro_pagamentos
+       WHERE contrato_id = ? AND (ativo IS NULL OR ativo = 1)
+         AND (numero_documento = ? OR (numero_documento IS NULL AND ? IS NULL))
+         AND ABS(valor_pago - ?) < 0.005
+         AND (data_pagamento = ? OR (data_pagamento IS NULL AND ? IS NULL))
+         AND (observacao = ? OR (observacao IS NULL AND ? IS NULL))
+       LIMIT 1`,
+      [
+        dados.contrato_id, dados.numero_documento, dados.numero_documento, dados.valor_pago,
+        dados.data_pagamento, dados.data_pagamento, dados.observacao, dados.observacao,
+      ]
+    )
+    return !!row
   },
 }

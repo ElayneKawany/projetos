@@ -24,12 +24,29 @@ export function buscarViabilidadeFinanceira(projeto_id: number): { capex: number
 
 // ─── Contratos completos (com pagamentos embutidos) ───────────────────────────
 
+/**
+ * Percentual executado de um contrato: (valor pago / valor aprovado) × 100,
+ * arredondado a 2 casas decimais.
+ *
+ * `Math.round` puro (sem casas decimais) faz 99,65% virar 100% — por isso o
+ * arredondamento aqui é a 2 casas, e o resultado só chega a 100 quando o valor
+ * pago de fato alcança o aprovado (nunca por efeito de arredondamento enquanto
+ * houver saldo).
+ */
+function calcularPercentualContrato(valorAprovado: number, valorPago: number): number {
+  if (!valorAprovado || valorAprovado <= 0) return 0
+  if (valorPago >= valorAprovado) return 100
+  const arredondado = Math.round((valorPago / valorAprovado) * 10000) / 100
+  return arredondado >= 100 ? 99.99 : arredondado
+}
+
 export function buscarContratosCompletos(projeto_id: number): FinanceiroContratoCompleto[] {
   const contratos = FinanceiroRepository.findContratosParaDashboard(projeto_id) as unknown as FinanceiroContrato[]
   const pagamentos = FinanceiroRepository.findPagamentosParaDashboard(projeto_id) as unknown as FinanceiroContratoPagamento[]
 
   const pagByContrato = new Map<number, FinanceiroContratoPagamento[]>()
   for (const p of pagamentos) {
+    if (p.contrato_id == null) continue // findPagamentosParaDashboard já filtra isso; guarda só para o tipo
     const list = pagByContrato.get(p.contrato_id) ?? []
     list.push(p)
     pagByContrato.set(p.contrato_id, list)
@@ -39,9 +56,7 @@ export function buscarContratosCompletos(projeto_id: number): FinanceiroContrato
     const pags = pagByContrato.get(c.id) ?? []
     const valor_pago_total = pags.reduce((s, p) => s + (p.valor_pago ?? 0), 0)
     const saldo = c.valor_aprovado - valor_pago_total
-    const percentual = c.valor_aprovado > 0
-      ? Math.round((valor_pago_total / c.valor_aprovado) * 100)
-      : 0
+    const percentual = calcularPercentualContrato(c.valor_aprovado, valor_pago_total)
     return { ...c, pagamentos: pags, valor_pago_total, saldo, percentual }
   })
 }

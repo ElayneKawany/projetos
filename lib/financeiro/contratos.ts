@@ -25,10 +25,23 @@ export function criarContrato(
     tipo_contrato: dados.tipo_contrato ?? 'SERVICO',
     natureza_financeira: dados.natureza_financeira,
     descricao_servico: dados.descricao_servico ?? null,
+    categoria: dados.categoria ?? null,
     valor_aprovado: dados.valor_aprovado,
     observacao: dados.observacao ?? null,
     criado_por: usuario_id,
+    tipo_projecao: dados.tipo_projecao ?? 'NENHUMA',
   }))
+
+  if (dados.tipo_projecao === 'PARCELADO' && dados.parcelas_projecao?.length) {
+    for (const p of dados.parcelas_projecao) {
+      FinanceiroRepository.insertProjecaoParcela({
+        contrato_id: id,
+        numero: p.numero,
+        competencia: p.competencia,
+        valor_projetado: p.valor_projetado,
+      })
+    }
+  }
 
   registrarEvento({
     projeto_id: dados.projeto_id,
@@ -72,6 +85,7 @@ export function atualizarContrato(
     tipo_contrato: dados.tipo_contrato,
     natureza_financeira: dados.natureza_financeira,
     descricao_servico: dados.descricao_servico,
+    categoria: dados.categoria,
     valor_aprovado: dados.valor_aprovado,
     status: dados.status,
     observacao: dados.observacao,

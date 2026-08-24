@@ -445,6 +445,9 @@ export type StatusContrato = 'ATIVO' | 'SUSPENSO' | 'ENCERRADO' | 'CANCELADO'
 export type TipoDocumentoFinanceiro = 'NF' | 'BOLETO' | 'TED' | 'PIX' | 'CHEQUE' | 'OUTRO'
 export type NaturezaFinanceira = 'CAPEX' | 'OPEX'
 
+/** Resultado do enquadramento de um lançamento a um contrato. null = lançamento anterior à feature, nunca reavaliado. */
+export type EnquadramentoStatus = 'AUTOMATICO' | 'AGUARDANDO_ANALISE' | 'SEM_CONTRATO' | 'MANUAL'
+
 export interface FinanceiroContrato {
   id: number
   projeto_id: number
@@ -453,6 +456,8 @@ export interface FinanceiroContrato {
   tipo_contrato: TipoContrato
   natureza_financeira: NaturezaFinanceira
   descricao_servico: string | null
+  /** Critério de enquadramento (ex.: "Aço e Cordoalha"). null = contrato sem restrição de categoria. */
+  categoria: string | null
   valor_aprovado: number
   status: StatusContrato
   observacao: string | null
@@ -464,7 +469,7 @@ export interface FinanceiroContrato {
 
 export interface FinanceiroContratoPagamento {
   id: number
-  contrato_id: number
+  contrato_id: number | null
   projeto_id: number
   numero_documento: string | null
   tipo_documento: TipoDocumentoFinanceiro
@@ -476,6 +481,25 @@ export interface FinanceiroContratoPagamento {
   arquivo_path: string | null
   ativo: number
   criado_por: number | null
+  created_at: string
+  /** Fornecedor que emitiu este lançamento — null em registros anteriores à feature de enquadramento (usar o `contratado` do contrato vinculado como fallback de exibição). */
+  fornecedor: string | null
+  enquadramento_status: EnquadramentoStatus | null
+  /** Ids dos contratos compatíveis encontrados na avaliação (só populado quando AGUARDANDO_ANALISE). */
+  contratos_candidatos: number[] | null
+}
+
+/** Uma entrada do histórico de enquadramento de um pagamento — nunca alterado/apagado (append-only). */
+export interface FinanceiroEnquadramentoHistorico {
+  id: number
+  pagamento_id: number
+  projeto_id: number
+  contrato_id_anterior: number | null
+  contrato_id_novo: number | null
+  tipo_acao: 'AUTOMATICO' | 'MANUAL' | 'CORRECAO_MANUAL'
+  regra_utilizada: string | null
+  usuario_id: number | null
+  usuario_nome: string | null
   created_at: string
 }
 

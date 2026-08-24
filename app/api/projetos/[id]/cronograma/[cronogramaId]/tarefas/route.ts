@@ -91,7 +91,9 @@ export async function PUT(
       // 2. Processar itens em ordem, calculando WBS e parent_id
       let faseCount   = 0
       let tarefaCount = 0
-      let lastFaseId: number | null = null
+      let subCount    = 0
+      let lastFaseId:   number | null = null
+      let lastTarefaId: number | null = null
 
       for (let i = 0; i < tarefas.length; i++) {
         const t    = tarefas[i]
@@ -99,15 +101,18 @@ export async function PUT(
 
         let codigo: string
         if (t.nivel === 'FASE') {
-          faseCount++; tarefaCount = 0
+          faseCount++; tarefaCount = 0; subCount = 0
           codigo = String(faseCount)
+        } else if (t.nivel === 'SUBTAREFA') {
+          subCount++
+          codigo = faseCount > 0 ? `${faseCount}.${tarefaCount}.${subCount}` : `${tarefaCount}.${subCount}`
         } else {
-          tarefaCount++
+          tarefaCount++; subCount = 0
           codigo = faseCount > 0 ? `${faseCount}.${tarefaCount}` : String(tarefaCount)
         }
 
         const ordem      = i + 1
-        const parent_id  = t.nivel === 'TAREFA' ? lastFaseId : null
+        const parent_id  = t.nivel === 'TAREFA' ? lastFaseId : t.nivel === 'SUBTAREFA' ? lastTarefaId : null
         const exec_id    = t.executor_id ?? t.responsavel_id ?? null
         const durDias    = calcDuracao(t.data_inicio, t.data_fim)
 
@@ -132,7 +137,8 @@ export async function PUT(
             observacoes: t.observacoes ?? null, descricao: t.descricao ?? null,
             tipo_macro: tipoMacro, alterado_por: session.id,
           })
-          if (t.nivel === 'FASE') lastFaseId = t.id
+          if (t.nivel === 'FASE')   lastFaseId   = t.id
+          if (t.nivel === 'TAREFA') lastTarefaId = t.id
           itemId = t.id
         } else {
           itemId = Number(CronogramaRepository.insertTarefa({
@@ -162,7 +168,8 @@ export async function PUT(
             criado_por:   session.id,
             alterado_por: session.id,
           }))
-          if (t.nivel === 'FASE') lastFaseId = itemId
+          if (t.nivel === 'FASE')   lastFaseId   = itemId
+          if (t.nivel === 'TAREFA') lastTarefaId = itemId
         }
 
         // Sync cronograma_responsaveis (full replace)

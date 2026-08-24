@@ -107,7 +107,21 @@ export async function GET(
     const tarefasComResp = tarefas.map(t => ({
       ...t,
       responsaveis: respMap.get(t.id as number) ?? null,
-    }))
+    })) as unknown as (Record<string, unknown> & { id: number; natureza_tarefa?: string; pagamento?: unknown })[]
+
+    // Tarefa de Pagamento: anexa cabeçalho + parcelas nas tarefas com natureza_tarefa='PAGAMENTO'
+    const tarefasPagamentoIds = tarefasComResp
+      .filter(t => t.natureza_tarefa === 'PAGAMENTO')
+      .map(t => t.id)
+    if (tarefasPagamentoIds.length > 0) {
+      const headers  = CronogramaRepository.findPagamentoHeaderByTarefaIds(tarefasPagamentoIds)
+      const parcelas = CronogramaRepository.findParcelasByTarefaIds(tarefasPagamentoIds)
+      for (const t of tarefasComResp) {
+        const header = headers.find(h => h.cronograma_tarefa_id === t.id)
+        if (!header) continue
+        t.pagamento = { ...header, parcelas: parcelas.filter(p => p.cronograma_tarefa_id === t.id) }
+      }
+    }
 
     return NextResponse.json({ cronograma, tarefas: tarefasComResp, versoes })
   } catch (err: unknown) {

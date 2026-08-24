@@ -488,6 +488,34 @@ function runMigrations(db: Database.Database) {
   // natureza_financeira: CAPEX ou OPEX — obrigatório para novos registros; DEFAULT 'CAPEX' para compatibilidade com registros existentes
   addCol('financeiro_contratos',  'natureza_financeira', "TEXT NOT NULL DEFAULT 'CAPEX'")
 
+  // ─── Enquadramento de lançamentos em contratos ───────────────────────────
+  // categoria: critério de matching (ex.: "Aço e Cordoalha"). NULL = contrato sem restrição de categoria.
+  addCol('financeiro_contratos',  'categoria', 'TEXT')
+  // enquadramento_status: resultado do enquadramento do pagamento a um contrato.
+  // NULL = pagamento anterior a esta feature, nunca reavaliado retroativamente.
+  // valores: 'AUTOMATICO' | 'AGUARDANDO_ANALISE' | 'SEM_CONTRATO' | 'MANUAL'
+  addCol('financeiro_pagamentos', 'enquadramento_status', 'TEXT')
+  // contratos_candidatos: JSON com os ids encontrados no momento da avaliação (só relevante quando AGUARDANDO_ANALISE)
+  addCol('financeiro_pagamentos', 'contratos_candidatos', 'TEXT')
+  // fornecedor: quem emitiu esta NF/pagamento especificamente — necessário para o enquadramento por fornecedor
+  // funcionar quando o contrato não pré-existe na tela (fluxo "Lançar NF"). NULL em registros antigos = o
+  // fornecedor efetivo daquele lançamento é o `contratado` do contrato já vinculado (nunca havia ambiguidade antes).
+  addCol('financeiro_pagamentos', 'fornecedor', 'TEXT')
+
+  // Histórico de enquadramento — append-only, nunca UPDATE/DELETE (mesmo espírito de projeto_historico_alteracoes)
+  db.exec(`CREATE TABLE IF NOT EXISTS financeiro_enquadramento_historico (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    pagamento_id         INTEGER NOT NULL,
+    projeto_id           INTEGER NOT NULL,
+    contrato_id_anterior INTEGER,
+    contrato_id_novo     INTEGER,
+    tipo_acao            TEXT NOT NULL,
+    regra_utilizada      TEXT,
+    usuario_id           INTEGER,
+    usuario_nome         TEXT,
+    created_at           TEXT DEFAULT (datetime('now'))
+  )`)
+
   // Encerramento oficial do projeto — campos gravados ao concluir
   addCol('projetos', 'data_conclusao_real',   'TEXT')
   addCol('projetos', 'hora_conclusao',        'TEXT')
@@ -827,6 +855,67 @@ function runMigrations(db: Database.Database) {
     created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(projeto_id, status)
+  )`)
+
+  // ─── Cronograma — Tarefa de Pagamento (parcelas) ────────────────────────────
+  // Único toque em cronograma_tarefas: `tipo` já tem outro significado (config_cronograma_tipos),
+  // então a natureza da tarefa (normal vs. controle de parcelas) precisa de coluna própria.
+  addCol('cronograma_tarefas', 'natureza_tarefa', "TEXT DEFAULT 'NORMAL'")  // 'NORMAL' | 'PAGAMENTO'
+
+  db.exec(`CREATE TABLE IF NOT EXISTS cronograma_tarefa_pagamento (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    cronograma_tarefa_id    INTEGER NOT NULL UNIQUE REFERENCES cronograma_tarefas(id),
+    beneficiario            TEXT,
+    valor_total             REAL NOT NULL,
+    qtd_parcelas            INTEGER NOT NULL,
+    periodicidade           TEXT NOT NULL DEFAULT 'MENSAL',
+    data_primeira_parcela   TEXT NOT NULL,
+    financeiro_pagamento_id INTEGER,
+    criado_por              INTEGER REFERENCES usuarios(id),
+    created_at              DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`)
+
+  db.exec(`CREATE TABLE IF NOT EXISTS cronograma_tarefa_parcelas (
+    id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+    cronograma_tarefa_id     INTEGER NOT NULL REFERENCES cronograma_tarefas(id),
+    numero                   INTEGER NOT NULL,
+    valor                    REAL NOT NULL,
+    data_vencimento          TEXT NOT NULL,
+    data_vencimento_baseline TEXT,
+    status                   TEXT NOT NULL DEFAULT 'PENDENTE',
+    data_pagamento           TEXT,
+    pago_por                 INTEGER REFERENCES usuarios(id),
+    financeiro_pagamento_id  INTEGER,
+    created_at               DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at               DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`)
+
+  // ─── Financeiro — Projeção de pagamentos do contrato ────────────────────────
+  // Só "quanto está previsto pagar em qual mês" — nunca é pagamento real. A comparação
+  // projetado×realizado (futura) cruza `competencia` com financeiro_pagamentos.competencia.
+  addCol('financeiro_contratos', 'tipo_projecao', "TEXT DEFAULT 'NENHUMA'")  // 'NENHUMA' | 'PARCELADO'
+
+  db.exec(`CREATE TABLE IF NOT EXISTS financeiro_contrato_projecao_parcelas (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    contrato_id     INTEGER NOT NULL REFERENCES financeiro_contratos(id),
+    numero          INTEGER NOT NULL,
+    competencia     TEXT NOT NULL,
+    valor_projetado REAL NOT NULL,
+    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`)
+
+  db.exec(`CREATE TABLE IF NOT EXISTS cronograma_tarefa_parcelas_historico (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    parcela_id           INTEGER NOT NULL REFERENCES cronograma_tarefa_parcelas(id),
+    cronograma_tarefa_id INTEGER NOT NULL REFERENCES cronograma_tarefas(id),
+    projeto_id           INTEGER NOT NULL REFERENCES projetos(id),
+    campo                TEXT NOT NULL,
+    valor_anterior       TEXT,
+    valor_novo           TEXT,
+    justificativa        TEXT,
+    usuario_id           INTEGER REFERENCES usuarios(id),
+    usuario_nome         TEXT,
+    created_at           DATETIME DEFAULT CURRENT_TIMESTAMP
   )`)
 
   // Seed: popula config_status_projeto com os status padrão se ainda estiver vazio

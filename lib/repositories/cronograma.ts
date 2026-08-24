@@ -315,6 +315,7 @@ export const CronogramaRepository = {
     ativo?: number
     criado_por?: number | null
     alterado_por?: number | null
+    natureza_tarefa?: string | null
   }): number | bigint {
     const result = db.execute(
       `INSERT INTO cronograma_tarefas
@@ -322,8 +323,8 @@ export const CronogramaRepository = {
           data_inicio, data_inicio_baseline, data_fim, data_fim_baseline, duracao_dias,
           responsavel_id, responsavel_nome_ext, executor_id, executor_nome_ext,
           area_id, peso, ordem, percentual, status, prazo_status, data_conclusao,
-          observacoes, tipo_macro, ativo, criado_por, alterado_por, alterado_em)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+          observacoes, tipo_macro, ativo, criado_por, alterado_por, alterado_em, natureza_tarefa)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)`,
       [
         params.cronograma_id,
         params.parent_id ?? null,
@@ -354,6 +355,7 @@ export const CronogramaRepository = {
         params.ativo ?? 1,
         params.criado_por ?? null,
         params.alterado_por ?? null,
+        params.natureza_tarefa ?? 'NORMAL',
       ]
     )
     return result.lastInsertRowid
@@ -580,6 +582,198 @@ export const CronogramaRepository = {
        GROUP BY f.tipo_macro
        ORDER BY f.ordem`,
       [today, cronogramaId]
+    )
+  },
+
+  // ── Tarefa de Pagamento (parcelas) ────────────────────────────────────────
+
+  insertPagamentoHeader(params: {
+    cronograma_tarefa_id: number
+    beneficiario: string | null
+    valor_total: number
+    qtd_parcelas: number
+    periodicidade: string
+    data_primeira_parcela: string
+    criado_por: number | null
+  }): number | bigint {
+    const result = db.execute(
+      `INSERT INTO cronograma_tarefa_pagamento
+         (cronograma_tarefa_id, beneficiario, valor_total, qtd_parcelas, periodicidade, data_primeira_parcela, criado_por)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        params.cronograma_tarefa_id,
+        params.beneficiario ?? null,
+        params.valor_total,
+        params.qtd_parcelas,
+        params.periodicidade,
+        params.data_primeira_parcela,
+        params.criado_por ?? null,
+      ]
+    )
+    return result.lastInsertRowid
+  },
+
+  insertParcela(params: {
+    cronograma_tarefa_id: number
+    numero: number
+    valor: number
+    data_vencimento: string
+  }): number | bigint {
+    const result = db.execute(
+      `INSERT INTO cronograma_tarefa_parcelas (cronograma_tarefa_id, numero, valor, data_vencimento)
+       VALUES (?, ?, ?, ?)`,
+      [params.cronograma_tarefa_id, params.numero, params.valor, params.data_vencimento]
+    )
+    return result.lastInsertRowid
+  },
+
+  findPagamentoHeaderByTarefaIds(tarefaIds: number[]): Array<{
+    id: number; cronograma_tarefa_id: number; beneficiario: string | null
+    valor_total: number; qtd_parcelas: number; periodicidade: string
+    data_primeira_parcela: string; financeiro_pagamento_id: number | null
+  }> {
+    if (tarefaIds.length === 0) return []
+    const placeholders = tarefaIds.map(() => '?').join(',')
+    return db.queryMany(
+      `SELECT * FROM cronograma_tarefa_pagamento WHERE cronograma_tarefa_id IN (${placeholders})`,
+      tarefaIds
+    )
+  },
+
+  findParcelasByTarefaIds(tarefaIds: number[]): Array<{
+    id: number; cronograma_tarefa_id: number; numero: number; valor: number
+    data_vencimento: string; data_vencimento_baseline: string | null
+    status: string; data_pagamento: string | null; pago_por: number | null
+    pago_por_nome: string | null
+  }> {
+    if (tarefaIds.length === 0) return []
+    const placeholders = tarefaIds.map(() => '?').join(',')
+    return db.queryMany(
+      `SELECT p.*, u.nome as pago_por_nome
+       FROM cronograma_tarefa_parcelas p
+       LEFT JOIN usuarios u ON u.id = p.pago_por
+       WHERE p.cronograma_tarefa_id IN (${placeholders})
+       ORDER BY p.numero ASC`,
+      tarefaIds
+    )
+  },
+
+  findParcelaById(parcelaId: number): {
+    id: number; cronograma_tarefa_id: number; numero: number; valor: number
+    data_vencimento: string; data_vencimento_baseline: string | null; status: string
+  } | undefined {
+    return db.queryOne(`SELECT * FROM cronograma_tarefa_parcelas WHERE id = ?`, [parcelaId])
+  },
+
+  marcarParcelaPaga(parcelaId: number, dataPagamento: string, pagoPor: number): void {
+    db.execute(
+      `UPDATE cronograma_tarefa_parcelas
+       SET status = 'PAGO', data_pagamento = ?, pago_por = ?, updated_at = datetime('now')
+       WHERE id = ?`,
+      [dataPagamento, pagoPor, parcelaId]
+    )
+  },
+
+  reprogramarParcela(parcelaId: number, novaData: string, baselineAtual: string | null, dataAtual: string): void {
+    db.execute(
+      `UPDATE cronograma_tarefa_parcelas
+       SET data_vencimento = ?, data_vencimento_baseline = COALESCE(?, ?), updated_at = datetime('now')
+       WHERE id = ?`,
+      [novaData, baselineAtual, dataAtual, parcelaId]
+    )
+  },
+
+  updatePagamentoHeader(tarefaId: number, params: {
+    beneficiario: string | null
+    valor_total: number
+    qtd_parcelas: number
+    periodicidade: string
+    data_primeira_parcela: string
+  }): void {
+    db.execute(
+      `UPDATE cronograma_tarefa_pagamento
+       SET beneficiario = ?, valor_total = ?, qtd_parcelas = ?, periodicidade = ?, data_primeira_parcela = ?
+       WHERE cronograma_tarefa_id = ?`,
+      [
+        params.beneficiario, params.valor_total, params.qtd_parcelas,
+        params.periodicidade, params.data_primeira_parcela, tarefaId,
+      ]
+    )
+  },
+
+  deleteParcelasPendentes(tarefaId: number): void {
+    db.execute(
+      `DELETE FROM cronograma_tarefa_parcelas WHERE cronograma_tarefa_id = ? AND status = 'PENDENTE'`,
+      [tarefaId]
+    )
+  },
+
+  updateTarefaBasico(id: number, cronogramaId: number, params: {
+    nome: string
+    observacoes: string | null
+    responsavel_id: number | null
+    alterado_por: number
+  }): void {
+    db.execute(
+      `UPDATE cronograma_tarefas
+       SET nome = ?, observacoes = ?, responsavel_id = ?, alterado_por = ?, alterado_em = datetime('now')
+       WHERE id = ? AND cronograma_id = ?`,
+      [params.nome, params.observacoes, params.responsavel_id, params.alterado_por, id, cronogramaId]
+    )
+  },
+
+  // ── Mover tarefa entre fases ──────────────────────────────────────────────
+
+  findTarefasAtivasOrdenadas(cronogramaId: number): Array<{ id: number; nivel: string; parent_id: number | null; ordem: number }> {
+    return db.queryMany(
+      `SELECT id, nivel, parent_id, ordem FROM cronograma_tarefas
+       WHERE cronograma_id = ? AND (ativo IS NULL OR ativo = 1)
+       ORDER BY ordem, id`,
+      [cronogramaId]
+    )
+  },
+
+  updatePosicaoTarefa(id: number, cronogramaId: number, params: {
+    parent_id: number | null; ordem: number; codigo: string; alterado_por: number
+  }): void {
+    db.execute(
+      `UPDATE cronograma_tarefas
+       SET parent_id = ?, ordem = ?, codigo = ?, alterado_por = ?, alterado_em = datetime('now')
+       WHERE id = ? AND cronograma_id = ?`,
+      [params.parent_id, params.ordem, params.codigo, params.alterado_por, id, cronogramaId]
+    )
+  },
+
+  updateOrdemCodigo(id: number, ordem: number, codigo: string): void {
+    db.execute(`UPDATE cronograma_tarefas SET ordem = ?, codigo = ? WHERE id = ?`, [ordem, codigo, id])
+  },
+
+  insertParcelaHistorico(params: {
+    parcela_id: number
+    cronograma_tarefa_id: number
+    projeto_id: number
+    campo: string
+    valor_anterior: string | null
+    valor_novo: string | null
+    justificativa: string | null
+    usuario_id: number | null
+    usuario_nome: string | null
+  }): void {
+    db.execute(
+      `INSERT INTO cronograma_tarefa_parcelas_historico
+         (parcela_id, cronograma_tarefa_id, projeto_id, campo, valor_anterior, valor_novo, justificativa, usuario_id, usuario_nome)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        params.parcela_id,
+        params.cronograma_tarefa_id,
+        params.projeto_id,
+        params.campo,
+        params.valor_anterior,
+        params.valor_novo,
+        params.justificativa,
+        params.usuario_id,
+        params.usuario_nome,
+      ]
     )
   },
 }

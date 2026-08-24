@@ -6,6 +6,10 @@ import { validarCronograma, type ErroValidacao } from '@/lib/validacoes-artefato
 import WorkflowStatusPanel, { type WorkflowInfo } from './WorkflowStatusPanel'
 import EnviarAprovacaoModal, { type EtapaInput } from './EnviarAprovacaoModal'
 import { formatarData, calcularDuracao, normalizarData } from '@/lib/utils/date'
+import { maskValorMonetario } from '@/lib/utils/moeda'
+import type { Periodicidade } from '@/lib/cronograma/parcelas'
+import TarefaPagamentoRow from './cronograma/TarefaPagamentoRow'
+import SelectFase from './cronograma/SelectFase'
 
 // ── Constantes estáticas de UI ────────────────────────────────────────────────
 
@@ -51,6 +55,34 @@ interface CronogramaTarefa {
   data_fim_baseline?: string | null
   /** Múltiplos responsáveis — preenchido pelo GET (tabela cronograma_responsaveis) */
   responsaveis?: ResponsavelItem[] | null
+  /** 'PAGAMENTO' = Tarefa de Pagamento (controle de parcelas). Default 'NORMAL'. */
+  natureza_tarefa?: 'NORMAL' | 'PAGAMENTO'
+  /** Presente só quando natureza_tarefa === 'PAGAMENTO' (anexado pelo GET). */
+  pagamento?: PagamentoInfo
+}
+
+interface ParcelaInfo {
+  id: number
+  cronograma_tarefa_id: number
+  numero: number
+  valor: number
+  data_vencimento: string
+  data_vencimento_baseline: string | null
+  status: 'PENDENTE' | 'PAGO'
+  data_pagamento: string | null
+  pago_por: number | null
+  pago_por_nome: string | null
+}
+
+interface PagamentoInfo {
+  id: number
+  cronograma_tarefa_id: number
+  beneficiario: string | null
+  valor_total: number
+  qtd_parcelas: number
+  periodicidade: string
+  data_primeira_parcela: string
+  parcelas: ParcelaInfo[]
 }
 
 interface Cronograma {
@@ -83,7 +115,7 @@ interface Props {
   canApprove: boolean
   canSubmit: boolean
   workflow: WorkflowInfo | null
-  sessionUser: { id: number; nome: string }
+  sessionUser: { id: number; nome: string; perfil: string }
   usuarios: { id: number; nome: string }[]
   projetoMigrado?: boolean
   onRefresh: () => void
@@ -112,6 +144,14 @@ interface NovaAtividadeForm {
   data_fim: string
   observacoes: string
   responsaveis?: ResponsavelItem[] // optional multi-select
+  natureza_tarefa: 'NORMAL' | 'PAGAMENTO'
+  // Campos específicos de Tarefa de Pagamento (só usados quando natureza_tarefa === 'PAGAMENTO')
+  beneficiario: string
+  valor_total: string
+  valor_total_display: string
+  qtd_parcelas: string
+  periodicidade: Periodicidade
+  data_primeira_parcela: string
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -315,6 +355,87 @@ function MultiSelectUsuario({
         </div>
       )}
     </div>
+  )
+}
+
+/**
+ * Campos específicos de "Tarefa de Pagamento" (beneficiário, valor total, parcelas,
+ * periodicidade, responsável) — usado tanto no modal "Nova Atividade" (pós-aprovação)
+ * quanto no seletor de fase do RASCUNHO, para nunca duplicar essa implementação.
+ */
+function CamposTarefaPagamento({
+  novaAtividade,
+  setNovaAtividade,
+  usuarios,
+}: {
+  novaAtividade: NovaAtividadeForm
+  setNovaAtividade: React.Dispatch<React.SetStateAction<NovaAtividadeForm>>
+  usuarios: { id: number; nome: string }[]
+}) {
+  return (
+    <>
+      <div>
+        <label className="input-label">Fornecedor / Beneficiário</label>
+        <input type="text" className="input w-full" placeholder="Quando aplicável"
+          value={novaAtividade.beneficiario}
+          onChange={e => setNovaAtividade(a => ({ ...a, beneficiario: e.target.value }))} />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="input-label">Valor total *</label>
+          <input type="text" className="input w-full" placeholder="R$ 0,00"
+            value={novaAtividade.valor_total_display}
+            onChange={e => {
+              const { display, numero } = maskValorMonetario(e.target.value)
+              setNovaAtividade(a => ({ ...a, valor_total_display: display, valor_total: isNaN(numero) ? '' : numero.toFixed(2) }))
+            }} />
+        </div>
+        <div>
+          <label className="input-label">Quantidade de parcelas *</label>
+          <input type="number" min={1} className="input w-full" placeholder="Ex.: 10"
+            value={novaAtividade.qtd_parcelas}
+            onChange={e => setNovaAtividade(a => ({ ...a, qtd_parcelas: e.target.value }))} />
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="input-label">Data da 1ª parcela *</label>
+          <input type="date" className="input w-full" value={novaAtividade.data_primeira_parcela}
+            onChange={e => setNovaAtividade(a => ({ ...a, data_primeira_parcela: e.target.value }))} />
+        </div>
+        <div>
+          <label className="input-label">Periodicidade</label>
+          <select className="input w-full" value={novaAtividade.periodicidade}
+            onChange={e => setNovaAtividade(a => ({ ...a, periodicidade: e.target.value as Periodicidade }))}>
+            <option value="SEMANAL">Semanal</option>
+            <option value="QUINZENAL">Quinzenal</option>
+            <option value="MENSAL">Mensal</option>
+            <option value="BIMESTRAL">Bimestral</option>
+            <option value="TRIMESTRAL">Trimestral</option>
+            <option value="SEMESTRAL">Semestral</option>
+            <option value="ANUAL">Anual</option>
+          </select>
+        </div>
+      </div>
+      {novaAtividade.valor_total && novaAtividade.qtd_parcelas && Number(novaAtividade.qtd_parcelas) > 0 && (
+        <p className="text-xs text-gray-500">
+          {novaAtividade.qtd_parcelas}x de aprox. R$ {(Number(novaAtividade.valor_total) / Number(novaAtividade.qtd_parcelas)).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        </p>
+      )}
+      <div>
+        <label className="input-label">Responsável</label>
+        <MultiSelectUsuario
+          value={novaAtividade.responsaveis ?? []}
+          usuarios={usuarios}
+          placeholder="— Selecione —"
+          onChange={sel => setNovaAtividade(a => ({
+            ...a,
+            responsaveis: sel,
+            responsavel_id: sel[0]?.id ? String(sel[0].id) : '',
+          }))}
+        />
+      </div>
+    </>
   )
 }
 
@@ -594,6 +715,9 @@ const emptyNovaAtividade = (): NovaAtividadeForm => ({
   macro_id: '', nome: '', tipo: 'TAREFA', criticidade: 'NORMAL',
   responsavel_id: '', data_inicio: '', data_fim: '', observacoes: '',
   responsaveis: [],
+  natureza_tarefa: 'NORMAL',
+  beneficiario: '', valor_total: '', valor_total_display: '', qtd_parcelas: '',
+  periodicidade: 'MENSAL', data_primeira_parcela: '',
 })
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
@@ -738,6 +862,9 @@ export default function CronogramaEditor({
   const [editando, setEditando]           = useState(false)
   const [concluindoId, setConcluindoId]   = useState<number | null>(null)
   const [editandoTarefas, setEditandoTarefas] = useState<CronogramaTarefa[]>([])
+  // Índice (em editandoTarefas) do único item com os campos abertos para edição.
+  // null = nenhum item selecionado — todas as linhas aparecem só com o botão "Editar".
+  const [itemEditandoIdx, setItemEditandoIdx] = useState<number | null>(null)
 
   // Edição inline de Observação (funciona mesmo com cronograma aprovado)
   const [editObsId, setEditObsId]   = useState<number | null>(null)
@@ -749,6 +876,10 @@ export default function CronogramaEditor({
   const [novaDataInicioRepr, setNovaDataInicioRepr] = useState('')
   const [novaDataRepr, setNovaDataRepr]             = useState('')
   const [salvandoRepr, setSalvandoRepr]             = useState(false)
+
+  // Exclusão de item em RASCUNHO
+  const [confirmDeleteItem, setConfirmDeleteItem]   = useState<{ id: number; nivel: string; nome: string; filhos: number } | null>(null)
+  const [deletandoItem, setDeletandoItem]           = useState(false)
 
   // Erros detalhados por tarefa — recalculado dinamicamente conforme campos são preenchidos
   const tarefasComErroDetalhado = useMemo(() => {
@@ -781,6 +912,23 @@ export default function CronogramaEditor({
   }
   const [salvandoEdicao, setSalvandoEdicao]   = useState(false)
   const [collapsedFases, setCollapsedFases]   = useState<Set<string>>(new Set())
+  const fasesColapsadasInicializadas = useRef(false)
+  const [expandedPagamentos, setExpandedPagamentos] = useState<Set<number>>(new Set())
+
+  // Alterar Tarefa de Pagamento
+  const [editandoPagamentoId, setEditandoPagamentoId] = useState<number | null>(null)
+  const [editPagamentoForm, setEditPagamentoForm]     = useState<NovaAtividadeForm>(emptyNovaAtividade())
+  const [savingEditPagamento, setSavingEditPagamento] = useState(false)
+  const [qtdParcelasPagasEdit, setQtdParcelasPagasEdit] = useState(0)
+
+  // Excluir Tarefa de Pagamento (só ADMIN/PMO)
+  const [confirmExcluirPagamento, setConfirmExcluirPagamento] = useState<{ id: number; nome: string } | null>(null)
+  const [excluindoPagamento, setExcluindoPagamento]           = useState(false)
+
+  // Mover tarefa entre fases
+  const [movendoTarefa, setMovendoTarefa]   = useState<{ id: number; nome: string } | null>(null)
+  const [novaFaseIdMover, setNovaFaseIdMover] = useState<string>('')
+  const [salvandoMover, setSalvandoMover]     = useState(false)
   const [versoes, setVersoes]                 = useState<VersaoCronograma[]>([])
   const [versaoVendoId, setVersaoVendoId]     = useState<number | null>(null)
 
@@ -802,9 +950,11 @@ export default function CronogramaEditor({
         setCronograma(data.cronograma)
         setTarefas(data.tarefas ?? [])
         if (data.versoes) setVersoes(data.versoes)
+        return data
       }
     } catch { /* ignore */ }
     finally { setLoading(false) }
+    return null
   }
 
   function handleSelecionarVersao(id: number | null) {
@@ -825,6 +975,16 @@ export default function CronogramaEditor({
       .then(setCriticidadesList)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projetoId])
+
+  // Ao carregar a página, todas as fases iniciam fechadas — só uma vez (não recolhe de novo
+  // a cada refetch depois de uma ação, o que reabriria/fecharia fases contra a vontade do usuário).
+  useEffect(() => {
+    if (fasesColapsadasInicializadas.current) return
+    const faseIds = tarefas.filter(t => t.nivel === 'FASE' && t.id != null).map(t => `fase-${t.id}`)
+    if (faseIds.length === 0) return
+    setCollapsedFases(new Set(faseIds))
+    fasesColapsadasInicializadas.current = true
+  }, [tarefas])
 
   function addLinha()  { setLinhas(p => [...p, emptyLinha()]) }
   function removeLinha(idx: number) { setLinhas(p => p.filter((_, i) => i !== idx)) }
@@ -986,8 +1146,14 @@ export default function CronogramaEditor({
       const res = await fetch(`/api/projetos/${projetoId}/cronograma/${cronograma.id}/nova-versao`, { method: 'POST' })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'Erro ao criar nova versão.')
-      await fetchCronograma(); onRefresh()
-      setSuccess(`Cronograma V${data.versao} criado como rascunho. Edite e submeta para aprovação.`)
+      const fresh = await fetchCronograma()
+      onRefresh()
+      // Nova versão criada como rascunho — entra direto no modo de edição por item.
+      setEditandoTarefas(prepararParaEdicao(fresh?.tarefas ?? []))
+      setUndoStack([]); setRedoStack([])
+      setItemEditandoIdx(null)
+      setEditando(true)
+      setSuccess(`Cronograma V${data.versao} criado como rascunho. Clique em "Editar" no item desejado e submeta para aprovação.`)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Erro ao criar nova versão.')
     } finally { setCreatingNovaVersao(false) }
@@ -1047,22 +1213,52 @@ export default function CronogramaEditor({
     } finally { setSalvandoRepr(false) }
   }
 
+  // ── Exclusão de item (apenas RASCUNHO) ────────────────────────────────────
+
+  async function handleExcluirItem(id: number, nivel: string, nome: string, comFilhos: boolean) {
+    if (!cronograma) return
+    setDeletandoItem(true)
+    setError(null)
+    try {
+      const url = `/api/projetos/${projetoId}/cronograma/${cronograma.id}/tarefas/${id}${comFilhos ? '?comFilhos=true' : ''}`
+      const res = await fetch(url, { method: 'DELETE' })
+      if (!res.ok) {
+        const d = await res.json()
+        if (d.error === 'item_tem_filhos') {
+          setConfirmDeleteItem({ id, nivel, nome, filhos: d.filhos })
+          return
+        }
+        throw new Error(d.error ?? 'Erro ao excluir.')
+      }
+      setConfirmDeleteItem(null)
+      await fetchCronograma()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Erro ao excluir item.')
+    } finally { setDeletandoItem(false) }
+  }
+
   // ── Edição inline ──────────────────────────────────────────────────────────
 
   function recalcWBSInline(lista: CronogramaTarefa[]): CronogramaTarefa[] {
     return recalcWBSFull(lista)
   }
 
-  function handleIniciarEdicao() {
-    setEditandoTarefas(tarefas.map(t => ({
+  /** Converte tarefas (formato ISO do servidor) para o formato de edição (datas DD/MM/AAAA). */
+  function prepararParaEdicao(lista: CronogramaTarefa[]): CronogramaTarefa[] {
+    return lista.map(t => ({
       ...t,
       data_inicio:            isoToDisplayEdit(t.data_inicio),
       data_inicio_baseline:   t.data_inicio_baseline ?? null,
       data_fim:               isoToDisplayEdit(t.data_fim),
       data_fim_baseline:      t.data_fim_baseline ?? null,
-    })))
+    }))
+  }
+
+  function handleIniciarEdicao() {
+    setEditandoTarefas(prepararParaEdicao(tarefas))
     setUndoStack([])
     setRedoStack([])
+    setItemEditandoIdx(null)
     setEditando(true)
   }
 
@@ -1071,6 +1267,7 @@ export default function CronogramaEditor({
     setUndoStack([])
     setRedoStack([])
     setConfirmDeleteIdx(null)
+    setItemEditandoIdx(null)
     setEditando(false)
     setError(null)
   }
@@ -1112,6 +1309,7 @@ export default function CronogramaEditor({
       await fetchCronograma()
       setEditando(false); setEditandoTarefas([])
       setUndoStack([]); setRedoStack([])
+      setItemEditandoIdx(null)
       setSuccess('Cronograma salvo com sucesso.')
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Erro ao salvar')
@@ -1124,6 +1322,7 @@ export default function CronogramaEditor({
       nome: '', nivel: 'FASE', ordem: editandoTarefas.length + 1,
       responsavel_id: null,
     }
+    setItemEditandoIdx(editandoTarefas.length)
     setEditandoTarefas(prev => recalcWBSInline([...prev, nova]))
   }
 
@@ -1131,10 +1330,11 @@ export default function CronogramaEditor({
     pushUndo(editandoTarefas)
     if (faseArrIdx != null) {
       // Insere após o último filho da fase no array
+      const fase = editandoTarefas[faseArrIdx]
+      let insertIdx = faseArrIdx + 1
+      while (insertIdx < editandoTarefas.length && editandoTarefas[insertIdx].nivel !== 'FASE') insertIdx++
+      setItemEditandoIdx(insertIdx)
       setEditandoTarefas(prev => {
-        const fase = prev[faseArrIdx]
-        let insertIdx = faseArrIdx + 1
-        while (insertIdx < prev.length && prev[insertIdx].nivel !== 'FASE') insertIdx++
         const nova: CronogramaTarefa = {
           nome: '', nivel: 'TAREFA', ordem: insertIdx + 1,
           responsavel_id: null,
@@ -1148,11 +1348,13 @@ export default function CronogramaEditor({
         nome: '', nivel: 'TAREFA', ordem: editandoTarefas.length + 1,
         responsavel_id: null,
       }
+      setItemEditandoIdx(editandoTarefas.length)
       setEditandoTarefas(prev => recalcWBSInline([...prev, nova]))
     }
   }
 
   function handleAbrirFaseSelector() {
+    setNovaAtividade(emptyNovaAtividade())
     const fasesExistentes = editandoTarefas
       .map((t, i) => ({ t, i }))
       .filter(({ t }) => t.nivel === 'FASE')
@@ -1164,7 +1366,46 @@ export default function CronogramaEditor({
     }
   }
 
+  async function handleCriarTarefaPagamentoViaFaseSelector() {
+    if (!cronograma) return
+    if (!novaAtividade.nome.trim() || !novaAtividade.valor_total || !novaAtividade.qtd_parcelas || !novaAtividade.data_primeira_parcela) {
+      setError('Nome, valor total, quantidade de parcelas e data da 1ª parcela são obrigatórios.')
+      return
+    }
+    const faseSelecionada = faseSelecionadaIdx !== 'sem_fase' ? editandoTarefas[faseSelecionadaIdx as number] : null
+    setSavingAtividade(true); setError(null)
+    try {
+      const res = await fetch(`/api/projetos/${projetoId}/cronograma/${cronograma.id}/tarefas/pagamento`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          macro_id:              faseSelecionada?.id ?? null,
+          nome:                  novaAtividade.nome.trim(),
+          beneficiario:          novaAtividade.beneficiario || undefined,
+          valor_total:           Number(novaAtividade.valor_total),
+          qtd_parcelas:          Number(novaAtividade.qtd_parcelas),
+          periodicidade:         novaAtividade.periodicidade,
+          data_primeira_parcela: novaAtividade.data_primeira_parcela,
+          responsavel_id:        novaAtividade.responsaveis?.length ? (novaAtividade.responsaveis[0].id ?? undefined) : undefined,
+          observacoes:           novaAtividade.observacoes || undefined,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Erro ao criar tarefa de pagamento')
+      setShowFaseSelector(false)
+      setNovaAtividade(emptyNovaAtividade())
+      setEditando(false)
+      await fetchCronograma()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Erro ao criar tarefa de pagamento')
+    } finally { setSavingAtividade(false) }
+  }
+
   function handleConfirmarFaseSelector() {
+    if (novaAtividade.natureza_tarefa === 'PAGAMENTO') {
+      handleCriarTarefaPagamentoViaFaseSelector()
+      return
+    }
     setShowFaseSelector(false)
     if (faseSelecionadaIdx === 'sem_fase') {
       handleAdicionarTarefa()
@@ -1182,6 +1423,7 @@ export default function CronogramaEditor({
     if (idx === null) return
     setConfirmDeleteIdx(null)
     pushUndo(editandoTarefas)
+    setItemEditandoIdx(null)
     setEditandoTarefas(prev => {
       const target = prev[idx]
       if (target.nivel === 'FASE') {
@@ -1245,6 +1487,7 @@ export default function CronogramaEditor({
     const anterior = undoStack[undoStack.length - 1]
     setUndoStack(s => s.slice(0, -1))
     setRedoStack(r => [...r.slice(-49), editandoTarefas])
+    setItemEditandoIdx(null)
     setEditandoTarefas(anterior)
   }
 
@@ -1253,6 +1496,7 @@ export default function CronogramaEditor({
     const proximo = redoStack[redoStack.length - 1]
     setRedoStack(r => r.slice(0, -1))
     setUndoStack(s => [...s.slice(-49), editandoTarefas])
+    setItemEditandoIdx(null)
     setEditandoTarefas(proximo)
   }
 
@@ -1332,6 +1576,40 @@ export default function CronogramaEditor({
 
   async function handleSalvarNovaAtividade() {
     if (!cronograma || !novaAtividade.nome.trim()) return
+
+    if (novaAtividade.natureza_tarefa === 'PAGAMENTO') {
+      if (!novaAtividade.valor_total || !novaAtividade.qtd_parcelas || !novaAtividade.data_primeira_parcela) {
+        setError('Valor total, quantidade de parcelas e data da 1ª parcela são obrigatórios.')
+        return
+      }
+      setSavingAtividade(true); setError(null)
+      try {
+        const res = await fetch(`/api/projetos/${projetoId}/cronograma/${cronograma.id}/tarefas/pagamento`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            macro_id:              novaAtividade.macro_id ? Number(novaAtividade.macro_id) : null,
+            nome:                  novaAtividade.nome.trim(),
+            beneficiario:          novaAtividade.beneficiario || undefined,
+            valor_total:           Number(novaAtividade.valor_total),
+            qtd_parcelas:          Number(novaAtividade.qtd_parcelas),
+            periodicidade:         novaAtividade.periodicidade,
+            data_primeira_parcela: novaAtividade.data_primeira_parcela,
+            responsavel_id:        novaAtividade.responsaveis?.length ? (novaAtividade.responsaveis[0].id ?? undefined) : (novaAtividade.responsavel_id ? Number(novaAtividade.responsavel_id) : undefined),
+            observacoes:           novaAtividade.observacoes || undefined,
+          }),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error ?? 'Erro ao criar tarefa de pagamento')
+        setShowNovaAtividade(false)
+        setNovaAtividade(emptyNovaAtividade())
+        await fetchCronograma(); onRefresh()
+      } catch (e: unknown) {
+        setError(e instanceof Error ? e.message : 'Erro ao criar tarefa de pagamento')
+      } finally { setSavingAtividade(false) }
+      return
+    }
+
     if (!novaAtividade.responsavel_id && !novaAtividade.responsaveis?.length) { setError('Responsável é obrigatório.'); return }
     setSavingAtividade(true); setError(null)
     try {
@@ -1451,6 +1729,8 @@ export default function CronogramaEditor({
       parent_id: editandoTarefas[tarefaIdx].id ?? null,
       responsavel_id: null,
     }
+    // A nova subtarefa é inserida logo após o item pai — abrir sua edição para permitir nomeá-la já.
+    setItemEditandoIdx(tarefaIdx + 1)
     setEditandoTarefas(prev => {
       const next = [...prev]
       next.splice(tarefaIdx + 1, 0, nova)
@@ -1468,6 +1748,148 @@ export default function CronogramaEditor({
     })
   }
 
+  function toggleExpandPagamento(tarefaId: number) {
+    setExpandedPagamentos(prev => {
+      const next = new Set(prev)
+      if (next.has(tarefaId)) next.delete(tarefaId); else next.add(tarefaId)
+      return next
+    })
+  }
+
+  async function handleMarcarParcelaPaga(parcelaId: number, dataPagamento: string) {
+    if (!cronograma) return
+    try {
+      const res = await fetch(`/api/projetos/${projetoId}/cronograma/${cronograma.id}/parcelas/${parcelaId}/pagar`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data_pagamento: dataPagamento }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Erro ao marcar parcela como paga')
+      await fetchCronograma(); onRefresh()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Erro ao marcar parcela como paga')
+    }
+  }
+
+  async function handleReprogramarParcela(parcelaId: number, novaData: string, justificativa: string) {
+    if (!cronograma) return
+    try {
+      const res = await fetch(`/api/projetos/${projetoId}/cronograma/${cronograma.id}/parcelas/${parcelaId}/reprogramar`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nova_data_vencimento: novaData, justificativa }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Erro ao reprogramar parcela')
+      await fetchCronograma(); onRefresh()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Erro ao reprogramar parcela')
+    }
+  }
+
+  // ── Alterar Tarefa de Pagamento ─────────────────────────────────────────────
+
+  function handleAbrirEdicaoPagamento(t: CronogramaTarefa) {
+    const pg = t.pagamento
+    if (!t.id || !pg) return
+    const qtdPagas = pg.parcelas.filter(p => p.status === 'PAGO').length
+    setQtdParcelasPagasEdit(qtdPagas)
+    setEditPagamentoForm({
+      ...emptyNovaAtividade(),
+      nome:                  t.nome,
+      observacoes:            t.observacoes ?? '',
+      responsavel_id:         t.responsavel_id != null ? String(t.responsavel_id) : '',
+      responsaveis:           t.responsaveis?.length ? t.responsaveis : (t.responsavel_nome ? [{ id: t.responsavel_id ?? undefined, nome: t.responsavel_nome }] : []),
+      natureza_tarefa:        'PAGAMENTO',
+      beneficiario:           pg.beneficiario ?? '',
+      valor_total:            String(pg.valor_total),
+      valor_total_display:    pg.valor_total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }),
+      qtd_parcelas:           String(pg.qtd_parcelas),
+      periodicidade:          pg.periodicidade as Periodicidade,
+      data_primeira_parcela:  pg.data_primeira_parcela.slice(0, 10),
+    })
+    setEditandoPagamentoId(t.id)
+  }
+
+  async function handleSalvarEdicaoPagamento() {
+    if (!cronograma || editandoPagamentoId == null) return
+    const f = editPagamentoForm
+    if (!f.nome.trim() || !f.valor_total || !f.qtd_parcelas || !f.data_primeira_parcela) {
+      setError('Nome, valor total, quantidade de parcelas e data da 1ª parcela são obrigatórios.')
+      return
+    }
+    setSavingEditPagamento(true); setError(null)
+    try {
+      const res = await fetch(
+        `/api/projetos/${projetoId}/cronograma/${cronograma.id}/tarefas/${editandoPagamentoId}/pagamento`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            nome:                  f.nome.trim(),
+            beneficiario:          f.beneficiario || undefined,
+            valor_total:           Number(f.valor_total),
+            qtd_parcelas:          Number(f.qtd_parcelas),
+            periodicidade:         f.periodicidade,
+            data_primeira_parcela: f.data_primeira_parcela,
+            responsavel_id:        f.responsaveis?.length ? (f.responsaveis[0].id ?? undefined) : (f.responsavel_id ? Number(f.responsavel_id) : undefined),
+            observacoes:           f.observacoes || undefined,
+          }),
+        }
+      )
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Erro ao alterar tarefa de pagamento')
+      setEditandoPagamentoId(null)
+      setEditPagamentoForm(emptyNovaAtividade())
+      await fetchCronograma(); onRefresh()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Erro ao alterar tarefa de pagamento')
+    } finally { setSavingEditPagamento(false) }
+  }
+
+  // ── Excluir Tarefa de Pagamento (só ADMIN/PMO) ──────────────────────────────
+
+  async function handleExcluirPagamento() {
+    if (!cronograma || !confirmExcluirPagamento) return
+    setExcluindoPagamento(true); setError(null)
+    try {
+      const res = await fetch(
+        `/api/projetos/${projetoId}/cronograma/${cronograma.id}/tarefas/${confirmExcluirPagamento.id}/pagamento`,
+        { method: 'DELETE' }
+      )
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Erro ao excluir tarefa de pagamento')
+      setConfirmExcluirPagamento(null)
+      await fetchCronograma(); onRefresh()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Erro ao excluir tarefa de pagamento')
+    } finally { setExcluindoPagamento(false) }
+  }
+
+  // ── Mover tarefa entre fases ─────────────────────────────────────────────────
+
+  async function handleConfirmarMoverTarefa() {
+    if (!cronograma || !movendoTarefa || !novaFaseIdMover) return
+    setSalvandoMover(true); setError(null)
+    try {
+      const res = await fetch(
+        `/api/projetos/${projetoId}/cronograma/${cronograma.id}/tarefas/${movendoTarefa.id}/mover`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ nova_fase_id: Number(novaFaseIdMover) }),
+        }
+      )
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Erro ao mover tarefa')
+      setMovendoTarefa(null); setNovaFaseIdMover('')
+      await fetchCronograma(); onRefresh()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Erro ao mover tarefa')
+    } finally { setSalvandoMover(false) }
+  }
+
   const etapaAtual    = workflow?.etapas.find(e => e.ordem === workflow.etapa_atual)
   const isEtapaAtual  = Number(etapaAtual?.usuario_id) === Number(sessionUser.id)
   // Determina se o usuário está visualizando uma versão histórica (não a mais recente)
@@ -1478,8 +1900,9 @@ export default function CronogramaEditor({
     return <div className="card p-6 text-center text-sm text-gray-500">Carregando cronograma…</div>
   }
 
-  const isBaseline = cronograma?.is_baseline === 1
-  const fases      = tarefas.filter(t => t.nivel === 'FASE')
+  const isBaseline  = cronograma?.is_baseline === 1
+  const isRascunho  = cronograma?.status === 'RASCUNHO'
+  const fases       = tarefas.filter(t => t.nivel === 'FASE')
   const wbsPreview = calcWBSPreview(linhas)
 
   return (
@@ -1755,6 +2178,9 @@ export default function CronogramaEditor({
                     lista.forEach((t, i) => {
                       const faseKey     = t.id != null ? `fase-${t.id}` : `faseidx-${i}`
                       const isConcluindo = concluindoId === t.id
+                      // Em modo de edição, os campos só ficam abertos para o item selecionado via "Editar".
+                      const rowOpen = editando && itemEditandoIdx === i
+                      const toggleRowOpen = () => setItemEditandoIdx(prev => prev === i ? null : i)
 
                       if (t.nivel === 'FASE') {
                         const cor   = getMacroFase(t.tipo_macro)
@@ -1784,7 +2210,7 @@ export default function CronogramaEditor({
 
                             {/* Nome */}
                             <td className="px-3 py-2">
-                              {editando ? (
+                              {rowOpen ? (
                                 <input
                                   type="text"
                                   className="input w-full text-sm py-1 font-semibold"
@@ -1799,7 +2225,7 @@ export default function CronogramaEditor({
 
                             {/* Responsável */}
                             <td className="px-3 py-2 text-xs w-32">
-                              {editando ? (
+                              {rowOpen ? (
                                 <MultiSelectUsuario
                                   value={t.responsaveis?.length ? (t.responsaveis as ResponsavelItem[]) : (t.responsavel_nome ? [{ id: t.responsavel_id ?? undefined, nome: t.responsavel_nome }] : [])}
                                   usuarios={usuarios}
@@ -1890,7 +2316,7 @@ export default function CronogramaEditor({
 
                             {/* Status / Tipo Macro (edit mode) */}
                             <td className="px-3 py-2 w-28">
-                              {editando ? (
+                              {rowOpen ? (
                                 <select
                                   className="input text-xs py-1 w-full"
                                   value={t.tipo_macro ?? 'OUTRO'}
@@ -1901,6 +2327,8 @@ export default function CronogramaEditor({
                                     <option key={f.codigo} value={f.codigo}>{f.icone} {f.nome}</option>
                                   ))}
                                 </select>
+                              ) : editando ? (
+                                <span className="text-xs text-gray-400">{getMacroFase(t.tipo_macro).icone} {getMacroFase(t.tipo_macro).nome}</span>
                               ) : (
                                 <FaseStatusBadge status={summary.status} />
                               )}
@@ -1908,7 +2336,7 @@ export default function CronogramaEditor({
 
                             {/* Observação */}
                             <td className="px-3 py-2 w-40">
-                              {editando ? (
+                              {rowOpen ? (
                                 <input
                                   type="text"
                                   className="input w-full text-xs py-1"
@@ -1916,6 +2344,10 @@ export default function CronogramaEditor({
                                   value={t.observacoes ?? ''}
                                   onChange={e => handleAtualizarCampoInline(i, 'observacoes', e.target.value)}
                                 />
+                              ) : editando ? (
+                                <span className="text-xs text-gray-500 truncate max-w-[120px] block" title={t.observacoes ?? ''}>
+                                  {t.observacoes || <span className="text-gray-300">—</span>}
+                                </span>
                               ) : editObsId === t.id && t.id ? (
                                 <div className="flex items-center gap-1">
                                   <input
@@ -1947,14 +2379,24 @@ export default function CronogramaEditor({
                             {/* Ações */}
                             <td className="px-3 py-2 text-right w-20">
                               {editando && (
-                                <button
-                                  type="button"
-                                  className="text-xs text-red-400 hover:text-red-600 border border-red-200 rounded px-1.5 py-0.5"
-                                  title="Remover fase e suas tarefas"
-                                  onClick={() => handleRemoverItem(i)}
-                                >
-                                  ✕
-                                </button>
+                                <div className="flex items-center justify-end gap-1">
+                                  <button
+                                    type="button"
+                                    className="text-xs text-blue-600 hover:text-blue-800 border border-blue-200 rounded px-1.5 py-0.5"
+                                    title={rowOpen ? 'Fechar edição desta fase' : 'Editar esta fase'}
+                                    onClick={toggleRowOpen}
+                                  >
+                                    {rowOpen ? 'Fechar' : 'Editar'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="text-xs text-red-400 hover:text-red-600 border border-red-200 rounded px-1.5 py-0.5"
+                                    title="Remover fase e suas tarefas"
+                                    onClick={() => handleRemoverItem(i)}
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
                               )}
                               {!editando && summary.totalFilhos === 0 && canEdit && t.id && (
                                 <div className="flex flex-col items-end gap-1">
@@ -1976,6 +2418,24 @@ export default function CronogramaEditor({
                                       onClick={() => { setReprogramarId(t.id!); setNovaDataRepr(''); setNovaDataInicioRepr('') }}
                                     >Reprog.</button>
                                   )}
+                                  {isRascunho && !isVersaoHistorica && (
+                                    <button
+                                      type="button"
+                                      className="text-[10px] text-red-500 border border-red-200 rounded px-1.5 py-0.5 hover:bg-red-50"
+                                      title="Excluir esta fase"
+                                      onClick={() => setConfirmDeleteItem({ id: t.id!, nivel: 'FASE', nome: t.nome, filhos: summary.totalFilhos })}
+                                    >Excluir</button>
+                                  )}
+                                </div>
+                              )}
+                              {!editando && summary.totalFilhos > 0 && isRascunho && canEdit && t.id && !isVersaoHistorica && (
+                                <div className="flex flex-col items-end gap-1">
+                                  <button
+                                    type="button"
+                                    className="text-[10px] text-red-500 border border-red-200 rounded px-1.5 py-0.5 hover:bg-red-50"
+                                    title="Excluir esta fase e seus itens"
+                                    onClick={() => setConfirmDeleteItem({ id: t.id!, nivel: 'FASE', nome: t.nome, filhos: summary.totalFilhos })}
+                                  >Excluir</button>
                                 </div>
                               )}
                             </td>
@@ -2012,7 +2472,7 @@ export default function CronogramaEditor({
                                 <span className="font-mono text-xs text-gray-300 pl-10">{t.codigo ?? '—'}</span>
                               </td>
                               <td className="px-3 py-1.5">
-                                {editando ? (
+                                {rowOpen ? (
                                   <input
                                     type="text"
                                     className="input w-full text-xs py-1"
@@ -2029,7 +2489,7 @@ export default function CronogramaEditor({
                                 )}
                               </td>
                               <td className="px-3 py-1.5 text-xs w-32">
-                                {editando ? (
+                                {rowOpen ? (
                                   <MultiSelectUsuario
                                     value={t.responsaveis?.length ? (t.responsaveis as ResponsavelItem[]) : (t.responsavel_nome ? [{ id: t.responsavel_id ?? undefined, nome: t.responsavel_nome }] : [])}
                                     usuarios={usuarios}
@@ -2045,7 +2505,7 @@ export default function CronogramaEditor({
                                 )}
                               </td>
                               <td className="px-3 py-1.5 text-gray-500 text-xs w-24">
-                                {editando ? (
+                                {rowOpen ? (
                                   <div>
                                     <input type="text" className="input text-xs py-1 w-full" value={t.data_inicio ?? ''}
                                       placeholder="DD/MM/AAAA" maxLength={10}
@@ -2054,6 +2514,8 @@ export default function CronogramaEditor({
                                       <p className="text-[10px] text-gray-400 mt-0.5 leading-tight">Base: {formatDate(t.data_inicio_baseline)}</p>
                                     )}
                                   </div>
+                                ) : editando ? (
+                                  <span className="text-gray-400">{t.data_inicio || '—'}</span>
                                 ) : (
                                   t.data_inicio_baseline ? (
                                     <>
@@ -2064,7 +2526,7 @@ export default function CronogramaEditor({
                                 )}
                               </td>
                               <td className="px-3 py-1.5 text-gray-500 text-xs w-24">
-                                {editando ? (
+                                {rowOpen ? (
                                   <div>
                                     <input type="text" className="input text-xs py-1 w-full" value={t.data_fim ?? ''}
                                       placeholder="DD/MM/AAAA" maxLength={10}
@@ -2073,6 +2535,8 @@ export default function CronogramaEditor({
                                       <p className="text-[10px] text-gray-400 mt-0.5 leading-tight">Base: {formatDate(t.data_fim_baseline)}</p>
                                     )}
                                   </div>
+                                ) : editando ? (
+                                  <span className="text-gray-400">{t.data_fim || '—'}</span>
                                 ) : (
                                   t.data_fim_baseline ? (
                                     <>
@@ -2090,7 +2554,7 @@ export default function CronogramaEditor({
                               </td>
                               {/* Observação */}
                               <td className="px-3 py-1.5 w-40">
-                                {editando ? (
+                                {rowOpen ? (
                                   <input
                                     type="text"
                                     className="input w-full text-xs py-1"
@@ -2098,6 +2562,10 @@ export default function CronogramaEditor({
                                     value={t.observacoes ?? ''}
                                     onChange={e => handleAtualizarCampoInline(i, 'observacoes', e.target.value)}
                                   />
+                                ) : editando ? (
+                                  <span className="text-xs text-gray-500 truncate max-w-[110px] block" title={t.observacoes ?? ''}>
+                                    {t.observacoes || <span className="text-gray-300">—</span>}
+                                  </span>
                                 ) : editObsId === t.id && t.id ? (
                                   <div className="flex items-center gap-1">
                                     <input type="text" autoFocus className="input text-xs py-0.5 w-full" value={editObsVal} onChange={e => setEditObsVal(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleSalvarObservacao(t.id!); if (e.key === 'Escape') setEditObsId(null) }} />
@@ -2118,29 +2586,49 @@ export default function CronogramaEditor({
                               {/* Ações */}
                               <td className="px-3 py-1.5 text-right w-20">
                                 {editando ? (
-                                  <button type="button"
-                                    className="text-xs text-red-400 hover:text-red-600 border border-red-200 rounded px-1.5 py-0.5"
-                                    onClick={() => handleRemoverItem(i)}>✕</button>
+                                  <div className="flex items-center justify-end gap-1">
+                                    <button
+                                      type="button"
+                                      className="text-xs text-blue-600 hover:text-blue-800 border border-blue-200 rounded px-1.5 py-0.5"
+                                      title={rowOpen ? 'Fechar edição desta subtarefa' : 'Editar esta subtarefa'}
+                                      onClick={toggleRowOpen}
+                                    >
+                                      {rowOpen ? 'Fechar' : 'Editar'}
+                                    </button>
+                                    <button type="button"
+                                      className="text-xs text-red-400 hover:text-red-600 border border-red-200 rounded px-1.5 py-0.5"
+                                      onClick={() => handleRemoverItem(i)}>✕</button>
+                                  </div>
                                 ) : (
-                                  !subConcluida && (
-                                    <div className="flex flex-col items-end gap-1">
-                                      <button
-                                        className="text-xs text-green-700 border border-green-200 rounded px-2 py-0.5 hover:bg-green-50 disabled:opacity-50"
-                                        disabled={isConcluindoSub || !t.id}
-                                        onClick={() => t.id && handleConcluirTarefa(t.id)}
-                                      >
-                                        {isConcluindoSub ? '…' : 'Concluir'}
-                                      </button>
-                                      {canEdit && t.id && reprogramarId !== t.id && (
+                                  <div className="flex flex-col items-end gap-1">
+                                    {!subConcluida && (
+                                      <>
                                         <button
-                                          type="button"
-                                          className="text-[10px] text-orange-600 border border-orange-200 rounded px-1.5 py-0.5 hover:bg-orange-50"
-                                          title="Informar nova data de entrega"
-                                          onClick={() => { setReprogramarId(t.id!); setNovaDataRepr('') }}
-                                        >Reprog.</button>
-                                      )}
-                                    </div>
-                                  )
+                                          className="text-xs text-green-700 border border-green-200 rounded px-2 py-0.5 hover:bg-green-50 disabled:opacity-50"
+                                          disabled={isConcluindoSub || !t.id}
+                                          onClick={() => t.id && handleConcluirTarefa(t.id)}
+                                        >
+                                          {isConcluindoSub ? '…' : 'Concluir'}
+                                        </button>
+                                        {canEdit && t.id && reprogramarId !== t.id && (
+                                          <button
+                                            type="button"
+                                            className="text-[10px] text-orange-600 border border-orange-200 rounded px-1.5 py-0.5 hover:bg-orange-50"
+                                            title="Informar nova data de entrega"
+                                            onClick={() => { setReprogramarId(t.id!); setNovaDataRepr('') }}
+                                          >Reprog.</button>
+                                        )}
+                                      </>
+                                    )}
+                                    {isRascunho && canEdit && t.id && !isVersaoHistorica && (
+                                      <button
+                                        type="button"
+                                        className="text-[10px] text-red-500 border border-red-200 rounded px-1.5 py-0.5 hover:bg-red-50"
+                                        title="Excluir esta subtarefa"
+                                        onClick={() => setConfirmDeleteItem({ id: t.id!, nivel: 'SUBTAREFA', nome: t.nome, filhos: 0 })}
+                                      >Excluir</button>
+                                    )}
+                                  </div>
                                 )}
                               </td>
                             </tr>
@@ -2158,6 +2646,29 @@ export default function CronogramaEditor({
                             }
                           }
                           if (parentKey && collapsedFases.has(parentKey)) return
+                        }
+
+                        if (t.natureza_tarefa === 'PAGAMENTO' && t.pagamento && t.id != null) {
+                          rows.push(
+                            <TarefaPagamentoRow
+                              key={t.id}
+                              tarefaId={t.id}
+                              nome={t.nome}
+                              responsavelNome={t.responsavel_nome}
+                              pagamento={t.pagamento}
+                              colSpan={9}
+                              expanded={expandedPagamentos.has(t.id)}
+                              onToggleExpand={() => toggleExpandPagamento(t.id!)}
+                              onMarcarPago={handleMarcarParcelaPaga}
+                              onReprogramar={handleReprogramarParcela}
+                              canEdit={canEdit && !isVersaoHistorica}
+                              podeExcluir={['ADMIN', 'PMO'].includes(sessionUser.perfil) && !isVersaoHistorica}
+                              onAlterar={() => handleAbrirEdicaoPagamento(t)}
+                              onExcluir={() => setConfirmExcluirPagamento({ id: t.id!, nome: t.nome })}
+                              onMover={() => setMovendoTarefa({ id: t.id!, nome: t.nome })}
+                            />
+                          )
+                          return
                         }
 
                         const concluida  = !!t.data_conclusao
@@ -2187,7 +2698,7 @@ export default function CronogramaEditor({
 
                             {/* Nome */}
                             <td className="px-3 py-2">
-                              {editando ? (
+                              {rowOpen ? (
                                 <input
                                   type="text"
                                   className="input w-full text-sm py-1"
@@ -2206,7 +2717,7 @@ export default function CronogramaEditor({
 
                             {/* Responsável */}
                             <td className="px-3 py-2 text-xs w-32">
-                              {editando ? (
+                              {rowOpen ? (
                                 <MultiSelectUsuario
                                   value={t.responsaveis?.length ? (t.responsaveis as ResponsavelItem[]) : (t.responsavel_nome ? [{ id: t.responsavel_id ?? undefined, nome: t.responsavel_nome }] : [])}
                                   usuarios={usuarios}
@@ -2224,7 +2735,7 @@ export default function CronogramaEditor({
 
                             {/* Início */}
                             <td className="px-3 py-2 text-gray-600 text-xs w-24">
-                              {editando ? (
+                              {rowOpen ? (
                                 <div>
                                   <input
                                     type="text"
@@ -2240,6 +2751,8 @@ export default function CronogramaEditor({
                                     </p>
                                   )}
                                 </div>
+                              ) : editando ? (
+                                <span className="text-gray-400">{t.data_inicio || '—'}</span>
                               ) : (
                                 t.data_inicio_baseline ? (
                                   <div>
@@ -2254,7 +2767,7 @@ export default function CronogramaEditor({
 
                             {/* Fim */}
                             <td className="px-3 py-2 text-gray-600 text-xs w-24">
-                              {editando ? (
+                              {rowOpen ? (
                                 <div>
                                   <input
                                     type="text"
@@ -2270,6 +2783,8 @@ export default function CronogramaEditor({
                                     </p>
                                   )}
                                 </div>
+                              ) : editando ? (
+                                <span className="text-gray-400">{t.data_fim || '—'}</span>
                               ) : (
                                 <div>
                                   {reprogramarId === t.id ? (
@@ -2344,7 +2859,7 @@ export default function CronogramaEditor({
 
                             {/* Observação */}
                             <td className="px-3 py-2 w-40">
-                              {editando ? (
+                              {rowOpen ? (
                                 <input
                                   type="text"
                                   className="input w-full text-xs py-1"
@@ -2352,6 +2867,10 @@ export default function CronogramaEditor({
                                   value={t.observacoes ?? ''}
                                   onChange={e => handleAtualizarCampoInline(i, 'observacoes', e.target.value)}
                                 />
+                              ) : editando ? (
+                                <span className="text-xs text-gray-500 truncate max-w-[120px] block" title={t.observacoes ?? ''}>
+                                  {t.observacoes || <span className="text-gray-300">—</span>}
+                                </span>
                               ) : editObsId === t.id && t.id ? (
                                 <div className="flex items-center gap-1">
                                   <input type="text" autoFocus className="input text-xs py-0.5 w-full" value={editObsVal} onChange={e => setEditObsVal(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleSalvarObservacao(t.id!); if (e.key === 'Escape') setEditObsId(null) }} />
@@ -2377,11 +2896,21 @@ export default function CronogramaEditor({
                                   <button
                                     type="button"
                                     className="text-xs text-blue-600 hover:text-blue-800 border border-blue-200 rounded px-1.5 py-0.5"
-                                    title="Adicionar subtarefa"
-                                    onClick={() => handleAdicionarSubtarefaInline(i)}
+                                    title={rowOpen ? 'Fechar edição desta tarefa' : 'Editar esta tarefa'}
+                                    onClick={toggleRowOpen}
                                   >
-                                    +Sub
+                                    {rowOpen ? 'Fechar' : 'Editar'}
                                   </button>
+                                  {rowOpen && (
+                                    <button
+                                      type="button"
+                                      className="text-xs text-blue-600 hover:text-blue-800 border border-blue-200 rounded px-1.5 py-0.5"
+                                      title="Adicionar subtarefa a esta tarefa"
+                                      onClick={() => handleAdicionarSubtarefaInline(i)}
+                                    >
+                                      +Sub
+                                    </button>
+                                  )}
                                   <button
                                     type="button"
                                     className="text-xs text-red-400 hover:text-red-600 border border-red-200 rounded px-1.5 py-0.5"
@@ -2393,16 +2922,6 @@ export default function CronogramaEditor({
                                 </div>
                               ) : (
                                 <div className="flex flex-col items-end gap-1">
-                                  {canEdit && t.id && !isVersaoHistorica && (
-                                    <button
-                                      type="button"
-                                      className="text-xs text-blue-600 hover:text-blue-800 border border-blue-200 rounded px-1.5 py-0.5"
-                                      title="Adicionar subtarefa a esta tarefa"
-                                      onClick={() => { setSubtarefaDialogTarefa({ id: t.id!, nome: t.nome }); setShowSubtarefaDialog(true) }}
-                                    >
-                                      + Sub
-                                    </button>
-                                  )}
                                   {!concluida && (
                                     <>
                                       <button
@@ -2424,6 +2943,27 @@ export default function CronogramaEditor({
                                       )}
                                     </>
                                   )}
+                                  {canEdit && t.id && !isVersaoHistorica && (
+                                    <button
+                                      type="button"
+                                      className="text-[10px] text-megag-azul border border-blue-200 rounded px-1.5 py-0.5 hover:bg-blue-50"
+                                      title="Mover esta tarefa para outra fase"
+                                      onClick={() => setMovendoTarefa({ id: t.id!, nome: t.nome })}
+                                    >
+                                      Mover
+                                    </button>
+                                  )}
+                                  {isRascunho && canEdit && t.id && !isVersaoHistorica && (() => {
+                                    const nSub = tarefas.filter(s => s.nivel === 'SUBTAREFA' && s.parent_id === t.id).length
+                                    return (
+                                      <button
+                                        type="button"
+                                        className="text-[10px] text-red-500 border border-red-200 rounded px-1.5 py-0.5 hover:bg-red-50"
+                                        title="Excluir esta tarefa"
+                                        onClick={() => setConfirmDeleteItem({ id: t.id!, nivel: 'TAREFA', nome: t.nome, filhos: nSub })}
+                                      >Excluir</button>
+                                    )
+                                  })()}
                                 </div>
                               )}
                             </td>
@@ -2821,38 +3361,81 @@ export default function CronogramaEditor({
       {/* Modal: Selecionar Fase para Nova Tarefa (RASCUNHO) */}
       {showFaseSelector && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm">
-            <h3 className="font-semibold text-gray-900 mb-4">Selecionar Fase</h3>
-            <div className="space-y-2">
-              {editandoTarefas.map((t, i) => t.nivel === 'FASE' ? (
-                <label key={i} className="flex items-center gap-3 cursor-pointer p-2 rounded-lg hover:bg-gray-50">
+          <div className={`bg-white rounded-2xl shadow-xl w-full max-h-[90vh] flex flex-col ${novaAtividade.natureza_tarefa === 'PAGAMENTO' ? 'max-w-lg' : 'max-w-sm'}`}>
+            <div className="p-6 pb-4 shrink-0">
+              <h3 className="font-semibold text-gray-900 mb-4">Nova Tarefa</h3>
+              <label className="input-label">Tipo de tarefa</label>
+              <div className="flex gap-2">
+                <button type="button"
+                  className={`flex-1 text-sm py-1.5 rounded-lg border ${novaAtividade.natureza_tarefa === 'NORMAL' ? 'bg-megag-azul text-white border-megag-azul' : 'bg-white text-gray-600 border-gray-300'}`}
+                  onClick={() => setNovaAtividade(a => ({ ...a, natureza_tarefa: 'NORMAL' }))}>
+                  Tarefa normal
+                </button>
+                <button type="button"
+                  className={`flex-1 text-sm py-1.5 rounded-lg border ${novaAtividade.natureza_tarefa === 'PAGAMENTO' ? 'bg-megag-azul text-white border-megag-azul' : 'bg-white text-gray-600 border-gray-300'}`}
+                  onClick={() => setNovaAtividade(a => ({ ...a, natureza_tarefa: 'PAGAMENTO' }))}>
+                  💰 Tarefa de pagamento
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-6 min-h-0">
+              <label className="input-label">Fase</label>
+              <div className="space-y-2 mb-2">
+                {editandoTarefas.map((t, i) => t.nivel === 'FASE' ? (
+                  <label key={i} className="flex items-start gap-3 cursor-pointer p-2 rounded-lg hover:bg-gray-50">
+                    <input
+                      type="radio"
+                      name="fase_selector"
+                      checked={faseSelecionadaIdx === i}
+                      onChange={() => setFaseSelecionadaIdx(i)}
+                      className="accent-blue-600 mt-0.5 shrink-0"
+                    />
+                    <span className="text-sm text-gray-800" style={{ whiteSpace: 'normal' }}>{t.nome || '(Fase sem nome)'}</span>
+                  </label>
+                ) : null)}
+                <label className="flex items-start gap-3 cursor-pointer p-2 rounded-lg hover:bg-gray-50">
                   <input
                     type="radio"
                     name="fase_selector"
-                    checked={faseSelecionadaIdx === i}
-                    onChange={() => setFaseSelecionadaIdx(i)}
-                    className="accent-blue-600"
+                    checked={faseSelecionadaIdx === 'sem_fase'}
+                    onChange={() => setFaseSelecionadaIdx('sem_fase')}
+                    className="accent-blue-600 mt-0.5 shrink-0"
                   />
-                  <span className="text-sm text-gray-800">{t.nome || '(Fase sem nome)'}</span>
+                  <span className="text-sm text-gray-500 italic">Sem fase (adicionar ao final)</span>
                 </label>
-              ) : null)}
-              <label className="flex items-center gap-3 cursor-pointer p-2 rounded-lg hover:bg-gray-50">
-                <input
-                  type="radio"
-                  name="fase_selector"
-                  checked={faseSelecionadaIdx === 'sem_fase'}
-                  onChange={() => setFaseSelecionadaIdx('sem_fase')}
-                  className="accent-blue-600"
-                />
-                <span className="text-sm text-gray-500 italic">Sem fase (adicionar ao final)</span>
-              </label>
+              </div>
+
+              {novaAtividade.natureza_tarefa === 'PAGAMENTO' && (
+                <div className="space-y-3 border-t border-gray-100 pt-3 pb-1">
+                  <div>
+                    <label className="input-label">Nome/Descrição do pagamento *</label>
+                    <input type="text" className="input w-full" placeholder="Ex.: Pagamento — Contrato Equipamento"
+                      value={novaAtividade.nome}
+                      onChange={e => setNovaAtividade(a => ({ ...a, nome: e.target.value }))} />
+                  </div>
+                  <CamposTarefaPagamento novaAtividade={novaAtividade} setNovaAtividade={setNovaAtividade} usuarios={usuarios} />
+                  <div>
+                    <label className="input-label">Observações</label>
+                    <textarea className="input w-full min-h-[50px] resize-y"
+                      value={novaAtividade.observacoes}
+                      onChange={e => setNovaAtividade(a => ({ ...a, observacoes: e.target.value }))} />
+                  </div>
+                  {error && <div className="bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded text-sm">{error}</div>}
+                </div>
+              )}
             </div>
-            <div className="flex gap-2 mt-5 justify-end">
-              <button className="btn-secondary text-sm" onClick={() => setShowFaseSelector(false)}>
+
+            <div className="flex gap-2 p-6 pt-4 justify-end shrink-0 border-t border-gray-100">
+              <button className="btn-secondary text-sm" onClick={() => { setShowFaseSelector(false); setNovaAtividade(emptyNovaAtividade()) }}>
                 Cancelar
               </button>
-              <button className="btn-primary text-sm" onClick={handleConfirmarFaseSelector}>
-                Confirmar
+              <button
+                className="btn-primary text-sm"
+                disabled={savingAtividade || (novaAtividade.natureza_tarefa === 'PAGAMENTO' && (!novaAtividade.nome.trim() || !novaAtividade.valor_total || !novaAtividade.qtd_parcelas || !novaAtividade.data_primeira_parcela))}
+                onClick={handleConfirmarFaseSelector}
+              >
+                {savingAtividade ? 'Salvando…' : 'Confirmar'}
               </button>
             </div>
           </div>
@@ -2862,73 +3445,94 @@ export default function CronogramaEditor({
       {/* Modal: Nova Atividade (pós-aprovação) */}
       {showNovaAtividade && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-lg">
-            <h3 className="font-semibold text-gray-900 mb-4">Nova Atividade</h3>
-            <div className="space-y-3">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] flex flex-col">
+            <h3 className="font-semibold text-gray-900 p-6 pb-4 shrink-0">Nova Atividade</h3>
+            <div className="space-y-3 flex-1 overflow-y-auto px-6 min-h-0">
               <div>
-                <label className="input-label">Fase (Macro)</label>
-                <select className="input w-full" value={novaAtividade.macro_id}
-                  onChange={e => setNovaAtividade(a => ({ ...a, macro_id: e.target.value }))}>
-                  <option value="">— Selecione uma fase —</option>
-                  {fases.map(f => <option key={f.id} value={f.id}>{f.nome}</option>)}
-                </select>
+                <label className="input-label">Tipo de tarefa</label>
+                <div className="flex gap-2">
+                  <button type="button"
+                    className={`flex-1 text-sm py-1.5 rounded-lg border ${novaAtividade.natureza_tarefa === 'NORMAL' ? 'bg-megag-azul text-white border-megag-azul' : 'bg-white text-gray-600 border-gray-300'}`}
+                    onClick={() => setNovaAtividade(a => ({ ...a, natureza_tarefa: 'NORMAL' }))}>
+                    Tarefa normal
+                  </button>
+                  <button type="button"
+                    className={`flex-1 text-sm py-1.5 rounded-lg border ${novaAtividade.natureza_tarefa === 'PAGAMENTO' ? 'bg-megag-azul text-white border-megag-azul' : 'bg-white text-gray-600 border-gray-300'}`}
+                    onClick={() => setNovaAtividade(a => ({ ...a, natureza_tarefa: 'PAGAMENTO' }))}>
+                    💰 Tarefa de pagamento
+                  </button>
+                </div>
               </div>
               <div>
-                <label className="input-label">Nome da atividade *</label>
-                <input type="text" className="input w-full" placeholder="Descreva a atividade"
+                <label className="input-label">Fase (Macro)</label>
+                <SelectFase value={novaAtividade.macro_id} options={fases}
+                  onChange={id => setNovaAtividade(a => ({ ...a, macro_id: id }))}
+                  placeholder="— Selecione uma fase —" />
+              </div>
+              <div>
+                <label className="input-label">{novaAtividade.natureza_tarefa === 'PAGAMENTO' ? 'Nome/Descrição do pagamento *' : 'Nome da atividade *'}</label>
+                <input type="text" className="input w-full" placeholder={novaAtividade.natureza_tarefa === 'PAGAMENTO' ? 'Ex.: Pagamento — Contrato Equipamento' : 'Descreva a atividade'}
                   value={novaAtividade.nome}
                   onChange={e => setNovaAtividade(a => ({ ...a, nome: e.target.value }))} />
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="input-label">Tipo</label>
-                  <select className="input w-full" value={novaAtividade.tipo}
-                    onChange={e => setNovaAtividade(a => ({ ...a, tipo: e.target.value }))}>
-                    {tiposList.map(t => <option key={t.codigo} value={t.codigo}>{t.label}</option>)}
-                    {tiposList.length === 0 && <option value="TAREFA">Tarefa</option>}
-                  </select>
-                </div>
-                <div>
-                  <label className="input-label">Criticidade</label>
-                  <select className="input w-full" value={novaAtividade.criticidade}
-                    onChange={e => setNovaAtividade(a => ({ ...a, criticidade: e.target.value }))}>
-                    {criticidadesList.map(c => <option key={c.codigo} value={c.codigo}>{c.label}</option>)}
-                    {criticidadesList.length === 0 && <option value="NORMAL">Normal</option>}
-                  </select>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="input-label">Responsável *</label>
-                  <MultiSelectUsuario
-                    value={novaAtividade.responsaveis ?? []}
-                    usuarios={usuarios}
-                    placeholder="— Selecione —"
-                    onChange={sel => setNovaAtividade(a => ({
-                      ...a,
-                      responsaveis: sel,
-                      responsavel_id: sel[0]?.id ? String(sel[0].id) : '',
-                    }))}
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="input-label">Data de início</label>
-                  <input type="date" className="input w-full" value={novaAtividade.data_inicio}
-                    onChange={e => setNovaAtividade(a => ({ ...a, data_inicio: e.target.value }))} />
-                </div>
-                <div>
-                  <label className="input-label">Data de fim</label>
-                  <input type="date" className="input w-full" value={novaAtividade.data_fim}
-                    onChange={e => setNovaAtividade(a => ({ ...a, data_fim: e.target.value }))} />
-                </div>
-              </div>
-              {novaAtividade.data_inicio && novaAtividade.data_fim && (
-                <p className="text-xs text-gray-500">
-                  Duração calculada: {calcDuracao(novaAtividade.data_inicio, novaAtividade.data_fim) ?? '—'} dia(s)
-                </p>
+
+              {novaAtividade.natureza_tarefa === 'NORMAL' ? (
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="input-label">Tipo</label>
+                      <select className="input w-full" value={novaAtividade.tipo}
+                        onChange={e => setNovaAtividade(a => ({ ...a, tipo: e.target.value }))}>
+                        {tiposList.map(t => <option key={t.codigo} value={t.codigo}>{t.label}</option>)}
+                        {tiposList.length === 0 && <option value="TAREFA">Tarefa</option>}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="input-label">Criticidade</label>
+                      <select className="input w-full" value={novaAtividade.criticidade}
+                        onChange={e => setNovaAtividade(a => ({ ...a, criticidade: e.target.value }))}>
+                        {criticidadesList.map(c => <option key={c.codigo} value={c.codigo}>{c.label}</option>)}
+                        {criticidadesList.length === 0 && <option value="NORMAL">Normal</option>}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="input-label">Responsável *</label>
+                      <MultiSelectUsuario
+                        value={novaAtividade.responsaveis ?? []}
+                        usuarios={usuarios}
+                        placeholder="— Selecione —"
+                        onChange={sel => setNovaAtividade(a => ({
+                          ...a,
+                          responsaveis: sel,
+                          responsavel_id: sel[0]?.id ? String(sel[0].id) : '',
+                        }))}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="input-label">Data de início</label>
+                      <input type="date" className="input w-full" value={novaAtividade.data_inicio}
+                        onChange={e => setNovaAtividade(a => ({ ...a, data_inicio: e.target.value }))} />
+                    </div>
+                    <div>
+                      <label className="input-label">Data de fim</label>
+                      <input type="date" className="input w-full" value={novaAtividade.data_fim}
+                        onChange={e => setNovaAtividade(a => ({ ...a, data_fim: e.target.value }))} />
+                    </div>
+                  </div>
+                  {novaAtividade.data_inicio && novaAtividade.data_fim && (
+                    <p className="text-xs text-gray-500">
+                      Duração calculada: {calcDuracao(novaAtividade.data_inicio, novaAtividade.data_fim) ?? '—'} dia(s)
+                    </p>
+                  )}
+                </>
+              ) : (
+                <CamposTarefaPagamento novaAtividade={novaAtividade} setNovaAtividade={setNovaAtividade} usuarios={usuarios} />
               )}
+
               <div>
                 <label className="input-label">Observações</label>
                 <textarea className="input w-full min-h-[60px] resize-y" placeholder="Contexto desta inclusão…"
@@ -2936,15 +3540,21 @@ export default function CronogramaEditor({
                   onChange={e => setNovaAtividade(a => ({ ...a, observacoes: e.target.value }))} />
               </div>
             </div>
-            <div className="flex gap-2 mt-4 justify-end">
+            <div className="flex gap-2 p-6 pt-4 justify-end shrink-0 border-t border-gray-100">
               <button className="btn-secondary text-sm"
                 onClick={() => { setShowNovaAtividade(false); setNovaAtividade(emptyNovaAtividade()) }}>
                 Cancelar
               </button>
               <button className="btn-primary text-sm"
-                disabled={!novaAtividade.nome.trim() || (!novaAtividade.responsavel_id && !novaAtividade.responsaveis?.length) || savingAtividade}
+                disabled={
+                  !novaAtividade.nome.trim() || savingAtividade || (
+                    novaAtividade.natureza_tarefa === 'PAGAMENTO'
+                      ? !novaAtividade.valor_total || !novaAtividade.qtd_parcelas || !novaAtividade.data_primeira_parcela
+                      : (!novaAtividade.responsavel_id && !novaAtividade.responsaveis?.length)
+                  )
+                }
                 onClick={handleSalvarNovaAtividade}>
-                {savingAtividade ? 'Salvando…' : 'Salvar e Enviar Ciência'}
+                {savingAtividade ? 'Salvando…' : novaAtividade.natureza_tarefa === 'PAGAMENTO' ? 'Criar Tarefa de Pagamento' : 'Salvar e Enviar Ciência'}
               </button>
             </div>
           </div>
@@ -2960,6 +3570,130 @@ export default function CronogramaEditor({
         usuarios={usuarios}
         submitting={submitting}
       />
+
+      {/* Modal: Confirmar exclusão de item (apenas RASCUNHO) */}
+      {confirmDeleteItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-md">
+            <h3 className="font-semibold text-gray-900 mb-2">Excluir {confirmDeleteItem.nivel === 'FASE' ? 'fase' : confirmDeleteItem.nivel === 'TAREFA' ? 'tarefa' : 'subtarefa'}</h3>
+            {confirmDeleteItem.filhos > 0 ? (
+              <>
+                <p className="text-sm text-gray-600 mb-1">
+                  <strong>&ldquo;{confirmDeleteItem.nome}&rdquo;</strong> possui <strong>{confirmDeleteItem.filhos} item(ns) vinculado(s)</strong>.
+                </p>
+                <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-4">
+                  Ao confirmar, o item e todos os seus filhos serão excluídos permanentemente do rascunho.
+                </p>
+              </>
+            ) : (
+              <p className="text-sm text-gray-600 mb-4">
+                Tem certeza que deseja excluir <strong>&ldquo;{confirmDeleteItem.nome}&rdquo;</strong>? Esta ação não pode ser desfeita.
+              </p>
+            )}
+            <div className="flex gap-2 justify-end">
+              <button
+                className="btn-ghost text-sm text-gray-500"
+                disabled={deletandoItem}
+                onClick={() => setConfirmDeleteItem(null)}
+              >
+                Cancelar
+              </button>
+              <button
+                className="btn-primary text-sm bg-red-600 hover:bg-red-700 border-red-600"
+                disabled={deletandoItem}
+                onClick={() => handleExcluirItem(confirmDeleteItem.id, confirmDeleteItem.nivel, confirmDeleteItem.nome, confirmDeleteItem.filhos > 0)}
+              >
+                {deletandoItem ? 'Excluindo…' : confirmDeleteItem.filhos > 0 ? `Excluir item e ${confirmDeleteItem.filhos} filho(s)` : 'Excluir'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Alterar Tarefa de Pagamento */}
+      {editandoPagamentoId != null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <h3 className="font-semibold text-gray-900 mb-1">Alterar Tarefa de Pagamento</h3>
+            {qtdParcelasPagasEdit > 0 && (
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-4">
+                {qtdParcelasPagasEdit} parcela(s) já paga(s) serão preservadas (valor, data e histórico). As alterações abaixo afetam apenas as parcelas pendentes.
+              </p>
+            )}
+            <div className="space-y-3">
+              <div>
+                <label className="input-label">Nome/Descrição do pagamento *</label>
+                <input type="text" className="input w-full"
+                  value={editPagamentoForm.nome}
+                  onChange={e => setEditPagamentoForm(a => ({ ...a, nome: e.target.value }))} />
+              </div>
+              <CamposTarefaPagamento novaAtividade={editPagamentoForm} setNovaAtividade={setEditPagamentoForm} usuarios={usuarios} />
+              <div>
+                <label className="input-label">Observações</label>
+                <input type="text" className="input w-full" placeholder="Opcional"
+                  value={editPagamentoForm.observacoes}
+                  onChange={e => setEditPagamentoForm(a => ({ ...a, observacoes: e.target.value }))} />
+              </div>
+              {error && <p className="text-sm text-red-600">{error}</p>}
+            </div>
+            <div className="flex gap-2 justify-end mt-4">
+              <button className="btn-ghost text-sm text-gray-500" disabled={savingEditPagamento}
+                onClick={() => { setEditandoPagamentoId(null); setEditPagamentoForm(emptyNovaAtividade()); setError(null) }}>
+                Cancelar
+              </button>
+              <button className="btn-primary text-sm" disabled={savingEditPagamento}
+                onClick={handleSalvarEdicaoPagamento}>
+                {savingEditPagamento ? 'Salvando…' : 'Salvar alterações'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Confirmar exclusão de Tarefa de Pagamento (só ADMIN/PMO) */}
+      {confirmExcluirPagamento && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-md">
+            <h3 className="font-semibold text-gray-900 mb-2">Excluir tarefa de pagamento</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Tem certeza que deseja excluir <strong>&ldquo;{confirmExcluirPagamento.nome}&rdquo;</strong>? As parcelas e o histórico de pagamento já registrados serão preservados no banco, mas a tarefa deixará de aparecer no cronograma.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button className="btn-ghost text-sm text-gray-500" disabled={excluindoPagamento}
+                onClick={() => setConfirmExcluirPagamento(null)}>
+                Cancelar
+              </button>
+              <button className="btn-primary text-sm bg-red-600 hover:bg-red-700 border-red-600" disabled={excluindoPagamento}
+                onClick={handleExcluirPagamento}>
+                {excluindoPagamento ? 'Excluindo…' : 'Excluir'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Mover tarefa entre fases */}
+      {movendoTarefa && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-md">
+            <h3 className="font-semibold text-gray-900 mb-1">Mover tarefa</h3>
+            <p className="text-xs text-gray-400 mb-4">&ldquo;{movendoTarefa.nome}&rdquo;</p>
+            <label className="input-label">Fase de destino *</label>
+            <SelectFase value={novaFaseIdMover} options={fases} onChange={setNovaFaseIdMover} />
+            {error && <p className="text-sm text-red-600 mt-2">{error}</p>}
+            <div className="flex gap-2 justify-end mt-4">
+              <button className="btn-ghost text-sm text-gray-500" disabled={salvandoMover}
+                onClick={() => { setMovendoTarefa(null); setNovaFaseIdMover(''); setError(null) }}>
+                Cancelar
+              </button>
+              <button className="btn-primary text-sm" disabled={salvandoMover || !novaFaseIdMover}
+                onClick={handleConfirmarMoverTarefa}>
+                {salvandoMover ? 'Movendo…' : 'Confirmar movimentação'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Dialog: Esta tarefa não possui subtarefas */}
       {showSubtarefaDialog && subtarefaDialogTarefa && (
@@ -3079,12 +3813,14 @@ export default function CronogramaEditor({
       {/* Modal: Subtarefas geradas por IA */}
       {showSubtarefasGeradas && subtarefaDialogTarefa && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-lg">
-            <h3 className="font-semibold text-gray-900 mb-1">Subtarefas geradas pela IA</h3>
-            <p className="text-xs text-gray-400 mb-4">
-              Tarefa: {subtarefaDialogTarefa.nome} · Selecione as que deseja incluir
-            </p>
-            <div className="space-y-2 max-h-64 overflow-y-auto mb-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[85vh] flex flex-col">
+            <div className="p-6 pb-0 shrink-0">
+              <h3 className="font-semibold text-gray-900 mb-1">Subtarefas geradas pela IA</h3>
+              <p className="text-xs text-gray-400 mb-4">
+                Tarefa: {subtarefaDialogTarefa.nome} · Selecione as que deseja incluir
+              </p>
+            </div>
+            <div className="space-y-2 flex-1 min-h-0 overflow-y-auto mb-4 px-6">
               {subtarefasGeradas.map((s, idx) => (
                 <label key={idx} className="flex items-start gap-2 p-2 rounded-lg border border-gray-100 hover:bg-blue-50 cursor-pointer">
                   <input
@@ -3111,21 +3847,23 @@ export default function CronogramaEditor({
                 </label>
               ))}
             </div>
-            <p className="text-xs text-amber-600 mb-3">
-              As subtarefas serão adicionadas sem responsável. Defina-os editando o cronograma.
-            </p>
-            <div className="flex gap-2 justify-end">
-              <button className="btn-secondary text-sm"
-                onClick={() => { setShowSubtarefasGeradas(false); setSubtarefaDialogTarefa(null) }}>
-                Cancelar
-              </button>
-              <button
-                className="btn-primary text-sm"
-                disabled={salvandoSubtarefasGeradas || !subtarefasGeradas.some(s => s.selecionada)}
-                onClick={handleSalvarSubtarefasGeradas}
-              >
-                {salvandoSubtarefasGeradas ? 'Salvando…' : `Adicionar ${subtarefasGeradas.filter(s => s.selecionada).length} subtarefa(s)`}
-              </button>
+            <div className="p-6 pt-0 shrink-0 border-t border-gray-100">
+              <p className="text-xs text-amber-600 mb-3 pt-3">
+                As subtarefas serão adicionadas sem responsável. Defina-os editando o cronograma.
+              </p>
+              <div className="flex gap-2 justify-end">
+                <button className="btn-secondary text-sm"
+                  onClick={() => { setShowSubtarefasGeradas(false); setSubtarefaDialogTarefa(null) }}>
+                  Cancelar
+                </button>
+                <button
+                  className="btn-primary text-sm"
+                  disabled={salvandoSubtarefasGeradas || !subtarefasGeradas.some(s => s.selecionada)}
+                  onClick={handleSalvarSubtarefasGeradas}
+                >
+                  {salvandoSubtarefasGeradas ? 'Salvando…' : `Adicionar ${subtarefasGeradas.filter(s => s.selecionada).length} subtarefa(s)`}
+                </button>
+              </div>
             </div>
           </div>
         </div>

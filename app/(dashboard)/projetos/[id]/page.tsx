@@ -94,6 +94,29 @@ export default async function ProjetoDetalhePage({
       `).all(cronogramaData.id)
     : []
 
+  // Tarefa de Pagamento: anexa cabeçalho + parcelas nas tarefas com natureza_tarefa='PAGAMENTO'
+  const tarefasPagamentoIds = (cronogramaTarefas as { id: number; natureza_tarefa?: string }[])
+    .filter(t => t.natureza_tarefa === 'PAGAMENTO')
+    .map(t => t.id)
+  if (tarefasPagamentoIds.length > 0) {
+    const placeholders = tarefasPagamentoIds.map(() => '?').join(',')
+    const headers = db.prepare(
+      `SELECT * FROM cronograma_tarefa_pagamento WHERE cronograma_tarefa_id IN (${placeholders})`
+    ).all(...tarefasPagamentoIds) as { cronograma_tarefa_id: number }[]
+    const parcelas = db.prepare(
+      `SELECT p.*, u.nome as pago_por_nome
+       FROM cronograma_tarefa_parcelas p
+       LEFT JOIN usuarios u ON u.id = p.pago_por
+       WHERE p.cronograma_tarefa_id IN (${placeholders})
+       ORDER BY p.numero ASC`
+    ).all(...tarefasPagamentoIds) as { cronograma_tarefa_id: number }[]
+    for (const t of cronogramaTarefas as (Record<string, unknown> & { id: number; pagamento?: unknown })[]) {
+      const header = headers.find(h => h.cronograma_tarefa_id === t.id)
+      if (!header) continue
+      t.pagamento = { ...header, parcelas: parcelas.filter(p => p.cronograma_tarefa_id === t.id) }
+    }
+  }
+
   const lancamentos = db.prepare(`
     SELECT fl.*, u.nome as criador_nome
     FROM financeiro_lancamentos fl

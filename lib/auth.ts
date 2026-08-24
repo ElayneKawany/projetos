@@ -117,6 +117,7 @@ export function temPermissao(perfil: string, permissaoNecessaria: string): boole
     'financeiro:approve': 60,
     'auditoria:view': 40,
     'dashboard:executive': 60,
+    'cronograma:excluir_pagamento': 80,
   }
 
   const nivelNecessario = permissoes[permissaoNecessaria] ?? 100

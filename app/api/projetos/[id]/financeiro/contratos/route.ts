@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSession, temPermissao } from '@/lib/auth'
 import { buscarContratosCompletos, buscarResumoFinanceiro, buscarViabilidadeFinanceira } from '@/lib/financeiro/dashboard'
 import { criarContrato } from '@/lib/financeiro/contratos'
+import { buscarPagamentosSemContrato } from '@/lib/financeiro/pagamentos'
 import type { TipoContrato, NaturezaFinanceira } from '@/types'
 
 export async function GET(
@@ -14,13 +15,14 @@ export async function GET(
   const { id } = await params
   const projeto_id = Number(id)
 
-  const [contratos, resumo, viabilidade] = [
+  const [contratos, resumo, viabilidade, pendentes] = [
     buscarContratosCompletos(projeto_id),
     buscarResumoFinanceiro(projeto_id),
     buscarViabilidadeFinanceira(projeto_id),
+    buscarPagamentosSemContrato(projeto_id),
   ]
 
-  return NextResponse.json({ contratos, resumo, viabilidade })
+  return NextResponse.json({ contratos, resumo, viabilidade, pendentes })
 }
 
 export async function POST(
@@ -37,11 +39,11 @@ export async function POST(
   const projeto_id = Number(id)
   const body = await request.json()
 
-  const { numero_contrato, contratado, tipo_contrato, natureza_financeira, descricao_servico, valor_aprovado, observacao } = body
+  const { numero_contrato, contratado, tipo_contrato, natureza_financeira, descricao_servico, categoria, valor_aprovado, observacao, tipo_projecao, parcelas_projecao } = body
 
-  if (!contratado?.trim()) {
-    return NextResponse.json({ error: 'Campo "contratado" é obrigatório.' }, { status: 400 })
-  }
+  // "contratado" deixou de ser obrigatório: vazio = contrato aceita qualquer fornecedor
+  // (ver lib/financeiro/enquadramento.ts). Preenchido = restringe àquele fornecedor exato.
+  const contratadoFinal = typeof contratado === 'string' ? contratado.trim() : ''
   if (typeof valor_aprovado !== 'number' || valor_aprovado < 0) {
     return NextResponse.json({ error: 'Campo "valor_aprovado" deve ser um número >= 0.' }, { status: 400 })
   }
@@ -50,7 +52,12 @@ export async function POST(
   }
 
   const contratoId = criarContrato(
-    { projeto_id, numero_contrato, contratado, tipo_contrato: tipo_contrato as TipoContrato, natureza_financeira: natureza_financeira as NaturezaFinanceira, descricao_servico, valor_aprovado, observacao },
+    {
+      projeto_id, numero_contrato, contratado: contratadoFinal, tipo_contrato: tipo_contrato as TipoContrato,
+      natureza_financeira: natureza_financeira as NaturezaFinanceira, descricao_servico, categoria, valor_aprovado, observacao,
+      tipo_projecao: tipo_projecao === 'PARCELADO' ? 'PARCELADO' : 'NENHUMA',
+      parcelas_projecao: Array.isArray(parcelas_projecao) ? parcelas_projecao : undefined,
+    },
     session.id,
     session.nome,
   )
