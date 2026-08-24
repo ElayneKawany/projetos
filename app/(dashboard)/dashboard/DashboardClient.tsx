@@ -16,6 +16,8 @@ import type { SessionUser } from '@/lib/auth'
 import type { StatusProjeto, Prioridade, DiretoriaDashboard } from '@/types'
 import { STATUS_LABELS, PRIORIDADE_LABELS } from '@/types'
 import { gerarSiglaDiretoria } from '@/lib/utils/diretoria'
+import type { ProximaTarefaItem } from '@/lib/meu-trabalho'
+import ProximasTarefas from '@/components/dashboard/ProximasTarefas'
 
 // ── Grupos de status para os cards por diretoria ──────────────────────────────
 const STATUS_GRUPOS = [
@@ -109,6 +111,7 @@ interface Props {
     beneficio_realizado: number
   }
   session: SessionUser
+  proximasTarefas: { total: number; itens: ProximaTarefaItem[] }
 }
 
 function fBRL(v: number): string {
@@ -218,7 +221,7 @@ function CardDiretoria({ d, onNavigate }: { d: DiretoriaDashboard; onNavigate: (
   )
 }
 
-export default function DashboardClient({ dados, session }: Props) {
+export default function DashboardClient({ dados, session, proximasTarefas }: Props) {
   const router = useRouter()
   const ehExecutivo = ['CEO', 'DIRETOR'].includes(session.perfil)
   const [ordenacao, setOrdenacao] = useState<'total' | 'nome'>('total')
@@ -451,7 +454,14 @@ export default function DashboardClient({ dados, session }: Props) {
         </div>
       </div>
 
-      {/* ── 4. Próximos comitês + Acesso rápido ── */}
+      {/* ── 4. Próximas Tarefas ── */}
+      <ProximasTarefas
+        total={proximasTarefas.total}
+        itens={proximasTarefas.itens}
+        verTodasHref="/proximas-tarefas"
+      />
+
+      {/* ── 5. Próximos comitês + Acesso rápido ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="card">
           <div className="card-header">

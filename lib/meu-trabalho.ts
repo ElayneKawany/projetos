@@ -14,6 +14,7 @@
  */
 
 import getDb from './db'
+import type { SessionUser } from './auth'
 
 // ─── Interfaces ───────────────────────────────────────────────────────────────
 
@@ -409,4 +410,166 @@ export function indicadoresCronograma(projetoId: number): IndicadoresCronograma 
     percentual_geral:   pctGeral,
     por_responsavel:    Array.from(mapaResp.values()),
   }
+}
+
+// ─── Próximas Tarefas (Dashboard) ─────────────────────────────────────────────
+
+export interface ProximaTarefaItem {
+  tarefa_id: number
+  projeto_id: number
+  projeto_codigo: string | null
+  projeto_nome: string
+  diretoria_nome: string | null
+  nivel: 'FASE' | 'TAREFA' | 'SUBTAREFA'
+  nome: string
+  responsavel_nome: string | null
+  data_inicio: string | null
+  data_fim: string
+  dias: number
+  situacao: 'ATRASADA' | 'VENCE_HOJE' | 'PROXIMA'
+  status: string | null
+  observacoes: string | null
+}
+
+const CRONOGRAMA_STATUS_APROVADO = ['APROVADO', 'EM_EXECUCAO', 'PRONTO_PARA_ENCERRAMENTO', 'ENCERRADO']
+
+/**
+ * Tarefas de cronograma atrasadas, vencendo hoje ou vencendo nos próximos 7
+ * dias, filtradas por perfil do usuário logado (aplicado aqui, no backend):
+ *  - ADMIN, PMO, CEO: todas as tarefas de todos os projetos.
+ *  - DIRETOR: apenas tarefas de projetos da própria diretoria.
+ *  - Demais perfis: apenas tarefas onde é responsável ou executor
+ *    (coluna própria ou tabela cronograma_responsaveis).
+ *
+ * Considera só o cronograma mais recente já aprovado de cada projeto
+ * (RASCUNHO/PENDENTE_APROVACAO são ignorados) e aplica a hierarquia
+ * fase>tarefa>subtarefa: uma tarefa não aparece se tiver subtarefa ativa,
+ * uma fase não aparece se tiver tarefa ativa — evita linhas duplicadas.
+ */
+export function buscarProximasTarefasDashboard(
+  session: SessionUser,
+  opts?: { limit?: number }
+): { total: number; itens: ProximaTarefaItem[] } {
+  const db = getDb()
+
+  const wheres: string[] = [
+    '(ct.ativo IS NULL OR ct.ativo = 1)',
+    'p.ativo = 1',
+    `(
+      ct.nivel = 'SUBTAREFA'
+      OR (ct.nivel = 'TAREFA' AND NOT EXISTS (
+            SELECT 1 FROM cronograma_tarefas sub
+            WHERE sub.parent_id = ct.id AND sub.nivel = 'SUBTAREFA' AND (sub.ativo IS NULL OR sub.ativo = 1)))
+      OR (ct.nivel = 'FASE' AND NOT EXISTS (
+            SELECT 1 FROM cronograma_tarefas tar
+            WHERE tar.parent_id = ct.id AND tar.nivel = 'TAREFA' AND (tar.ativo IS NULL OR tar.ativo = 1)))
+    )`,
+    "NOT (ct.data_conclusao IS NOT NULL OR ct.status = 'CONCLUIDA' OR ct.percentual >= 100)",
+    'ct.data_fim IS NOT NULL',
+    "date(ct.data_fim) <= date('now', '+7 days')",
+  ]
+  const params: Record<string, unknown> = {
+    statusAprovado0: CRONOGRAMA_STATUS_APROVADO[0],
+    statusAprovado1: CRONOGRAMA_STATUS_APROVADO[1],
+    statusAprovado2: CRONOGRAMA_STATUS_APROVADO[2],
+    statusAprovado3: CRONOGRAMA_STATUS_APROVADO[3],
+  }
+
+  if (['ADMIN', 'PMO', 'CEO'].includes(session.perfil)) {
+    // sem filtro adicional — vê tudo
+  } else if (session.perfil === 'DIRETOR') {
+    wheres.push('p.diretoria_id = @diretoriaId')
+    params.diretoriaId = session.diretoria_id
+  } else {
+    wheres.push(`(
+      ct.responsavel_id = @uid OR ct.executor_id = @uid
+      OR EXISTS (SELECT 1 FROM cronograma_responsaveis cresp WHERE cresp.cronograma_tarefa_id = ct.id AND cresp.usuario_id = @uid)
+    )`)
+    params.uid = session.id
+  }
+
+  const rows = db.prepare(`
+    WITH cronograma_atual AS (
+      SELECT cr.id AS cronograma_id, cr.projeto_id
+      FROM cronogramas cr
+      WHERE (cr.ativo IS NULL OR cr.ativo = 1)
+        AND cr.status IN (@statusAprovado0, @statusAprovado1, @statusAprovado2, @statusAprovado3)
+        AND cr.versao = (
+          SELECT MAX(cr2.versao) FROM cronogramas cr2
+          WHERE cr2.projeto_id = cr.projeto_id
+            AND (cr2.ativo IS NULL OR cr2.ativo = 1)
+            AND cr2.status IN (@statusAprovado0, @statusAprovado1, @statusAprovado2, @statusAprovado3)
+        )
+    )
+    SELECT
+      ct.id            AS tarefa_id,
+      p.id             AS projeto_id,
+      p.codigo         AS projeto_codigo,
+      p.nome           AS projeto_nome,
+      d.nome           AS diretoria_nome,
+      ct.nivel,
+      ct.nome,
+      COALESCE(ur.nome, ct.responsavel_nome_ext, (
+        SELECT COALESCE(u2.nome, cr2.usuario_nome_ext)
+        FROM cronograma_responsaveis cr2
+        LEFT JOIN usuarios u2 ON u2.id = cr2.usuario_id
+        WHERE cr2.cronograma_tarefa_id = ct.id
+        ORDER BY cr2.id ASC LIMIT 1
+      ))              AS responsavel_nome,
+      ct.data_inicio,
+      ct.data_fim,
+      ct.status,
+      ct.observacoes
+    FROM cronograma_tarefas ct
+    JOIN cronograma_atual ca ON ca.cronograma_id = ct.cronograma_id
+    JOIN projetos p          ON p.id = ca.projeto_id
+    LEFT JOIN diretorias d   ON d.id = p.diretoria_id
+    LEFT JOIN usuarios ur    ON ur.id = ct.responsavel_id
+    WHERE ${wheres.join(' AND ')}
+    ORDER BY ct.data_fim ASC
+  `).all(params) as Array<{
+    tarefa_id: number
+    projeto_id: number
+    projeto_codigo: string | null
+    projeto_nome: string
+    diretoria_nome: string | null
+    nivel: string
+    nome: string
+    responsavel_nome: string | null
+    data_inicio: string | null
+    data_fim: string
+    status: string | null
+    observacoes: string | null
+  }>
+
+  const hoje = new Date().toISOString().slice(0, 10)
+
+  const itensCompletos: ProximaTarefaItem[] = rows.map(r => {
+    const situacao: ProximaTarefaItem['situacao'] =
+      r.data_fim < hoje ? 'ATRASADA' : r.data_fim === hoje ? 'VENCE_HOJE' : 'PROXIMA'
+    const dias = Math.round(
+      (new Date(r.data_fim + 'T00:00:00').getTime() - new Date(hoje + 'T00:00:00').getTime()) / 86_400_000
+    )
+    return {
+      tarefa_id: r.tarefa_id,
+      projeto_id: r.projeto_id,
+      projeto_codigo: r.projeto_codigo,
+      projeto_nome: r.projeto_nome,
+      diretoria_nome: r.diretoria_nome,
+      nivel: r.nivel as ProximaTarefaItem['nivel'],
+      nome: r.nome,
+      responsavel_nome: r.responsavel_nome,
+      data_inicio: r.data_inicio,
+      data_fim: r.data_fim,
+      dias,
+      situacao,
+      status: r.status,
+      observacoes: r.observacoes,
+    }
+  })
+
+  const total = itensCompletos.length
+  const itens = opts?.limit ? itensCompletos.slice(0, opts.limit) : itensCompletos
+
+  return { total, itens }
 }
