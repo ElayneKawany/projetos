@@ -43,19 +43,25 @@ export async function POST(
     }, { status: 422 })
   }
 
-  const { importados, pagamentosImportados } = importarContratos(
+  const { importados, pagamentosImportados, pagamentosDuplicadosIgnorados } = importarContratos(
     projeto_id,
     resultado.contratos,
     session.id,
     session.nome,
   )
 
+  const warnings = [...resultado.warnings]
+  if (pagamentosDuplicadosIgnorados > 0) {
+    warnings.push(`${pagamentosDuplicadosIgnorados} lançamento(s) já existente(s) foram ignorados (evita duplicar reimportação da mesma planilha).`)
+  }
+
   return NextResponse.json({
     ok: true,
     importados,
     pagamentosImportados,
+    pagamentosDuplicadosIgnorados,
     contratosProcessados: resultado.contratosImportados,
     linhasLidas: resultado.linhasLidas,
-    warnings: resultado.warnings,
+    warnings,
   })
 }

@@ -25,6 +25,7 @@ export async function PATCH(
       tipo_contrato: body.tipo_contrato as TipoContrato | undefined,
       natureza_financeira: body.natureza_financeira as NaturezaFinanceira | undefined,
       descricao_servico: body.descricao_servico,
+      categoria: body.categoria,
       valor_aprovado: body.valor_aprovado,
       status: body.status as StatusContrato | undefined,
       observacao: body.observacao,

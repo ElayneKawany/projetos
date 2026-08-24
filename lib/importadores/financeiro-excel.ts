@@ -8,8 +8,16 @@
  *   Número Documento | Tipo Documento | Nota Fiscal | Data Pagamento | Competência |
  *   Valor Pago | Observação
  *
- * Consolidação: linhas com mesmo (Número Contrato + Contratado) são agrupadas.
- * Cada linha com Valor Pago > 0 gera um pagamento.
+ * Consolidação: quando a linha tem "Número Contrato" preenchido, TODAS as linhas com esse
+ * mesmo número são agrupadas em um único contrato — mesmo que o "Contratado" (fornecedor)
+ * varie linha a linha (ex.: contrato de obra com dezenas de NFs de fornecedores de material
+ * diferentes, todos sob o mesmo número de contrato). O fornecedor NÃO é chave de agrupamento;
+ * cada lançamento carrega seu próprio fornecedor no campo `fornecedor` do pagamento.
+ * Quando "Número Contrato" vem vazio, a linha não tem como ser associada a nada — nesse caso
+ * (só nesse caso) o agrupamento cai de volta para "Contratado", como antes.
+ * Cada linha com Valor Pago > 0 gera um pagamento. Lançamentos já importados anteriormente
+ * (mesmo contrato + número do documento + valor + data + observação) são ignorados na
+ * reimportação — ver `existePagamentoImportado` em lib/repositories/financeiro.ts.
  */
 
 import * as XLSX from 'xlsx'
@@ -137,7 +145,19 @@ export function parsearExcelFinanceiro(buffer: ArrayBuffer): ResultadoImportacao
   }
 
   const ws = wb.Sheets[wsName]
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: null, raw: false })
+  // raw:true (não raw:false) é essencial aqui: com raw:false, o xlsx converte toda célula numérica
+  // real para o texto FORMATADO da célula — e, sem um number format BR explícito, esse texto usa
+  // ponto como separador decimal (padrão internacional), não vírgula. O parser abaixo assume padrão
+  // BR (ponto = milhar), então apagava o ponto decimal: 991.71 → "991.71" → "99171" → 99171 (bug real,
+  // valor 100x maior). Com raw:true, células numéricas chegam como number puro (sem ambiguidade de
+  // locale); só texto genuíno passa pelo parser de vírgula/ponto abaixo.
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: null, raw: true })
+  // Segunda leitura só para colunas-identificador (Nota Fiscal, Número Documento): usa o texto
+  // FORMATADO da célula, não o valor numérico bruto. Identificador não é valor monetário — se a
+  // célula for número com formato customizado (ex.: "000000"), raw:false devolve exatamente o texto
+  // exibido ("000123"), preservando zeros à esquerda que o raw:true acima descartaria. Colunas
+  // monetárias continuam vindo de `rows` (raw:true, ver comentário abaixo) — nada aqui reabre aquele bug.
+  const rowsTexto = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: null, raw: false })
 
   if (rows.length === 0) {
     errosFatais.push('A planilha não contém dados (apenas cabeçalho ou vazia).')
@@ -161,12 +181,18 @@ export function parsearExcelFinanceiro(buffer: ArrayBuffer): ResultadoImportacao
   const getCol = (row: Record<string, unknown>, campo: string) =>
     headerMap[campo] ? row[headerMap[campo]] : null
 
-  // Mapa de consolidação: chave = "numero_contrato|||contratado"
+  // Mesmo header (linha 1), mas lendo de `rowsTexto` — só para nota_fiscal/numero_documento.
+  const getColTexto = (rowTexto: Record<string, unknown>, campo: string) =>
+    headerMap[campo] ? rowTexto[headerMap[campo]] : null
+
+  // Mapa de consolidação: chave = número do contrato (sozinho) quando existir;
+  // cai para "contratado" só quando a linha não tem número de contrato.
   const contratoMap = new Map<string, ContratoParseado>()
   let linhasLidas = 0
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]
+    const rowTexto = rowsTexto[i]
     const numLinha = i + 2  // +2 por causa do cabeçalho
     linhasLidas++
 
@@ -180,7 +206,9 @@ export function parsearExcelFinanceiro(buffer: ArrayBuffer): ResultadoImportacao
     const numContratoRaw = getCol(row, 'numero_contrato')
     const numero_contrato = numContratoRaw ? String(numContratoRaw).trim() || null : null
 
-    const chave = `${numero_contrato ?? ''}|||${contratado}`
+    // Com número de contrato: agrupa só por ele — múltiplos fornecedores caem no mesmo contrato.
+    // Sem número: não há como agrupar por contrato, então usa o fornecedor (comportamento antigo).
+    const chave = numero_contrato ? `NC:${numero_contrato}` : `SEMNUM:${contratado}`
 
     const valorAprovadoRaw = getCol(row, 'valor_aprovado')
     const valorAprovado = parsearValor(valorAprovadoRaw) ?? 0
@@ -197,7 +225,10 @@ export function parsearExcelFinanceiro(buffer: ArrayBuffer): ResultadoImportacao
     if (!contratoMap.has(chave)) {
       contratoMap.set(chave, {
         numero_contrato,
-        contratado,
+        // Agrupado por número de contrato: não fixa um fornecedor específico como "o" contratado
+        // (contrato aceita qualquer fornecedor — mesmo padrão do enquadramento manual). Sem número
+        // de contrato, mantém o fornecedor da linha, como antes (grupo é por fornecedor mesmo).
+        contratado: numero_contrato ? '' : contratado,
         tipo_contrato,
         natureza_financeira,
         descricao_servico,
@@ -223,10 +254,10 @@ export function parsearExcelFinanceiro(buffer: ArrayBuffer): ResultadoImportacao
       const tipoDocRaw = getCol(row, 'tipo_documento')
       const tipo_documento: TipoDocumentoFinanceiro = tipoDocRaw ? normTipoDoc(String(tipoDocRaw)) : 'NF'
 
-      const numDocRaw = getCol(row, 'numero_documento')
+      const numDocRaw = getColTexto(rowTexto, 'numero_documento')
       const numero_documento = numDocRaw ? String(numDocRaw).trim() || null : null
 
-      const nfRaw = getCol(row, 'nota_fiscal')
+      const nfRaw = getColTexto(rowTexto, 'nota_fiscal')
       const nota_fiscal = nfRaw ? String(nfRaw).trim() || null : null
 
       const dataPagamentoRaw = getCol(row, 'data_pagamento')
@@ -249,6 +280,8 @@ export function parsearExcelFinanceiro(buffer: ArrayBuffer): ResultadoImportacao
         competencia,
         valor_pago,
         observacao,
+        // Fornecedor real desta linha — independe de como o contrato foi agrupado.
+        fornecedor: contratado,
       }
 
       contratoMap.get(chave)!.pagamentos.push(pagamento)

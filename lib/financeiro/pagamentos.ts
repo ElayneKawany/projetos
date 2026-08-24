@@ -5,15 +5,30 @@ import { FinanceiroRepository } from '@/lib/repositories'
 import { fmtBRL } from './constants'
 import type { CriarPagamentoInput, AtualizarPagamentoInput } from './types'
 
+/** `contratos_candidatos` vem do banco como JSON (string) ou null — nunca reatribuir o array na própria coluna. */
+function mapPagamento(row: Record<string, unknown>): FinanceiroContratoPagamento {
+  const candidatosRaw = row.contratos_candidatos
+  return {
+    ...row,
+    contratos_candidatos: typeof candidatosRaw === 'string' ? (JSON.parse(candidatosRaw) as number[]) : null,
+  } as unknown as FinanceiroContratoPagamento
+}
+
 export function buscarPagamentos(
   projeto_id: number,
   contrato_id?: number
 ): FinanceiroContratoPagamento[] {
-  return FinanceiroRepository.findPagamentosPorContrato(projeto_id, contrato_id) as unknown as FinanceiroContratoPagamento[]
+  return FinanceiroRepository.findPagamentosPorContrato(projeto_id, contrato_id).map(mapPagamento)
 }
 
 export function buscarPagamentoPorId(id: number): FinanceiroContratoPagamento | undefined {
-  return FinanceiroRepository.findPagamentoByIdCompleto(id) as unknown as FinanceiroContratoPagamento | undefined
+  const row = FinanceiroRepository.findPagamentoByIdCompleto(id)
+  return row ? mapPagamento(row) : undefined
+}
+
+/** Pagamentos ainda não vinculados a um contrato — para as seções "Aguardando análise" e "Sem contrato". */
+export function buscarPagamentosSemContrato(projeto_id: number): FinanceiroContratoPagamento[] {
+  return FinanceiroRepository.findPagamentosSemContrato(projeto_id).map(mapPagamento)
 }
 
 export function criarPagamento(
@@ -21,8 +36,12 @@ export function criarPagamento(
   usuario_id: number,
   usuario_nome: string
 ): number {
-  const contrato = FinanceiroRepository.findContratoParaPagamento(dados.contrato_id)
-  if (!contrato) throw new Error('Contrato não encontrado.')
+  // contrato_id pode ser null aqui — pagamento ainda não enquadrado (AGUARDANDO_ANALISE/SEM_CONTRATO).
+  // Quando vem preenchido, o contrato precisa existir de fato.
+  const contrato = dados.contrato_id != null
+    ? FinanceiroRepository.findContratoParaPagamento(dados.contrato_id)
+    : undefined
+  if (dados.contrato_id != null && !contrato) throw new Error('Contrato não encontrado.')
 
   const id = Number(FinanceiroRepository.insertPagamentoCompleto({
     contrato_id: dados.contrato_id,
@@ -36,14 +55,19 @@ export function criarPagamento(
     observacao: dados.observacao ?? null,
     arquivo_path: dados.arquivo_path ?? null,
     criado_por: usuario_id,
+    fornecedor: dados.fornecedor ?? null,
+    enquadramento_status: dados.enquadramento_status ?? null,
+    contratos_candidatos: dados.contratos_candidatos ? JSON.stringify(dados.contratos_candidatos) : null,
   }))
+
+  const rotulo = contrato ? contrato.contratado : 'sem contrato definido'
 
   registrarEvento({
     projeto_id: dados.projeto_id,
     modulo: 'FINANCEIRO',
     artefato: 'PAGAMENTO',
     evento: 'PAGO',
-    titulo: `Pagamento lançado — ${contrato.contratado}`,
+    titulo: `Pagamento lançado — ${rotulo}`,
     descricao: `R$ ${fmtBRL(dados.valor_pago)}${dados.nota_fiscal ? ` · NF ${dados.nota_fiscal}` : ''}`,
     usuario_id,
     usuario_nome,
@@ -58,7 +82,7 @@ export function criarPagamento(
     entidade: 'financeiro_pagamentos',
     entidade_id: id,
     projeto_id: dados.projeto_id,
-    descricao: `Pagamento lançado: R$ ${fmtBRL(dados.valor_pago)} para "${contrato.contratado}"`,
+    descricao: `Pagamento lançado: R$ ${fmtBRL(dados.valor_pago)} para "${rotulo}"`,
     dados_depois: dados,
   })
 

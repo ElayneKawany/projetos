@@ -1,7 +1,7 @@
 import type { NextConfig } from 'next'
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ['better-sqlite3', 'pptxgenjs', 'docx'],
+  serverExternalPackages: ['better-sqlite3', 'pptxgenjs', 'docx', 'pino', 'pino-pretty'],
   images: {
     domains: ['megag.com.br'],
   },

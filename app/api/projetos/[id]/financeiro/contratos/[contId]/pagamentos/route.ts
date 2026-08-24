@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession, temPermissao } from '@/lib/auth'
-import { criarPagamento } from '@/lib/financeiro/pagamentos'
+import { enquadrarLancamento } from '@/lib/financeiro/enquadramento'
+import { FinanceiroRepository } from '@/lib/repositories'
 import { writeFile, mkdir } from 'fs/promises'
 import path from 'path'
 import type { TipoDocumentoFinanceiro } from '@/types'
@@ -22,6 +23,7 @@ export async function POST(
   const contentType = request.headers.get('content-type') ?? ''
   let arquivo_path: string | null = null
 
+  let fornecedor: string | null = null
   let numero_documento: string | null = null
   let tipo_documento: TipoDocumentoFinanceiro = 'NF'
   let nota_fiscal: string | null = null
@@ -32,6 +34,7 @@ export async function POST(
 
   if (contentType.includes('multipart/form-data')) {
     const form = await request.formData()
+    fornecedor = (form.get('fornecedor') as string) || null
     numero_documento = (form.get('numero_documento') as string) || null
     tipo_documento = ((form.get('tipo_documento') as string) || 'NF') as TipoDocumentoFinanceiro
     nota_fiscal = (form.get('nota_fiscal') as string) || null
@@ -53,6 +56,7 @@ export async function POST(
     }
   } else {
     const body = await request.json()
+    fornecedor = body.fornecedor ?? null
     numero_documento = body.numero_documento ?? null
     tipo_documento = (body.tipo_documento ?? 'NF') as TipoDocumentoFinanceiro
     nota_fiscal = body.nota_fiscal ?? null
@@ -67,12 +71,23 @@ export async function POST(
   }
 
   try {
-    const pagId = criarPagamento(
-      { contrato_id, projeto_id, numero_documento, tipo_documento, nota_fiscal, data_pagamento, competencia, valor_pago, observacao, arquivo_path },
+    // Contrato já é explícito (usuário abriu "Lançar pagamento" dentro deste card) — prioridade 1 do
+    // enquadramento, vence sempre. Fornecedor vem do formulário (pré-preenchido com o contratado do
+    // contrato, mas editável) — cai para o contratado do contrato só se vier vazio.
+    const contrato = FinanceiroRepository.findContratoParaPagamento(contrato_id)
+    if (!contrato) return NextResponse.json({ error: 'Contrato não encontrado.' }, { status: 404 })
+
+    const fornecedorFinal = (fornecedor && fornecedor.trim()) || contrato.contratado
+
+    const resultado = enquadrarLancamento(
+      {
+        contrato_id, projeto_id, fornecedor: fornecedorFinal,
+        numero_documento, tipo_documento, nota_fiscal, data_pagamento, competencia, valor_pago, observacao, arquivo_path,
+      },
       session.id,
       session.nome,
     )
-    return NextResponse.json({ ok: true, id: pagId }, { status: 201 })
+    return NextResponse.json({ ok: true, id: resultado.pagamento_id }, { status: 201 })
   } catch (e: unknown) {
     return NextResponse.json({ error: e instanceof Error ? e.message : 'Erro ao salvar pagamento.' }, { status: 400 })
   }

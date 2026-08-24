@@ -1,7 +1,11 @@
 import pino from 'pino'
+import pretty from 'pino-pretty'
 
 const isDev = process.env.NODE_ENV !== 'production'
 
+// Usa o stream síncrono do pino-pretty em vez de pino.transport() (worker thread):
+// dentro do bundle do Next.js o worker thread do transport não resolve o módulo
+// corretamente e derruba o processo ("the worker has exited") a cada log de erro.
 const logger = pino(
   {
     level: process.env.LOG_LEVEL ?? (isDev ? 'debug' : 'info'),
@@ -9,7 +13,7 @@ const logger = pino(
     timestamp: pino.stdTimeFunctions.isoTime,
   },
   isDev
-    ? pino.transport({ target: 'pino-pretty', options: { colorize: true, translateTime: 'SYS:HH:MM:ss' } })
+    ? pretty({ colorize: true, translateTime: 'SYS:HH:MM:ss' })
     : undefined
 )
 

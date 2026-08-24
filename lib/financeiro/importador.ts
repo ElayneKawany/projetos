@@ -12,15 +12,18 @@ export function importarContratos(
   contratos: ContratoParseado[],
   usuario_id: number,
   usuario_nome: string
-): { importados: number; pagamentosImportados: number } {
+): { importados: number; pagamentosImportados: number; pagamentosDuplicadosIgnorados: number } {
   let importados = 0
   let pagamentosImportados = 0
+  let pagamentosDuplicadosIgnorados = 0
 
   db.transaction(() => {
     for (const c of contratos) {
-      const existing = FinanceiroRepository.findContratoExistente(
-        projeto_id, c.contratado, c.numero_contrato
-      )
+      // Com número de contrato, busca só por ele (fornecedores diferentes podem compartilhar o
+      // mesmo contrato). Sem número, mantém a busca antiga por fornecedor — não há outra chave.
+      const existing = c.numero_contrato
+        ? FinanceiroRepository.findContratoExistentePorNumero(projeto_id, c.numero_contrato)
+        : FinanceiroRepository.findContratoExistente(projeto_id, c.contratado, c.numero_contrato)
 
       let contrato_id: number
 
@@ -42,6 +45,17 @@ export function importarContratos(
       }
 
       for (const p of c.pagamentos) {
+        // Reimportação idempotente: mesma linha (contrato + doc + valor + data + observação)
+        // já lançada antes não é duplicada.
+        const jaExiste = FinanceiroRepository.existePagamentoImportado({
+          contrato_id,
+          numero_documento: p.numero_documento ?? null,
+          valor_pago: p.valor_pago,
+          data_pagamento: p.data_pagamento ?? null,
+          observacao: p.observacao ?? null,
+        })
+        if (jaExiste) { pagamentosDuplicadosIgnorados++; continue }
+
         FinanceiroRepository.insertPagamentoImportado({
           contrato_id,
           projeto_id,
@@ -53,6 +67,7 @@ export function importarContratos(
           valor_pago: p.valor_pago,
           observacao: p.observacao ?? null,
           criado_por: usuario_id,
+          fornecedor: p.fornecedor ?? null,
         })
         pagamentosImportados++
       }
@@ -77,10 +92,10 @@ export function importarContratos(
     entidade: 'financeiro_contratos',
     projeto_id,
     descricao: `Importação Excel: ${importados} contratos, ${pagamentosImportados} pagamentos`,
-    dados_depois: { importados, pagamentosImportados },
+    dados_depois: { importados, pagamentosImportados, pagamentosDuplicadosIgnorados },
   })
 
-  return { importados, pagamentosImportados }
+  return { importados, pagamentosImportados, pagamentosDuplicadosIgnorados }
 }
 
 /** Processa um buffer de planilha Excel e persiste no banco em transação única. */
@@ -89,19 +104,21 @@ export function importarExcelFinanceiro(
   buffer: ArrayBuffer,
   usuario_id: number,
   usuario_nome: string
-): ReturnType<typeof parsearExcelFinanceiro> & { importados: number; pagamentosImportados: number } {
+): ReturnType<typeof parsearExcelFinanceiro> & {
+  importados: number; pagamentosImportados: number; pagamentosDuplicadosIgnorados: number
+} {
   const resultado = parsearExcelFinanceiro(buffer)
 
   if (resultado.errosFatais.length > 0 || resultado.contratos.length === 0) {
-    return { ...resultado, importados: 0, pagamentosImportados: 0 }
+    return { ...resultado, importados: 0, pagamentosImportados: 0, pagamentosDuplicadosIgnorados: 0 }
   }
 
-  const { importados, pagamentosImportados } = importarContratos(
+  const { importados, pagamentosImportados, pagamentosDuplicadosIgnorados } = importarContratos(
     projeto_id,
     resultado.contratos,
     usuario_id,
     usuario_nome,
   )
 
-  return { ...resultado, importados, pagamentosImportados }
+  return { ...resultado, importados, pagamentosImportados, pagamentosDuplicadosIgnorados }
 }
