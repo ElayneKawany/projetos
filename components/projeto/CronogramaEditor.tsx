@@ -3672,35 +3672,42 @@ export default function CronogramaEditor({
       {/* Modal: Alterar Tarefa de Pagamento */}
       {editandoPagamentoId != null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
-            <h3 className="font-semibold text-gray-900 mb-1">Alterar Tarefa de Pagamento</h3>
-            {qtdParcelasPagasEdit > 0 && (
-              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-4">
-                {qtdParcelasPagasEdit} parcela(s) já paga(s) serão preservadas (valor, data e histórico). As alterações abaixo afetam apenas as parcelas pendentes.
-              </p>
-            )}
-            <div className="space-y-3">
-              <div>
-                <label className="input-label">Nome/Descrição do pagamento *</label>
-                <input type="text" className="input w-full"
-                  value={editPagamentoForm.nome}
-                  onChange={e => setEditPagamentoForm(a => ({ ...a, nome: e.target.value }))} />
-              </div>
-              <CamposTarefaPagamento novaAtividade={editPagamentoForm} setNovaAtividade={setEditPagamentoForm} usuarios={usuarios} />
-              <div>
-                <label className="input-label">Observações</label>
-                <input type="text" className="input w-full" placeholder="Opcional"
-                  value={editPagamentoForm.observacoes}
-                  onChange={e => setEditPagamentoForm(a => ({ ...a, observacoes: e.target.value }))} />
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden">
+            {/* Cabeçalho + dados principais do pagamento — só entram na rolagem se a tela
+                for baixa demais para caber tudo; na prática (telas normais) ficam sempre
+                visíveis sem precisar rolar, porque cabem dentro do limite de altura. */}
+            <div className="flex-1 min-h-0 overflow-y-auto p-6 pb-3">
+              <h3 className="font-semibold text-gray-900 mb-1">Alterar Tarefa de Pagamento</h3>
+              {qtdParcelasPagasEdit > 0 && (
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">
+                  {qtdParcelasPagasEdit} parcela(s) já paga(s) serão preservadas (valor, data e histórico). As alterações abaixo afetam apenas as parcelas pendentes.
+                </p>
+              )}
+              <div className="space-y-3">
+                <div>
+                  <label className="input-label">Nome/Descrição do pagamento *</label>
+                  <input type="text" className="input w-full"
+                    value={editPagamentoForm.nome}
+                    onChange={e => setEditPagamentoForm(a => ({ ...a, nome: e.target.value }))} />
+                </div>
+                <CamposTarefaPagamento novaAtividade={editPagamentoForm} setNovaAtividade={setEditPagamentoForm} usuarios={usuarios} />
+                <div>
+                  <label className="input-label">Observações</label>
+                  <input type="text" className="input w-full" placeholder="Opcional"
+                    value={editPagamentoForm.observacoes}
+                    onChange={e => setEditPagamentoForm(a => ({ ...a, observacoes: e.target.value }))} />
+                </div>
               </div>
 
+              {/* Correção de data de pagamento — a lista de parcelas tem altura própria
+                  limitada e rola internamente, sem depender do tamanho da tela. */}
               {editPagamentoParcelas.some(p => p.status === 'PAGO') && (
-                <div className="border-t border-gray-100 pt-3">
+                <div className="border-t border-gray-100 pt-3 mt-3">
                   <label className="input-label">Corrigir data de pagamento realizado</label>
                   <p className="text-xs text-gray-400 mb-2">
                     Corrige a data em que o pagamento foi de fato realizado — a data de vencimento, o valor e o status da parcela não mudam.
                   </p>
-                  <div className="border border-gray-200 rounded-lg overflow-hidden">
+                  <div className="border border-gray-200 rounded-lg overflow-y-auto max-h-64">
                     {editPagamentoParcelas.filter(p => p.status === 'PAGO').map(p => (
                       <LinhaCorrigirDataPagamento
                         key={p.id}
@@ -3713,18 +3720,21 @@ export default function CronogramaEditor({
                   </div>
                 </div>
               )}
-
-              {error && <p className="text-sm text-red-600">{error}</p>}
             </div>
-            <div className="flex gap-2 justify-end mt-4">
-              <button className="btn-ghost text-sm text-gray-500" disabled={savingEditPagamento}
-                onClick={() => { setEditandoPagamentoId(null); setEditPagamentoForm(emptyNovaAtividade()); setEditPagamentoParcelas([]); setError(null) }}>
-                Cancelar
-              </button>
-              <button className="btn-primary text-sm" disabled={savingEditPagamento}
-                onClick={handleSalvarEdicaoPagamento}>
-                {savingEditPagamento ? 'Salvando…' : 'Salvar alterações'}
-              </button>
+
+            {/* Rodapé — erro + botões, sempre acessíveis, fora da rolagem */}
+            <div className="p-6 pt-3 shrink-0 border-t border-gray-100">
+              {error && <p className="text-sm text-red-600 mb-2">{error}</p>}
+              <div className="flex gap-2 justify-end">
+                <button className="btn-ghost text-sm text-gray-500" disabled={savingEditPagamento}
+                  onClick={() => { setEditandoPagamentoId(null); setEditPagamentoForm(emptyNovaAtividade()); setEditPagamentoParcelas([]); setError(null) }}>
+                  Cancelar
+                </button>
+                <button className="btn-primary text-sm" disabled={savingEditPagamento}
+                  onClick={handleSalvarEdicaoPagamento}>
+                  {savingEditPagamento ? 'Salvando…' : 'Salvar alterações'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
