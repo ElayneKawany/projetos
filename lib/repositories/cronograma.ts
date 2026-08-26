@@ -151,11 +151,19 @@ export const CronogramaRepository = {
 
   // ── New methods ────────────────────────────────────────────────────────────
 
-  findAllVersoes(projetoId: number): Array<{ id: number; versao: number; label: string; status: string; is_baseline: number; created_at: string }> {
+  findAllVersoes(projetoId: number): Array<{ id: number; versao: number; label: string; status: string; is_baseline: number; arquivado: number; created_at: string }> {
     return db.queryMany(
-      `SELECT id, versao, label, status, is_baseline, created_at
+      `SELECT id, versao, label, status, is_baseline, arquivado, created_at
        FROM cronogramas WHERE projeto_id = ? ORDER BY versao DESC`,
       [projetoId]
+    )
+  },
+
+  /** Arquiva uma versão do cronograma — só tira da lista padrão, não apaga nada. */
+  arquivarVersao(cronogramaId: number, usuarioId: number): void {
+    db.execute(
+      `UPDATE cronogramas SET arquivado = 1, arquivado_por = ?, arquivado_em = datetime('now') WHERE id = ?`,
+      [usuarioId, cronogramaId]
     )
   },
 
@@ -680,6 +688,18 @@ export const CronogramaRepository = {
        SET data_vencimento = ?, data_vencimento_baseline = COALESCE(?, ?), updated_at = datetime('now')
        WHERE id = ?`,
       [novaData, baselineAtual, dataAtual, parcelaId]
+    )
+  },
+
+  /**
+   * Correção pontual da data de vencimento ("Editar", não "Reprogramar"): não toca em
+   * data_vencimento_baseline — é a correção de um dado cadastrado errado, não a preservação
+   * de uma linha de base para uma mudança planejada.
+   */
+  corrigirDataVencimentoParcela(parcelaId: number, novaData: string): void {
+    db.execute(
+      `UPDATE cronograma_tarefa_parcelas SET data_vencimento = ?, updated_at = datetime('now') WHERE id = ?`,
+      [novaData, parcelaId]
     )
   },
 

@@ -918,6 +918,14 @@ function runMigrations(db: Database.Database) {
     created_at           DATETIME DEFAULT CURRENT_TIMESTAMP
   )`)
 
+  // ─── Cronograma — Arquivamento de versões antigas ───────────────────────────
+  // Dedicado (não reaproveita cronogramas.ativo/deleted_at, que já existem mas nunca são
+  // escritos — servem a um soft-delete futuro diferente). Arquivar só tira a versão da
+  // lista padrão do seletor; nenhum dado de tarefa/pagamento/aprovação é tocado.
+  addCol('cronogramas', 'arquivado', 'INTEGER DEFAULT 0')
+  addCol('cronogramas', 'arquivado_por', 'INTEGER REFERENCES usuarios(id)')
+  addCol('cronogramas', 'arquivado_em', 'TEXT')
+
   // Seed: popula config_status_projeto com os status padrão se ainda estiver vazio
   const count = (db.prepare('SELECT COUNT(*) as c FROM config_status_projeto').get() as { c: number }).c
   if (count === 0) {

@@ -106,6 +106,7 @@ interface VersaoCronograma {
   label: string
   status: string
   is_baseline: number
+  arquivado: number
   created_at: string
 }
 
@@ -459,6 +460,38 @@ function LinhaCorrigirDataPagamento({
       <span className="text-gray-400 w-14 shrink-0">{parcela.numero}/{qtdParcelas}</span>
       <span className="text-gray-500 w-28 shrink-0">Venc.: {formatDate(parcela.data_vencimento)}</span>
       <span className="text-gray-500 shrink-0">Pago em:</span>
+      <input type="date" className="input text-xs py-0.5 px-1 w-32" value={novaData}
+        onChange={e => setNovaData(e.target.value)} />
+      <button type="button" className="btn-secondary text-[10px] py-0.5 px-2"
+        disabled={!alterado || !novaData || salvando}
+        onClick={() => onSalvar(novaData)}>
+        {salvando ? 'Salvando…' : 'Salvar data'}
+      </button>
+    </div>
+  )
+}
+
+/**
+ * Linha de correção da DATA DE VENCIMENTO de uma parcela pendente/atrasada (modo "Editar"
+ * da Tarefa de Pagamento) — diferente de "Reprogramar" (no expandir "Ver parcelas"): não
+ * exige justificativa nem captura linha de base, porque é a correção de um dado cadastrado
+ * errado, não um replanejamento. Não altera valor, quantidade de parcelas, valor total nem
+ * as demais parcelas.
+ */
+function LinhaCorrigirDataVencimento({
+  parcela, qtdParcelas, salvando, onSalvar,
+}: {
+  parcela: ParcelaInfo
+  qtdParcelas: number
+  salvando: boolean
+  onSalvar: (novaData: string) => void
+}) {
+  const [novaData, setNovaData] = useState(parcela.data_vencimento.slice(0, 10))
+  const alterado = novaData !== parcela.data_vencimento.slice(0, 10)
+  return (
+    <div className="flex items-center gap-2 py-1.5 text-xs border-b border-gray-100 last:border-0">
+      <span className="text-gray-400 w-14 shrink-0">{parcela.numero}/{qtdParcelas}</span>
+      <span className="text-gray-500 shrink-0">Vencimento:</span>
       <input type="date" className="input text-xs py-0.5 px-1 w-32" value={novaData}
         onChange={e => setNovaData(e.target.value)} />
       <button type="button" className="btn-secondary text-[10px] py-0.5 px-2"
@@ -953,6 +986,7 @@ export default function CronogramaEditor({
   const [qtdParcelasPagasEdit, setQtdParcelasPagasEdit] = useState(0)
   const [editPagamentoParcelas, setEditPagamentoParcelas] = useState<ParcelaInfo[]>([])
   const [corrigindoDataPagamentoId, setCorrigindoDataPagamentoId] = useState<number | null>(null)
+  const [corrigindoVencimentoId, setCorrigindoVencimentoId] = useState<number | null>(null)
 
   // Excluir Tarefa de Pagamento (só ADMIN/PMO)
   const [confirmExcluirPagamento, setConfirmExcluirPagamento] = useState<{ id: number; nome: string } | null>(null)
@@ -964,6 +998,9 @@ export default function CronogramaEditor({
   const [salvandoMover, setSalvandoMover]     = useState(false)
   const [versoes, setVersoes]                 = useState<VersaoCronograma[]>([])
   const [versaoVendoId, setVersaoVendoId]     = useState<number | null>(null)
+  const [mostrarArquivadas, setMostrarArquivadas] = useState(false)
+  const [confirmArquivarVersao, setConfirmArquivarVersao] = useState<{ id: number; versao: number } | null>(null)
+  const [arquivandoVersao, setArquivandoVersao] = useState(false)
 
   // Undo / Redo — pilhas de snapshots de editandoTarefas
   const [undoStack, setUndoStack] = useState<CronogramaTarefa[][]>([])
@@ -995,6 +1032,28 @@ export default function CronogramaEditor({
     setEditando(false)
     setEditandoTarefas([])
     fetchCronograma(id ?? undefined)
+  }
+
+  async function handleArquivarVersao() {
+    if (!confirmArquivarVersao) return
+    setArquivandoVersao(true); setError(null)
+    try {
+      const res = await fetch(`/api/projetos/${projetoId}/cronograma/${confirmArquivarVersao.id}/arquivar`, {
+        method: 'PATCH',
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Erro ao arquivar versão')
+      setConfirmArquivarVersao(null)
+      // A versão arquivada some da lista padrão — se era a que estava sendo vista, volta para a atual.
+      if (versaoVendoId === confirmArquivarVersao.id) {
+        handleSelecionarVersao(null)
+      } else {
+        await fetchCronograma(versaoVendoId ?? undefined)
+      }
+      onRefresh()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Erro ao arquivar versão')
+    } finally { setArquivandoVersao(false) }
   }
 
   useEffect(() => {
@@ -1870,6 +1929,32 @@ export default function CronogramaEditor({
     } finally { setCorrigindoDataPagamentoId(null) }
   }
 
+  /**
+   * Corrige a DATA DE VENCIMENTO de uma parcela pendente/atrasada ("Editar", diferente de
+   * "Reprogramar"): sem justificativa obrigatória e sem capturar linha de base — é a
+   * correção de um dado cadastrado errado, não uma reprogramação planejada. Não afeta as
+   * demais parcelas nem valor/qtd_parcelas/valor_total.
+   */
+  async function handleCorrigirDataVencimento(parcelaId: number, novaData: string) {
+    if (!cronograma) return
+    setCorrigindoVencimentoId(parcelaId); setError(null)
+    try {
+      const res = await fetch(`/api/projetos/${projetoId}/cronograma/${cronograma.id}/parcelas/${parcelaId}/reprogramar`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nova_data_vencimento: novaData, tipo: 'EDITAR' }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Erro ao corrigir data de vencimento')
+      const refreshed = await fetchCronograma()
+      const tRef = refreshed?.tarefas?.find((x: CronogramaTarefa) => x.id === editandoPagamentoId)
+      if (tRef?.pagamento) setEditPagamentoParcelas(tRef.pagamento.parcelas)
+      onRefresh()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Erro ao corrigir data de vencimento')
+    } finally { setCorrigindoVencimentoId(null) }
+  }
+
   async function handleSalvarEdicaoPagamento() {
     if (!cronograma || editandoPagamentoId == null) return
     const f = editPagamentoForm
@@ -2080,15 +2165,38 @@ export default function CronogramaEditor({
                   onChange={e => handleSelecionarVersao(Number(e.target.value))}
                   title="Selecionar versão do cronograma"
                 >
-                  {versoes.map(v => (
+                  {versoes.filter(v => mostrarArquivadas || !v.arquivado).map(v => (
                     <option key={v.id} value={v.id}>
                       V{v.versao}
                       {v.label && v.label !== `Versão ${v.versao}` ? ` — ${v.label}` : ''}
                       {' '}({v.status === 'APROVADO' ? '✓ Aprovado' : v.status === 'PENDENTE_APROVACAO' ? '⏳ Em aprovação' : 'Rascunho'})
                       {v.id === latestVersaoId ? ' · atual' : ''}
+                      {v.arquivado ? ' · Arquivada' : ''}
                     </option>
                   ))}
                 </select>
+              )}
+
+              {/* Alterna a exibição das versões arquivadas na lista acima */}
+              {versoes.some(v => v.arquivado) && (
+                <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer select-none">
+                  <input type="checkbox" checked={mostrarArquivadas}
+                    onChange={e => setMostrarArquivadas(e.target.checked)} />
+                  Versões arquivadas
+                </label>
+              )}
+
+              {/* Arquivar versão — só ADMIN/PMO, só versão histórica (não a atual), ainda não arquivada */}
+              {isVersaoHistorica && ['ADMIN', 'PMO'].includes(sessionUser.perfil) && cronograma && versaoVendoId != null &&
+                !versoes.find(v => v.id === versaoVendoId)?.arquivado && (
+                <button
+                  type="button"
+                  className="text-xs text-red-500 border border-red-200 rounded px-2 py-1 hover:bg-red-50"
+                  title="Arquivar esta versão do cronograma"
+                  onClick={() => setConfirmArquivarVersao({ id: cronograma.id, versao: cronograma.versao })}
+                >
+                  Arquivar versão
+                </button>
               )}
             </div>
 
@@ -3673,10 +3781,12 @@ export default function CronogramaEditor({
       {editandoPagamentoId != null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden">
-            {/* Cabeçalho + dados principais do pagamento — só entram na rolagem se a tela
-                for baixa demais para caber tudo; na prática (telas normais) ficam sempre
-                visíveis sem precisar rolar, porque cabem dentro do limite de altura. */}
-            <div className="flex-1 min-h-0 overflow-y-auto p-6 pb-3">
+            {/* Corpo — cabeçalho + lista de correção de parcelas na MESMA área de rolagem
+                (uma só, não aninhada): evita o caso em que a lista tinha sua própria
+                rolagem interna dentro da rolagem externa e a última parcela ficava
+                inacessível por exigir rolar as duas em sequência. Em telas normais isso
+                não muda nada visualmente — só passa a existir quando o conteúdo não cabe. */}
+            <div className="flex-1 min-h-0 overflow-y-auto p-6 pb-6">
               <h3 className="font-semibold text-gray-900 mb-1">Alterar Tarefa de Pagamento</h3>
               {qtdParcelasPagasEdit > 0 && (
                 <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">
@@ -3699,15 +3809,15 @@ export default function CronogramaEditor({
                 </div>
               </div>
 
-              {/* Correção de data de pagamento — a lista de parcelas tem altura própria
-                  limitada e rola internamente, sem depender do tamanho da tela. */}
+              {/* Correção de data de pagamento — todas as parcelas pagas, sem paginar nem
+                  esconder nenhuma; rolam junto com o corpo do modal (ver comentário acima). */}
               {editPagamentoParcelas.some(p => p.status === 'PAGO') && (
                 <div className="border-t border-gray-100 pt-3 mt-3">
                   <label className="input-label">Corrigir data de pagamento realizado</label>
                   <p className="text-xs text-gray-400 mb-2">
                     Corrige a data em que o pagamento foi de fato realizado — a data de vencimento, o valor e o status da parcela não mudam.
                   </p>
-                  <div className="border border-gray-200 rounded-lg overflow-y-auto max-h-64">
+                  <div className="border border-gray-200 rounded-lg">
                     {editPagamentoParcelas.filter(p => p.status === 'PAGO').map(p => (
                       <LinhaCorrigirDataPagamento
                         key={p.id}
@@ -3715,6 +3825,29 @@ export default function CronogramaEditor({
                         qtdParcelas={editPagamentoParcelas.length}
                         salvando={corrigindoDataPagamentoId === p.id}
                         onSalvar={novaData => handleCorrigirDataPagamento(p.id, novaData)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Correção de data de vencimento — parcelas pendentes/atrasadas, correção
+                  direta de um dado cadastrado errado (sem justificativa/linha de base). Para
+                  reprogramar de fato, use "Reprogramar" na lista de parcelas (Ver parcelas). */}
+              {editPagamentoParcelas.some(p => p.status !== 'PAGO') && (
+                <div className="border-t border-gray-100 pt-3 mt-3">
+                  <label className="input-label">Corrigir data de vencimento</label>
+                  <p className="text-xs text-gray-400 mb-2">
+                    Corrige o vencimento de uma parcela pendente/atrasada cadastrado errado — não muda valor, quantidade de parcelas nem as demais datas. Para reprogramar com justificativa (mantendo a data original como linha de base), use o botão &ldquo;Reprogramar&rdquo; na lista de parcelas.
+                  </p>
+                  <div className="border border-gray-200 rounded-lg">
+                    {editPagamentoParcelas.filter(p => p.status !== 'PAGO').map(p => (
+                      <LinhaCorrigirDataVencimento
+                        key={p.id}
+                        parcela={p}
+                        qtdParcelas={editPagamentoParcelas.length}
+                        salvando={corrigindoVencimentoId === p.id}
+                        onSalvar={novaData => handleCorrigirDataVencimento(p.id, novaData)}
                       />
                     ))}
                   </div>
@@ -3756,6 +3889,29 @@ export default function CronogramaEditor({
               <button className="btn-primary text-sm bg-red-600 hover:bg-red-700 border-red-600" disabled={excluindoPagamento}
                 onClick={handleExcluirPagamento}>
                 {excluindoPagamento ? 'Excluindo…' : 'Excluir'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Confirmar arquivamento de versão do cronograma (só ADMIN/PMO) */}
+      {confirmArquivarVersao && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-md">
+            <h3 className="font-semibold text-gray-900 mb-2">Arquivar versão V{confirmArquivarVersao.versao}</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Tem certeza que deseja arquivar esta versão do cronograma? Ela deixará de aparecer na lista padrão, mas permanecerá no histórico.
+            </p>
+            {error && <p className="text-sm text-red-600 mb-3">{error}</p>}
+            <div className="flex gap-2 justify-end">
+              <button className="btn-ghost text-sm text-gray-500" disabled={arquivandoVersao}
+                onClick={() => { setConfirmArquivarVersao(null); setError(null) }}>
+                Cancelar
+              </button>
+              <button className="btn-primary text-sm bg-red-600 hover:bg-red-700 border-red-600" disabled={arquivandoVersao}
+                onClick={handleArquivarVersao}>
+                {arquivandoVersao ? 'Arquivando…' : 'Arquivar versão'}
               </button>
             </div>
           </div>
