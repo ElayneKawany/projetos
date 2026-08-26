@@ -440,6 +440,37 @@ function CamposTarefaPagamento({
 }
 
 /**
+ * Linha de correção da DATA DO PAGAMENTO REALIZADO de uma parcela já paga (modo "Editar"
+ * da Tarefa de Pagamento) — independente da data de vencimento, que não é tocada aqui.
+ * Não mexe em valor, quantidade de parcelas, valor total, status ou percentual pago.
+ */
+function LinhaCorrigirDataPagamento({
+  parcela, qtdParcelas, salvando, onSalvar,
+}: {
+  parcela: ParcelaInfo
+  qtdParcelas: number
+  salvando: boolean
+  onSalvar: (novaData: string) => void
+}) {
+  const [novaData, setNovaData] = useState((parcela.data_pagamento ?? '').slice(0, 10))
+  const alterado = novaData !== (parcela.data_pagamento ?? '').slice(0, 10)
+  return (
+    <div className="flex items-center gap-2 py-1.5 text-xs border-b border-gray-100 last:border-0">
+      <span className="text-gray-400 w-14 shrink-0">{parcela.numero}/{qtdParcelas}</span>
+      <span className="text-gray-500 w-28 shrink-0">Venc.: {formatDate(parcela.data_vencimento)}</span>
+      <span className="text-gray-500 shrink-0">Pago em:</span>
+      <input type="date" className="input text-xs py-0.5 px-1 w-32" value={novaData}
+        onChange={e => setNovaData(e.target.value)} />
+      <button type="button" className="btn-secondary text-[10px] py-0.5 px-2"
+        disabled={!alterado || !novaData || salvando}
+        onClick={() => onSalvar(novaData)}>
+        {salvando ? 'Salvando…' : 'Salvar data'}
+      </button>
+    </div>
+  )
+}
+
+/**
  * Gera WBS client-side para preview no formulário.
  * O servidor recalcula oficialmente antes de persistir.
  */
@@ -920,6 +951,8 @@ export default function CronogramaEditor({
   const [editPagamentoForm, setEditPagamentoForm]     = useState<NovaAtividadeForm>(emptyNovaAtividade())
   const [savingEditPagamento, setSavingEditPagamento] = useState(false)
   const [qtdParcelasPagasEdit, setQtdParcelasPagasEdit] = useState(0)
+  const [editPagamentoParcelas, setEditPagamentoParcelas] = useState<ParcelaInfo[]>([])
+  const [corrigindoDataPagamentoId, setCorrigindoDataPagamentoId] = useState<number | null>(null)
 
   // Excluir Tarefa de Pagamento (só ADMIN/PMO)
   const [confirmExcluirPagamento, setConfirmExcluirPagamento] = useState<{ id: number; nome: string } | null>(null)
@@ -1809,7 +1842,32 @@ export default function CronogramaEditor({
       periodicidade:          pg.periodicidade as Periodicidade,
       data_primeira_parcela:  pg.data_primeira_parcela.slice(0, 10),
     })
+    setEditPagamentoParcelas(pg.parcelas)
     setEditandoPagamentoId(t.id)
+  }
+
+  /**
+   * Corrige a DATA DO PAGAMENTO REALIZADO de uma parcela já paga — independente da data de
+   * vencimento, que não é tocada. Não altera valor/qtd_parcelas/valor_total/status/percentual.
+   */
+  async function handleCorrigirDataPagamento(parcelaId: number, novaData: string) {
+    if (!cronograma) return
+    setCorrigindoDataPagamentoId(parcelaId); setError(null)
+    try {
+      const res = await fetch(`/api/projetos/${projetoId}/cronograma/${cronograma.id}/parcelas/${parcelaId}/data-pagamento`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nova_data_pagamento: novaData }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Erro ao corrigir data de pagamento')
+      const refreshed = await fetchCronograma()
+      const tRef = refreshed?.tarefas?.find((x: CronogramaTarefa) => x.id === editandoPagamentoId)
+      if (tRef?.pagamento) setEditPagamentoParcelas(tRef.pagamento.parcelas)
+      onRefresh()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Erro ao corrigir data de pagamento')
+    } finally { setCorrigindoDataPagamentoId(null) }
   }
 
   async function handleSalvarEdicaoPagamento() {
@@ -1842,6 +1900,7 @@ export default function CronogramaEditor({
       if (!res.ok) throw new Error(data.error ?? 'Erro ao alterar tarefa de pagamento')
       setEditandoPagamentoId(null)
       setEditPagamentoForm(emptyNovaAtividade())
+      setEditPagamentoParcelas([])
       await fetchCronograma(); onRefresh()
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Erro ao alterar tarefa de pagamento')
@@ -3634,11 +3693,32 @@ export default function CronogramaEditor({
                   value={editPagamentoForm.observacoes}
                   onChange={e => setEditPagamentoForm(a => ({ ...a, observacoes: e.target.value }))} />
               </div>
+
+              {editPagamentoParcelas.some(p => p.status === 'PAGO') && (
+                <div className="border-t border-gray-100 pt-3">
+                  <label className="input-label">Corrigir data de pagamento realizado</label>
+                  <p className="text-xs text-gray-400 mb-2">
+                    Corrige a data em que o pagamento foi de fato realizado — a data de vencimento, o valor e o status da parcela não mudam.
+                  </p>
+                  <div className="border border-gray-200 rounded-lg overflow-hidden">
+                    {editPagamentoParcelas.filter(p => p.status === 'PAGO').map(p => (
+                      <LinhaCorrigirDataPagamento
+                        key={p.id}
+                        parcela={p}
+                        qtdParcelas={editPagamentoParcelas.length}
+                        salvando={corrigindoDataPagamentoId === p.id}
+                        onSalvar={novaData => handleCorrigirDataPagamento(p.id, novaData)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {error && <p className="text-sm text-red-600">{error}</p>}
             </div>
             <div className="flex gap-2 justify-end mt-4">
               <button className="btn-ghost text-sm text-gray-500" disabled={savingEditPagamento}
-                onClick={() => { setEditandoPagamentoId(null); setEditPagamentoForm(emptyNovaAtividade()); setError(null) }}>
+                onClick={() => { setEditandoPagamentoId(null); setEditPagamentoForm(emptyNovaAtividade()); setEditPagamentoParcelas([]); setError(null) }}>
                 Cancelar
               </button>
               <button className="btn-primary text-sm" disabled={savingEditPagamento}

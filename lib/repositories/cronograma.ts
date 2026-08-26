@@ -683,6 +683,17 @@ export const CronogramaRepository = {
     )
   },
 
+  /**
+   * Corrige a DATA DO PAGAMENTO REALIZADO de uma parcela já paga (independente da data de
+   * vencimento). Não toca em vencimento/valor/status/pago_por — só data_pagamento.
+   */
+  corrigirDataPagamentoParcela(parcelaId: number, novaDataPagamento: string): void {
+    db.execute(
+      `UPDATE cronograma_tarefa_parcelas SET data_pagamento = ?, updated_at = datetime('now') WHERE id = ?`,
+      [novaDataPagamento, parcelaId]
+    )
+  },
+
   updatePagamentoHeader(tarefaId: number, params: {
     beneficiario: string | null
     valor_total: number
