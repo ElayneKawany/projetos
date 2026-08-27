@@ -3,7 +3,7 @@ import { getSession } from '@/lib/auth'
 import { TapRepository, ProjetosRepository, ViabilidadeRepository } from '@/lib/repositories'
 import { buscarWorkflow, processarResposta } from '@/lib/workflow'
 import { registrarAuditoria } from '@/lib/db/auditoria'
-import { buscarProjetoPorId, atualizarStatusProjeto, registrarHistoricoAlteracao } from '@/lib/projetos'
+import { buscarProjetoPorId, atualizarStatusProjeto, registrarHistoricoAlteracao, statusJaAvancou } from '@/lib/projetos'
 
 export async function POST(
   request: NextRequest,
@@ -71,7 +71,7 @@ export async function POST(
     })
 
     const projeto = buscarProjetoPorId(Number(projetoId))
-    if (projeto && projeto.status !== 'VIABILIDADE') {
+    if (projeto && !statusJaAvancou(projeto.status, 'VIABILIDADE')) {
       atualizarStatusProjeto(
         Number(projetoId),
         'VIABILIDADE',

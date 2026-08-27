@@ -3,7 +3,7 @@ import { getSession } from '@/lib/auth'
 import { buscarWorkflow, processarResposta } from '@/lib/workflow'
 import { CronogramaRepository, ProjetosRepository } from '@/lib/repositories'
 import { registrarAuditoria } from '@/lib/db/auditoria'
-import { registrarHistoricoAlteracao, atualizarStatusProjeto } from '@/lib/projetos'
+import { registrarHistoricoAlteracao, atualizarStatusProjeto, statusJaAvancou } from '@/lib/projetos'
 import { registrarEvento } from '@/lib/timeline'
 import { validarCronogramaParaExecucao } from '@/lib/validacoes-cronograma'
 
@@ -92,7 +92,7 @@ export async function POST(
     // 5. Avançar projeto para EXECUCAO se estiver em CRONOGRAMA ou ESTRUTURACAO
     const projeto = ProjetosRepository.findById(Number(projetoId))
 
-    if (projeto && (projeto.status === 'CRONOGRAMA' || projeto.status === 'ESTRUTURACAO')) {
+    if (projeto && !statusJaAvancou(projeto.status, 'EXECUCAO')) {
       const erroExecucao = validarCronogramaParaExecucao(Number(cronogramaId))
       if (erroExecucao) {
         return NextResponse.json({ error: erroExecucao }, { status: 422 })

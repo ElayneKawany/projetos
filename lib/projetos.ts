@@ -2,7 +2,22 @@ import { registrarAuditoria } from './db/auditoria'
 import { registrarEvento, type EventoTimeline } from './timeline'
 import { getProjetoVisibility } from './permissoes'
 import { ProjetosRepository, ConfiguracoesRepository, UsuariosRepository, ViabilidadeRepository } from '@/lib/repositories'
+import { STATUS_ORDER } from '@/types'
 import type { Projeto, StatusProjeto, Prioridade } from '@/types'
+
+/**
+ * Compara posições em STATUS_ORDER — usar antes de qualquer aprovação de artefato
+ * (TAP/Viabilidade/Cronograma) avançar o status do projeto, para nunca REGREDIR um projeto
+ * que já está mais adiante (ex.: um TAP aprovado atrasado não pode empurrar de volta para
+ * VIABILIDADE um projeto que já está em EXECUCAO). Status fora de STATUS_ORDER (PAUSADO,
+ * CANCELADO etc.) nunca são considerados "já avançados" — não bloqueiam a transição.
+ */
+export function statusJaAvancou(atual: StatusProjeto, alvo: StatusProjeto): boolean {
+  const idxAtual = STATUS_ORDER.indexOf(atual)
+  const idxAlvo  = STATUS_ORDER.indexOf(alvo)
+  if (idxAtual === -1 || idxAlvo === -1) return false
+  return idxAtual >= idxAlvo
+}
 
 export function gerarCodigoProjeto(): string {
   return ProjetosRepository.nextCodigo()
