@@ -926,6 +926,45 @@ function runMigrations(db: Database.Database) {
   addCol('cronogramas', 'arquivado_por', 'INTEGER REFERENCES usuarios(id)')
   addCol('cronogramas', 'arquivado_em', 'TEXT')
 
+  // ─── Data Base de Entrega — imutável, travada na 1ª aprovação de Cronograma ─
+  // Referência fixa de atraso para o resto da vida do projeto (nova versão de
+  // cronograma e reprogramação de tarefa nunca a alteram). Escrita apenas uma
+  // vez, em app/api/projetos/[id]/cronograma/[cronogramaId]/aprovar/route.ts
+  // (guard IF NULL). Aqui só o backfill idempotente para projetos que já
+  // tinham cronograma aprovado antes dessa coluna existir.
+  addCol('projetos', 'data_base_entrega', 'TEXT')
+  addCol('projetos', 'data_base_entrega_definida_em', 'TEXT')
+  try {
+    db.prepare(`
+      UPDATE projetos
+      SET data_base_entrega = (
+        SELECT MAX(COALESCE(ct.data_fim_baseline, ct.data_fim))
+        FROM cronograma_tarefas ct
+        WHERE ct.cronograma_id = (
+          SELECT c.id FROM cronogramas c
+          WHERE c.projeto_id = projetos.id AND c.is_baseline = 1
+          ORDER BY c.versao ASC LIMIT 1
+        )
+        AND (ct.ativo IS NULL OR ct.ativo = 1)
+      ),
+      data_base_entrega_definida_em = (
+        SELECT c.aprovado_em FROM cronogramas c
+        WHERE c.projeto_id = projetos.id AND c.is_baseline = 1
+        ORDER BY c.versao ASC LIMIT 1
+      )
+      WHERE data_base_entrega IS NULL
+        AND EXISTS (SELECT 1 FROM cronogramas c WHERE c.projeto_id = projetos.id AND c.is_baseline = 1)
+    `).run()
+  } catch { /* colunas/tabelas podem não existir em banco limpo na 1ª execução */ }
+
+  // ─── Cronograma — trava contra versão duplicada (Nova Versão) ──────────────
+  // Proteção de backend contra duplo-clique/retry criando duas versões com o
+  // mesmo número: a 2ª inserção falha com SQLITE_CONSTRAINT_UNIQUE (tratado
+  // na rota de nova-versao), em vez de depender só de desabilitar o botão.
+  try {
+    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_cronogramas_projeto_versao ON cronogramas(projeto_id, versao)')
+  } catch { /* dados legados com versão duplicada — não bloquear o boot; ver diagnóstico */ }
+
   // Seed: popula config_status_projeto com os status padrão se ainda estiver vazio
   const count = (db.prepare('SELECT COUNT(*) as c FROM config_status_projeto').get() as { c: number }).c
   if (count === 0) {

@@ -33,49 +33,108 @@ export async function POST(
 
   const novaVersao = (cronograma.versao as number) + 1
 
-  const novoCronId = Number(db.transaction(() => {
-    const novoId = CronogramaRepository.insertCronograma({
-      projeto_id,
-      versao: novaVersao,
-      label: `Versão ${novaVersao}`,
-      modo: String(cronograma.modo ?? 'CENTRALIZADO'),
-      fonte_importacao: String(cronograma.fonte_importacao ?? 'MANUAL'),
-      criado_por: session.id,
-    })
-
-    const tarefas = CronogramaRepository.findTarefasOrdered(cron_id)
-
-    for (const t of tarefas) {
-      CronogramaRepository.insertTarefa({
-        cronograma_id: Number(novoId),
-        codigo:            String(t.codigo ?? ''),
-        nome:              String(t.nome),
-        descricao:         t.descricao != null ? String(t.descricao) : null,
-        nivel:             String(t.nivel),
-        tipo:              t.tipo != null ? String(t.tipo) : undefined,
-        criticidade:       t.criticidade != null ? String(t.criticidade) : undefined,
-        data_inicio:       t.data_inicio != null ? String(t.data_inicio) : null,
-        data_fim:          t.data_fim != null ? String(t.data_fim) : null,
-        duracao_dias:      t.duracao_dias != null ? Number(t.duracao_dias) : null,
-        responsavel_id:    t.responsavel_id != null ? Number(t.responsavel_id) : null,
-        responsavel_nome_ext: t.responsavel_nome_ext != null ? String(t.responsavel_nome_ext) : null,
-        executor_id:       t.executor_id != null ? Number(t.executor_id) : null,
-        executor_nome_ext: t.executor_nome_ext != null ? String(t.executor_nome_ext) : null,
-        area_id:           t.area_id != null ? Number(t.area_id) : null,
-        peso:              t.peso != null ? Number(t.peso) : 1,
-        ordem:             Number(t.ordem),
-        percentual:        t.percentual != null ? Number(t.percentual) : 0,
-        status:            t.status != null ? String(t.status) : 'PENDENTE',
-        observacoes:       t.observacoes != null ? String(t.observacoes) : null,
-        tipo_macro:        t.tipo_macro != null ? String(t.tipo_macro) : null,
-        ativo:             1,
-        criado_por:        session.id,
-        alterado_por:      session.id,
+  let novoCronId: number
+  try {
+    novoCronId = Number(db.transaction(() => {
+      const novoId = CronogramaRepository.insertCronograma({
+        projeto_id,
+        versao: novaVersao,
+        label: `Versão ${novaVersao}`,
+        modo: String(cronograma.modo ?? 'CENTRALIZADO'),
+        fonte_importacao: String(cronograma.fonte_importacao ?? 'MANUAL'),
+        criado_por: session.id,
       })
-    }
 
-    return novoId
-  }))
+      // Só tarefas ATIVAS — linhas desativadas pelo editor inline (substituídas
+      // por uma versão mais nova da mesma linha) nunca devem ser copiadas.
+      const tarefas = CronogramaRepository.findTarefasOrdered(cron_id)
+
+      // Mapa ID antigo → ID novo, para religar parent_id (FASE/TAREFA/SUBTAREFA)
+      // na nova versão em vez de deixar todo mundo órfão (parent_id nulo).
+      const mapaIds = new Map<number, number>()
+
+      for (const t of tarefas) {
+        const idAntigo = Number(t.id)
+        const parentAntigo = t.parent_id != null ? Number(t.parent_id) : null
+        const novoParentId = parentAntigo != null ? mapaIds.get(parentAntigo) ?? null : null
+
+        const novaTarefaId = Number(CronogramaRepository.insertTarefa({
+          cronograma_id: Number(novoId),
+          parent_id:         novoParentId,
+          codigo:            String(t.codigo ?? ''),
+          nome:              String(t.nome),
+          descricao:         t.descricao != null ? String(t.descricao) : null,
+          nivel:             String(t.nivel),
+          tipo:              t.tipo != null ? String(t.tipo) : undefined,
+          criticidade:       t.criticidade != null ? String(t.criticidade) : undefined,
+          data_inicio:       t.data_inicio != null ? String(t.data_inicio) : null,
+          data_fim:          t.data_fim != null ? String(t.data_fim) : null,
+          data_inicio_baseline: t.data_inicio_baseline != null ? String(t.data_inicio_baseline) : null,
+          data_fim_baseline:    t.data_fim_baseline != null ? String(t.data_fim_baseline) : null,
+          duracao_dias:      t.duracao_dias != null ? Number(t.duracao_dias) : null,
+          responsavel_id:    t.responsavel_id != null ? Number(t.responsavel_id) : null,
+          responsavel_nome_ext: t.responsavel_nome_ext != null ? String(t.responsavel_nome_ext) : null,
+          executor_id:       t.executor_id != null ? Number(t.executor_id) : null,
+          executor_nome_ext: t.executor_nome_ext != null ? String(t.executor_nome_ext) : null,
+          area_id:           t.area_id != null ? Number(t.area_id) : null,
+          peso:              t.peso != null ? Number(t.peso) : 1,
+          ordem:             Number(t.ordem),
+          percentual:        t.percentual != null ? Number(t.percentual) : 0,
+          status:            t.status != null ? String(t.status) : 'PENDENTE',
+          observacoes:       t.observacoes != null ? String(t.observacoes) : null,
+          tipo_macro:        t.tipo_macro != null ? String(t.tipo_macro) : null,
+          natureza_tarefa:   t.natureza_tarefa != null ? String(t.natureza_tarefa) : 'NORMAL',
+          ativo:             1,
+          criado_por:        session.id,
+          alterado_por:      session.id,
+        }))
+
+        mapaIds.set(idAntigo, novaTarefaId)
+
+        // Tarefa de Pagamento: leva o cabeçalho + as parcelas (com status/data de
+        // pagamento preservados) para a nova versão — não recria pagamentos reais,
+        // só religa o mesmo histórico financeiro à nova linha da tarefa.
+        if (String(t.natureza_tarefa) === 'PAGAMENTO') {
+          const header = CronogramaRepository.findPagamentoHeaderByTarefaIds([idAntigo])[0]
+          if (header) {
+            CronogramaRepository.insertPagamentoHeader({
+              cronograma_tarefa_id: novaTarefaId,
+              beneficiario: header.beneficiario,
+              valor_total: header.valor_total,
+              qtd_parcelas: header.qtd_parcelas,
+              periodicidade: header.periodicidade,
+              data_primeira_parcela: header.data_primeira_parcela,
+              criado_por: session.id,
+            })
+            const parcelas = CronogramaRepository.findParcelasByTarefaIds([idAntigo])
+            for (const p of parcelas) {
+              CronogramaRepository.insertParcelaCompleta({
+                cronograma_tarefa_id: novaTarefaId,
+                numero: p.numero,
+                valor: p.valor,
+                data_vencimento: p.data_vencimento,
+                data_vencimento_baseline: p.data_vencimento_baseline,
+                status: p.status,
+                data_pagamento: p.data_pagamento,
+                pago_por: p.pago_por,
+              })
+            }
+          }
+        }
+      }
+
+      return novoId
+    }))
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e)
+    if (msg.includes('UNIQUE constraint failed') || msg.includes('SQLITE_CONSTRAINT')) {
+      return NextResponse.json(
+        { error: 'Uma nova versão já foi criada para este cronograma. Atualize a página.' },
+        { status: 409 }
+      )
+    }
+    throw e
+  }
 
   registrarEvento({
     projeto_id,

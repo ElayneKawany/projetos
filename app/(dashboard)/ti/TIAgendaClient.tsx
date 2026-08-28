@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import type { Dev2026Atividade } from '@/lib/ti/dev2026-data'
 import type { SessionUser } from '@/lib/auth'
+import { calcularCapacidadeMes, mesesTocados, type PeriodoOcupado } from '@/lib/ti/capacidade'
 
 interface TarefaCronograma {
   id: number
@@ -1051,54 +1052,29 @@ export default function TIAgendaClient({
   const resumoAnalistas = useMemo(() => {
     const hoje = new Date()
     hoje.setHours(0, 0, 0, 0)
-    const janela = new Date(hoje)
-    janela.setDate(janela.getDate() + 30)
-
-    // Conta dias úteis (seg-sex) entre duas datas, inclusive
-    function diasUteis(ini: Date, fim: Date): number {
-      if (ini > fim) return 0
-      let count = 0
-      const cur = new Date(ini)
-      while (cur <= fim) {
-        const dow = cur.getDay()
-        if (dow !== 0 && dow !== 6) count++
-        cur.setDate(cur.getDate() + 1)
-      }
-      return count
-    }
-
-    // Conta dias úteis no mês de referência (30 dias a partir de hoje)
-    const diasUteisJanela = diasUteis(hoje, janela)
-
-    function calcComprometidos(
-      tCron: Array<{ data_inicio: string | null; data_fim: string | null }>,
-      tDev: Array<{ inicio_dev?: string | null; fim_dev?: string | null; concluida?: boolean }>,
-    ): number {
-      const pares: Array<{ ini: string | null; fim: string | null }> = [
-        ...tCron.map(t => ({ ini: t.data_inicio, fim: t.data_fim })),
-        ...tDev.filter(a => !a.concluida).map(a => ({ ini: a.inicio_dev ?? null, fim: a.fim_dev ?? null })),
-      ]
-      let total = 0
-      pares.forEach(({ ini, fim }) => {
-        if (!ini || !fim) return
-        const dIni = new Date(ini + 'T00:00:00')
-        const dFim = new Date(fim + 'T00:00:00')
-        // somente o overlap com a janela futura (hoje..hoje+30)
-        const ovIni = dIni > hoje ? dIni : hoje
-        const ovFim = dFim < janela ? dFim : janela
-        if (ovIni <= ovFim) total += diasUteis(ovIni, ovFim)
-      })
-      return total
-    }
+    const mesAtual = { ano: hoje.getFullYear(), mes: hoje.getMonth() + 1 }
+    const MESES_LABEL = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
 
     return ANALISTAS_TI.map(nome => {
       const tCron = tarefasNormalizadas.filter(t => t.analistaNorm === nome && t.percentual < 100)
       const tDev = dev2026Normalizadas.filter(a => a.analistaNorm === nome && !a.concluida)
       const emAndamento = tCron.filter(t => t.percentual > 0).length + tDev.filter(a => a.progresso === 'Em andamento').length
       const naoConcluidas = tCron.length + tDev.length
-      const comprometidos = calcComprometidos(tCron, tDev)
-      const disponiveis = Math.max(0, diasUteisJanela - comprometidos)
-      return { nome, emAndamento, naoConcluidas, comprometidos, disponiveis, cor: COR_ANALISTA[nome] }
+
+      // Fonte única de capacidade/alocação — mesma regra de dias úteis usada no
+      // Dashboard (lib/utils/dias-uteis.ts), centralizada em lib/ti/capacidade.ts.
+      const periodos: PeriodoOcupado[] = [
+        ...tCron.filter(t => t.data_inicio && t.data_fim).map(t => ({ inicio: t.data_inicio as string, fim: t.data_fim as string })),
+        ...tDev.filter(a => a.inicio_dev && a.fim_dev).map(a => ({ inicio: a.inicio_dev as string, fim: a.fim_dev as string })),
+      ]
+      const meses = mesesTocados(periodos, mesAtual)
+      const porMes = meses.map(({ ano, mes }) => ({
+        ano, mes,
+        label: `${MESES_LABEL[mes - 1]}/${ano}`,
+        ...calcularCapacidadeMes(ano, mes, periodos, hoje),
+      }))
+
+      return { nome, emAndamento, naoConcluidas, porMes, cor: COR_ANALISTA[nome] }
     })
   }, [tarefasNormalizadas, dev2026Normalizadas])
 
@@ -1130,7 +1106,7 @@ export default function TIAgendaClient({
       </div>
 
       {/* Cards dos analistas TI */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {resumoAnalistas.map(a => (
           <div key={a.nome} className="bg-white rounded-xl border border-gray-100 shadow-sm p-4"
             style={{ borderTopWidth: 3, borderTopColor: a.cor }}>
@@ -1139,7 +1115,7 @@ export default function TIAgendaClient({
                 style={{ background: a.cor }}>{a.nome.charAt(0)}</div>
               <p className="font-semibold text-sm text-gray-800">{a.nome}</p>
             </div>
-            <div className="grid grid-cols-2 gap-2 text-center">
+            <div className="grid grid-cols-2 gap-2 text-center mb-3">
               <div className="bg-gray-50 rounded-lg p-2">
                 <p className="text-lg font-black" style={{ color: a.cor }}>{a.emAndamento}</p>
                 <p className="text-xs text-gray-500">Em andamento</p>
@@ -1148,14 +1124,46 @@ export default function TIAgendaClient({
                 <p className="text-lg font-black text-gray-700">{a.naoConcluidas}</p>
                 <p className="text-xs text-gray-500">Pendentes</p>
               </div>
-              <div className="bg-orange-50 rounded-lg p-2">
-                <p className="text-base font-black text-orange-600">{a.comprometidos}d</p>
-                <p className="text-xs text-gray-500">Comprometidos</p>
-              </div>
-              <div className="bg-green-50 rounded-lg p-2">
-                <p className="text-base font-black text-green-600">{a.disponiveis}d</p>
-                <p className="text-xs text-gray-500">Disponíveis</p>
-              </div>
+            </div>
+
+            {/* Capacidade por mês — mês atual sempre aparece; meses seguintes só
+                aparecem se alguma tarefa do analista se estender até lá. */}
+            <div className="flex flex-col gap-2">
+              {a.porMes.map(m => {
+                const sobrecarregado = m.sobrecargaDias > 0
+                return (
+                  <div key={`${m.ano}-${m.mes}`}
+                    className={`rounded-lg border p-2.5 ${sobrecarregado ? 'border-red-200 bg-red-50' : 'border-gray-100 bg-gray-50/60'}`}>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs font-bold uppercase tracking-wide text-gray-600">{m.label}</span>
+                      {sobrecarregado && (
+                        <span className="text-[10px] font-bold text-red-700 bg-red-100 px-1.5 py-0.5 rounded-full">
+                          🔴 SOBRECARGA
+                        </span>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-3 gap-1.5 text-center">
+                      <div>
+                        <p className="text-sm font-black text-gray-700">{m.capacidadeDias}d</p>
+                        <p className="text-[10px] text-gray-500">Capacidade</p>
+                      </div>
+                      <div>
+                        <p className={`text-sm font-black ${sobrecarregado ? 'text-red-600' : 'text-orange-600'}`}>{m.alocadoDias}d</p>
+                        <p className="text-[10px] text-gray-500">Alocado</p>
+                      </div>
+                      <div>
+                        <p className="text-sm font-black text-green-600">{m.disponivelDias}d</p>
+                        <p className="text-[10px] text-gray-500">Disponível</p>
+                      </div>
+                    </div>
+                    {sobrecarregado && (
+                      <p className="text-[11px] text-red-700 font-medium mt-1.5 text-center">
+                        {m.sobrecargaDias} dia{m.sobrecargaDias !== 1 ? 's' : ''} acima da capacidade
+                      </p>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           </div>
         ))}

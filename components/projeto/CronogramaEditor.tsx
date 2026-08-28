@@ -8,6 +8,10 @@ import EnviarAprovacaoModal, { type EtapaInput } from './EnviarAprovacaoModal'
 import { formatarData, calcularDuracao, normalizarData } from '@/lib/utils/date'
 import { maskValorMonetario } from '@/lib/utils/moeda'
 import type { Periodicidade } from '@/lib/cronograma/parcelas'
+import {
+  isoToDisplayEdit, calcStatusAuto, calcFaseSummaryFromList,
+  type StatusAuto, type FaseSummary, type FaseStatus,
+} from '@/lib/cronograma/resumo-fase'
 import TarefaPagamentoRow from './cronograma/TarefaPagamentoRow'
 import SelectFase from './cronograma/SelectFase'
 
@@ -160,13 +164,6 @@ interface NovaAtividadeForm {
 // calcularDuracao e formatarData importados de lib/utils/date (shared, correto com datas SQLite)
 const calcDuracao = calcularDuracao
 const formatDate  = formatarData
-
-/** Converte ISO (YYYY-MM-DD) para exibição em modo de edição (DD/MM/AAAA). Retorna '' para nulo. */
-function isoToDisplayEdit(iso?: string | null): string {
-  if (!iso) return ''
-  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})/)
-  return m ? `${m[3]}/${m[2]}/${m[1]}` : ''
-}
 
 // ── AutocompleteUsuario ────────────────────────────────────────────────────────
 
@@ -555,39 +552,6 @@ function StatusBadge({ status }: { status?: string }) {
   return <span className="text-xs text-gray-500">{status}</span>
 }
 
-type StatusAuto = 'PENDENTE' | 'PROXIMO_DO_VENCIMENTO' | 'ATRASADO' | 'CONCLUIDO' | 'CONCLUIDO_NO_PRAZO' | 'CONCLUIDO_COM_ATRASO'
-
-// Converte string de data (YYYY-MM-DD ou DD/MM/YYYY) para Date local sem desvio de fuso
-function parseDateLocal(s: string): Date {
-  if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) {
-    const [d, m, y] = s.split('/')
-    return new Date(Number(y), Number(m) - 1, Number(d))
-  }
-  const parts = s.split('T')[0].split(' ')[0].split('-').map(Number)
-  return new Date(parts[0], parts[1] - 1, parts[2])
-}
-
-function calcStatusAuto(t: CronogramaTarefa): StatusAuto {
-  // Tarefa concluída: data_conclusao definida, status CONCLUIDA, ou percentual 100
-  if (t.data_conclusao || t.status === 'CONCLUIDA' || (t.percentual ?? 0) >= 100) {
-    if (t.data_conclusao && t.data_fim) {
-      const dc = parseDateLocal(t.data_conclusao)
-      const df = parseDateLocal(t.data_fim)
-      return dc > df ? 'CONCLUIDO_COM_ATRASO' : 'CONCLUIDO_NO_PRAZO'
-    }
-    // Sem data_conclusao real para comparar: usa prazo_status gravado
-    if (t.prazo_status === 'FORA_DO_PRAZO') return 'CONCLUIDO_COM_ATRASO'
-    return 'CONCLUIDO'
-  }
-  if (!t.data_fim) return 'PENDENTE'
-  const hoje = new Date(); hoje.setHours(0, 0, 0, 0)
-  const fim  = parseDateLocal(t.data_fim)
-  const dias = Math.ceil((fim.getTime() - hoje.getTime()) / 86_400_000)
-  if (dias < 0)  return 'ATRASADO'
-  if (dias <= 3) return 'PROXIMO_DO_VENCIMENTO'
-  return 'PENDENTE'
-}
-
 function calcDiasFaltando(dataFim?: string, concluida?: boolean): string {
   if (concluida || !dataFim) return '—'
   const hoje = new Date(); hoje.setHours(0, 0, 0, 0)
@@ -648,8 +612,6 @@ export function getMacroFase(tipoMacro?: string | null): MacroFaseConfig {
 
 // ── Fase summary (Summary Task — tipo MS Project) ────────────────────────────
 
-type FaseStatus = 'PENDENTE' | 'EM_ANDAMENTO' | 'ATRASADA' | 'CONCLUIDA'
-
 function FaseStatusBadge({ status }: { status: FaseStatus }) {
   const MAP: Record<FaseStatus, { label: string; cls: string }> = {
     PENDENTE:     { label: 'Pendente',     cls: 'text-gray-400' },
@@ -659,115 +621,6 @@ function FaseStatusBadge({ status }: { status: FaseStatus }) {
   }
   const { label, cls } = MAP[status]
   return <span className={`text-xs ${cls}`}>{label}</span>
-}
-
-interface FaseSummary {
-  data_inicio:  string   // formatado para exibição
-  data_fim:     string
-  dias:         string
-  percentual:   number
-  status:       FaseStatus
-  totalFilhos:  number
-}
-
-/**
- * Calcula o resumo automático da FASE a partir das tarefas filhas na lista.
- * Filhos = todos os itens do tipo TAREFA que aparecem imediatamente após a FASE
- * (até a próxima FASE ou fim da lista).
- * editMode = true: datas nas filhas estão em DD/MM/AAAA — converte antes de comparar.
- */
-function calcFaseSummaryFromList(
-  faseIdx: number,
-  lista: CronogramaTarefa[],
-  editMode = false
-): FaseSummary {
-  const EMPTY: FaseSummary = {
-    data_inicio: '—', data_fim: '—', dias: '—', percentual: 0, status: 'PENDENTE', totalFilhos: 0,
-  }
-
-  const fase = lista[faseIdx]
-  const filhos: CronogramaTarefa[] = []
-  for (let i = faseIdx + 1; i < lista.length; i++) {
-    if (lista[i].nivel === 'FASE') break
-    if (lista[i].nivel === 'TAREFA') filhos.push(lista[i])
-  }
-  if (!filhos.length) {
-    // Fase sem filhos visíveis: usa datas e status gravados no DB.
-    const dbStatus = fase?.status?.toUpperCase()
-    const faseStatus: FaseStatus = (dbStatus === 'CONCLUIDA' || !!fase?.data_conclusao) ? 'CONCLUIDA'
-      : dbStatus === 'EM_ANDAMENTO'                         ? 'EM_ANDAMENTO'
-      : dbStatus === 'ATRASADA'                             ? 'ATRASADA'
-      : 'PENDENTE'
-    const dbInicio = fase?.data_inicio ? fase.data_inicio.slice(0, 10) : null
-    const dbFim    = fase?.data_fim    ? fase.data_fim.slice(0, 10)    : null
-    const diasNum  = dbInicio && dbFim
-      ? (Math.round(
-          (new Date(dbFim + 'T12:00:00').getTime() - new Date(dbInicio + 'T12:00:00').getTime())
-          / 86400000
-        ) + 1)
-      : null
-    return {
-      data_inicio: dbInicio ? formatarData(dbInicio) : '—',
-      data_fim:    dbFim    ? formatarData(dbFim)    : '—',
-      dias:        diasNum  ? `${diasNum}d`          : '—',
-      percentual:  0,
-      status:      faseStatus,
-      totalFilhos: 0,
-    }
-  }
-
-  // Converter datas para ISO
-  const toISO = (d: string | undefined): string | null => {
-    if (!d) return null
-    return editMode ? normalizarData(d) : d.slice(0, 10)
-  }
-
-  const starts = filhos.map(t => toISO(t.data_inicio)).filter((d): d is string => !!d).sort()
-  const ends   = filhos.map(t => toISO(t.data_fim)).filter((d): d is string => !!d).sort()
-
-  const isoInicio = starts[0] ?? null
-  const isoFim    = ends[ends.length - 1] ?? null
-
-  // Dias inclusivos: (fim - inicio) em dias + 1
-  const diasNum = isoInicio && isoFim
-    ? (Math.round(
-        (new Date(isoFim + 'T12:00:00').getTime() - new Date(isoInicio + 'T12:00:00').getTime())
-        / 86400000
-      ) + 1)
-    : null
-
-  const data_inicio = isoInicio
-    ? (editMode ? isoToDisplayEdit(isoInicio) : formatarData(isoInicio))
-    : '—'
-  const data_fim = isoFim
-    ? (editMode ? isoToDisplayEdit(isoFim) : formatarData(isoFim))
-    : '—'
-
-  // Status da fase (view only; em edit mode sempre PENDENTE)
-  let status: FaseStatus = 'PENDENTE'
-  if (!editMode) {
-    const sts = filhos.map(f => calcStatusAuto(f))
-    const isConcl = (s: StatusAuto) => s === 'CONCLUIDO' || s === 'CONCLUIDO_NO_PRAZO' || s === 'CONCLUIDO_COM_ATRASO'
-    if (sts.every(isConcl))              status = 'CONCLUIDA'
-    else if (sts.some(s => s === 'ATRASADO')) status = 'ATRASADA'
-    else if (sts.some(isConcl))          status = 'EM_ANDAMENTO'
-  }
-
-  // Percentual: tarefas concluídas / total
-  const concluidas = editMode ? 0 : filhos.filter(f => {
-    const s = calcStatusAuto(f)
-    return s === 'CONCLUIDO' || s === 'CONCLUIDO_NO_PRAZO' || s === 'CONCLUIDO_COM_ATRASO'
-  }).length
-  const percentual = filhos.length > 0 ? Math.round((concluidas / filhos.length) * 100) : 0
-
-  return {
-    data_inicio,
-    data_fim,
-    dias: diasNum != null ? `${diasNum}d` : '—',
-    percentual,
-    status,
-    totalFilhos: filhos.length,
-  }
 }
 
 const emptyLinha = (): NovaLinha => ({

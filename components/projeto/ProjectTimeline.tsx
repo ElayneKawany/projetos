@@ -14,6 +14,8 @@ interface Props {
   temCronogramaAprovado?: boolean
   temViabilidadeAprovada?: boolean
   temTapAprovado?: boolean
+  /** Início/fim reais da execução, derivados do cronograma vigente (não da data de entrada no status). */
+  execucaoRange?: { inicio: string; fim: string } | null
 }
 
 const SHORT_LABELS: Record<string, string> = {
@@ -81,7 +83,7 @@ function formatDate(iso: string): string {
   }
 }
 
-export default function ProjectTimeline({ statusAtual, historicoStatus, temCronogramaAprovado, temViabilidadeAprovada, temTapAprovado }: Props) {
+export default function ProjectTimeline({ statusAtual, historicoStatus, temCronogramaAprovado, temViabilidadeAprovada, temTapAprovado, execucaoRange }: Props) {
   const isCancelado = statusAtual === 'CANCELADO'
   const isSuspenso = statusAtual === 'SUSPENSO'
   const isPausado = statusAtual === 'PAUSADO'
@@ -201,7 +203,11 @@ export default function ProjectTimeline({ statusAtual, historicoStatus, temCrono
                         {PHASE_LABELS[phase]}
                       </span>
                       {/* Entry date */}
-                      {entryDate && (
+                      {phase === 'EXECUCAO' && execucaoRange ? (
+                        <span className="mt-1 text-center" style={{ fontSize: '9px', color: '#6B7280' }}>
+                          {formatDate(execucaoRange.inicio + 'T12:00:00')} → {formatDate(execucaoRange.fim + 'T12:00:00')}
+                        </span>
+                      ) : entryDate && (
                         <span className="mt-1 text-center" style={{ fontSize: '9px', color: '#6B7280' }}>
                           {formatDate(entryDate)}
                         </span>

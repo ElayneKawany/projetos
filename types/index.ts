@@ -98,10 +98,15 @@ export interface Projeto {
   capex_aprovado: number
   opex_aprovado: number
   data_inicio_prev?: string
-  /** @deprecated LEGADO — NÃO usar para prazo, status ou KPI. Use data_fim_efetiva (cronograma). */
+  /** @deprecated LEGADO — NÃO usar para prazo, status ou KPI. Use data_fim_efetiva. */
   data_fim_prev?: string
-  /** Fonte oficial: MAX(data_fim) das tarefas do cronograma ativo. */
-  data_fim_efetiva?: string
+  /** Fonte oficial de prazo/atraso (ver DATA_FIM_EFETIVA_SQL): Data Base de Entrega (imutável,
+   *  travada na 1ª aprovação de Cronograma) quando existir; senão a Data limite da macro fase
+   *  atual (projeto_fase_prazo). */
+  data_fim_efetiva?: string | null
+  /** Imutável — travada uma única vez na aprovação do 1º Cronograma. Nunca sobrescrita depois. */
+  data_base_entrega?: string | null
+  data_base_entrega_definida_em?: string | null
   data_golive?: string
   data_conclusao_real?: string | null
   hora_conclusao?: string | null

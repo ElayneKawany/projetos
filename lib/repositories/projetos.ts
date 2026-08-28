@@ -12,17 +12,21 @@ export interface ProjetoFiltros {
   offset?: number
 }
 
-// Conclusão: em EXECUCAO usa o cronograma; demais fases usam o prazo da macro fase atual,
-// caindo para o cronograma quando nenhum prazo foi definido.
-const DATA_FIM_EFETIVA_SQL = `
+// Fonte única de "prazo efetivo" do projeto, reaproveitada por toda tela que precise de
+// prazo/atraso (Dashboard, listagem/detalhe de Projetos, Comitê, Timeline...):
+//   - Uma vez que a Data Base de Entrega existe (travada na 1ª aprovação de Cronograma —
+//     ver ProjetosRepository.capturarDataBaseEntrega), ela É a resposta: imutável, nunca
+//     recalculada a partir do cronograma vigente, nunca afetada por reprogramação ou nova
+//     versão.
+//   - Antes disso (Proposta/Ideia, Estudo de Viabilidade, Estruturação), usa a "Data limite"
+//     cadastrada para a macro fase atual do projeto (projeto_fase_prazo) — sem cair para
+//     data_fim_prev nem para o cronograma.
+const DATA_FIM_EFETIVA_EXPR = `
   CASE
-    WHEN p.status = 'EXECUCAO'
-      THEN (SELECT MAX(ct.data_fim) FROM cronograma_tarefas ct JOIN cronogramas c ON ct.cronograma_id = c.id WHERE c.projeto_id = p.id AND (c.ativo IS NULL OR c.ativo = 1))
-    ELSE COALESCE(
-      (SELECT pfp.data_limite FROM projeto_fase_prazo pfp WHERE pfp.projeto_id = p.id AND pfp.status = p.status),
-      (SELECT MAX(ct.data_fim) FROM cronograma_tarefas ct JOIN cronogramas c ON ct.cronograma_id = c.id WHERE c.projeto_id = p.id AND (c.ativo IS NULL OR c.ativo = 1))
-    )
-  END AS data_fim_efetiva`
+    WHEN p.data_base_entrega IS NOT NULL THEN p.data_base_entrega
+    ELSE (SELECT pfp.data_limite FROM projeto_fase_prazo pfp WHERE pfp.projeto_id = p.id AND pfp.status = p.status)
+  END`
+export const DATA_FIM_EFETIVA_SQL = `${DATA_FIM_EFETIVA_EXPR} AS data_fim_efetiva`
 
 export const ProjetosRepository = {
   // ── Leitura simples ───────────────────────────────────────────────────────
@@ -563,6 +567,26 @@ export const ProjetosRepository = {
     return row?.data_fim_prev ?? null
   },
 
+  /**
+   * Trava a Data Base de Entrega do projeto — só grava se ainda não existir
+   * (WHERE data_base_entrega IS NULL). Chamado uma única vez, na aprovação do
+   * PRIMEIRO cronograma do projeto (ver rota .../cronograma/[id]/aprovar).
+   * Depois de travada, nenhuma nova versão ou reprogramação a altera —
+   * é a referência de atraso do projeto para o resto da vida dele.
+   */
+  capturarDataBaseEntrega(projetoId: number, cronogramaId: number): void {
+    db.execute(
+      `UPDATE projetos
+       SET data_base_entrega = (
+         SELECT MAX(data_fim) FROM cronograma_tarefas
+         WHERE cronograma_id = ? AND (ativo IS NULL OR ativo = 1)
+       ),
+       data_base_entrega_definida_em = datetime('now')
+       WHERE id = ? AND data_base_entrega IS NULL`,
+      [cronogramaId, projetoId]
+    )
+  },
+
   insertSnapshotFinal(params: {
     projeto_id: number
     roi_previsto: number | null
@@ -616,14 +640,7 @@ export const ProjetosRepository = {
       WHERE p.ativo = 1 AND p.status NOT IN ('CANCELADO')
     `) as { total: number }).total
     const projetosAtrasados = (db.queryOne<{ total: number }>(`SELECT COUNT(*) as total FROM projetos p WHERE p.ativo=1
-AND (CASE p.status
-  WHEN 'VIABILIDADE' THEN COALESCE((SELECT v.data_fim_prev FROM viabilidade v WHERE v.projeto_id = p.id ORDER BY v.versao DESC LIMIT 1), p.data_fim_prev)
-  WHEN 'COMPLEMENTACAO_TAP' THEN COALESCE((SELECT v.data_fim_prev FROM viabilidade v WHERE v.projeto_id = p.id ORDER BY v.versao DESC LIMIT 1), p.data_fim_prev)
-  WHEN 'APROVACAO' THEN COALESCE((SELECT v.data_fim_prev FROM viabilidade v WHERE v.projeto_id = p.id ORDER BY v.versao DESC LIMIT 1), p.data_fim_prev)
-  WHEN 'ESTRUTURACAO' THEN COALESCE((SELECT v.data_fim_prev FROM viabilidade v WHERE v.projeto_id = p.id ORDER BY v.versao DESC LIMIT 1), p.data_fim_prev)
-  WHEN 'CRONOGRAMA' THEN COALESCE((SELECT MAX(ct.data_fim) FROM cronograma_tarefas ct JOIN cronogramas c ON ct.cronograma_id = c.id WHERE c.projeto_id = p.id AND (c.ativo IS NULL OR c.ativo = 1)), p.data_fim_prev)
-  WHEN 'EXECUCAO' THEN COALESCE((SELECT MAX(ct.data_fim) FROM cronograma_tarefas ct JOIN cronogramas c ON ct.cronograma_id = c.id WHERE c.projeto_id = p.id AND (c.ativo IS NULL OR c.ativo = 1)), p.data_fim_prev)
-  ELSE p.data_fim_prev END) < date('now')
+AND ${DATA_FIM_EFETIVA_EXPR} IS NOT NULL AND ${DATA_FIM_EFETIVA_EXPR} < date('now')
 AND p.status NOT IN ('ENCERRAMENTO','CANCELADO','SUSPENSO','GOLIVE','ROI','PROJETO_ENCERRADO','PAYBACK_ENCERRADO')`) as { total: number }).total
     const proximosComites = db.queryMany(`SELECT * FROM comites WHERE status='AGENDADO' AND data_realizacao >= ? ORDER BY data_realizacao LIMIT 5`, [hoje])
     const paybackMedio = (db.queryOne<{ media: number }>(`SELECT COALESCE(AVG(payback_meses),0) as media FROM tap_versoes WHERE payback_meses IS NOT NULL`) as { media: number }).media
@@ -636,7 +653,7 @@ AND p.status NOT IN ('ENCERRAMENTO','CANCELADO','SUSPENSO','GOLIVE','ROI','PROJE
         SELECT p.id,
           CASE
             WHEN NOT EXISTS (SELECT 1 FROM cronogramas c WHERE c.projeto_id = p.id AND c.ativo = 1 AND c.status = 'APROVADO') THEN 'SEM_CRONOGRAMA'
-            WHEN p.data_fim_prev IS NOT NULL AND p.data_fim_prev < date('now') THEN 'ATRASADO'
+            WHEN ${DATA_FIM_EFETIVA_EXPR} IS NOT NULL AND ${DATA_FIM_EFETIVA_EXPR} < date('now') THEN 'ATRASADO'
             WHEN (
               EXISTS (
                 SELECT 1 FROM cronograma_tarefas ct
@@ -644,7 +661,7 @@ AND p.status NOT IN ('ENCERRAMENTO','CANCELADO','SUSPENSO','GOLIVE','ROI','PROJE
                 WHERE c.projeto_id = p.id AND c.ativo = 1 AND c.status = 'APROVADO'
                 AND ct.percentual < 100 AND ct.data_fim IS NOT NULL AND ct.data_fim < date('now')
               )
-              OR (p.data_fim_prev IS NOT NULL AND CAST((julianday(p.data_fim_prev) - julianday('now')) AS INTEGER) <= 10)
+              OR (${DATA_FIM_EFETIVA_EXPR} IS NOT NULL AND CAST((julianday(${DATA_FIM_EFETIVA_EXPR}) - julianday('now')) AS INTEGER) <= 10)
             ) THEN 'ATENCAO'
             ELSE 'NO_PRAZO'
           END AS sc
@@ -667,7 +684,7 @@ AND p.status NOT IN ('ENCERRAMENTO','CANCELADO','SUSPENSO','GOLIVE','ROI','PROJE
         d.sigla AS diretoria_sigla,
         COUNT(p.id) AS total,
         SUM(CASE WHEN p.status NOT IN ('ENCERRAMENTO','CANCELADO','SUSPENSO','PROJETO_ENCERRADO','PAYBACK_ENCERRADO') THEN 1 ELSE 0 END) AS ativos,
-        SUM(CASE WHEN p.data_fim_prev < date('now') AND p.status NOT IN ('ENCERRAMENTO','CANCELADO','SUSPENSO','GOLIVE','ROI','PROJETO_ENCERRADO','PAYBACK_ENCERRADO') THEN 1 ELSE 0 END) AS atrasados,
+        SUM(CASE WHEN ${DATA_FIM_EFETIVA_EXPR} IS NOT NULL AND ${DATA_FIM_EFETIVA_EXPR} < date('now') AND p.status NOT IN ('ENCERRAMENTO','CANCELADO','SUSPENSO','GOLIVE','ROI','PROJETO_ENCERRADO','PAYBACK_ENCERRADO') THEN 1 ELSE 0 END) AS atrasados,
         SUM(CASE WHEN p.status = 'PAUSADO' THEN 1 ELSE 0 END) AS pausados,
         SUM(CASE WHEN p.status IN ('PROJETO_CONCLUIDO','PAYBACK_ACOMPANHAMENTO','PAYBACK_ENCERRADO') THEN 1 ELSE 0 END) AS concluidos,
         SUM(CASE WHEN p.status = 'PROJETO_ENCERRADO' THEN 1 ELSE 0 END) AS encerrados,

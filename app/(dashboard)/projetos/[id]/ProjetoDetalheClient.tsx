@@ -111,6 +111,7 @@ interface Props {
   workflowViabilidade: import('@/lib/workflow').WorkflowAprovacao | null
   workflowCronograma: import('@/lib/workflow').WorkflowAprovacao | null
   cronogramaAprovadoData: { data_fim_prev?: string } | null
+  execucaoRange: { inicio: string; fim: string } | null
   snapshotFinal: {
     roi_previsto: number | null; roi_atual: number | null
     capex_previsto: number | null; capex_executado: number | null
@@ -157,7 +158,7 @@ export default function ProjetoDetalheClient(props: Props) {
     projeto, historicoStatus, historicoPrioridade, historicoAlteracoes,
     configStatus, tapVersoes, triagem, viabilidadeData, capexAprovado, capexProjecoes, cronogramaData, lancamentos,
     capexRealizado, opexRealizado, usuarios, usuariosPmo, fasePrazos, fasePrazosHistorico, session, aprovacoesProjeto,
-    workflowTap, workflowViabilidade, workflowCronograma, cronogramaAprovadoData,
+    workflowTap, workflowViabilidade, workflowCronograma, cronogramaAprovadoData, execucaoRange,
     snapshotFinal, tarefasPendentes, initialTab,
   } = props
 
@@ -213,15 +214,13 @@ export default function ProjetoDetalheClient(props: Props) {
   }
 
   // Prazos das Macro Fases
+  // Regra global: a seção "Prazos das Macro Fases" só existe para as 3 fases anteriores ao
+  // Cronograma. A partir do Cronograma aprovado, a Data Base de Entrega (imutável) passa a
+  // ser a referência — não há mais prazo editável por fase aqui.
   const MACRO_FASES_PRAZO = [
-    { status: 'PROPOSTA',               label: 'Proposta / Ideia' },
-    { status: 'TRIAGEM',                label: 'Triagem' },
-    { status: 'COMITE_IDEIAS',          label: 'Comitê de Ideias' },
-    { status: 'VIABILIDADE',            label: 'Estudo de Viabilidade' },
-    { status: 'ESTRUTURACAO',           label: 'Estruturação' },
-    { status: 'CRONOGRAMA',             label: 'Cronograma' },
-    { status: 'EXECUCAO',               label: 'Execução' },
-    { status: 'PAYBACK_ACOMPANHAMENTO', label: 'Payback' },
+    { status: 'PROPOSTA',     label: 'Proposta / Ideia' },
+    { status: 'VIABILIDADE',  label: 'Estudo de Viabilidade' },
+    { status: 'ESTRUTURACAO', label: 'Estruturação' },
   ]
   const [fasePrazosForm, setFasePrazosForm] = useState<Record<string, string>>(() => {
     const map: Record<string, string> = {}
@@ -728,6 +727,7 @@ export default function ProjetoDetalheClient(props: Props) {
         historicoStatus={historicoStatus as never[]}
         temViabilidadeAprovada={viabilidadeAtual?.status === 'APROVADO'}
         temCronogramaAprovado={cronogramaAprovado}
+        execucaoRange={execucaoRange}
       />
 
       {/* ── Banner de Revisão Pendente ──────────────────── */}
@@ -1634,6 +1634,7 @@ export default function ProjetoDetalheClient(props: Props) {
             temTapAprovado={tapAtual?.status === 'APROVADO'}
             temViabilidadeAprovada={viabilidadeAtual?.status === 'APROVADO'}
             temCronogramaAprovado={cronogramaAprovado}
+            execucaoRange={execucaoRange}
           />
 
           {/* Histórico de Alterações por Campo */}

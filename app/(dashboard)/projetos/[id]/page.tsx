@@ -3,6 +3,8 @@ import { getSession } from '@/lib/auth'
 import { buscarProjetoPorId, buscarHistoricoStatus, buscarHistoricoPrioridade, buscarHistoricoAlteracoes, buscarConfigStatus } from '@/lib/projetos'
 import getDb from '@/lib/db'
 import { buscarWorkflow } from '@/lib/workflow'
+import { CronogramaRepository } from '@/lib/repositories/cronograma'
+import { calcIntervaloCronograma } from '@/lib/cronograma/resumo-fase'
 import ProjetoDetalheClient from './ProjetoDetalheClient'
 
 export default async function ProjetoDetalhePage({
@@ -59,15 +61,31 @@ export default async function ProjetoDetalhePage({
     'SELECT * FROM cronogramas WHERE projeto_id = ? ORDER BY versao DESC LIMIT 1'
   ).get(projeto.id) as { id: number } | undefined
 
-  // Cronograma aprovado — data prevista calculada via MAX(data_fim) das tarefas
-  const cronAprovRow = db.prepare(
-    `SELECT id FROM cronogramas WHERE projeto_id = ? AND status IN ('APROVADO','EM_EXECUCAO','PRONTO_PARA_ENCERRAMENTO','ENCERRADO') AND (ativo IS NULL OR ativo = 1) ORDER BY versao DESC LIMIT 1`
-  ).get(projeto.id) as { id: number } | undefined
+  // Cronograma vigente — mesmo critério em toda a aplicação (CronogramaRepository.findCronogramaVigente):
+  // ativo, não arquivado, status aprovado/em execução. Usado tanto para a data prevista quanto
+  // para o intervalo real de Execução exibido na Timeline do projeto.
+  const cronAprovRow = CronogramaRepository.findCronogramaVigente(projeto.id)
   const cronogramaAprovadoData = cronAprovRow
     ? (db.prepare(
         `SELECT MAX(data_fim) AS data_fim_prev FROM cronograma_tarefas WHERE cronograma_id = ?`
       ).get(cronAprovRow.id) as { data_fim_prev?: string | null } | undefined)
     : undefined
+
+  // Intervalo real de execução (início/fim) derivado do cronograma vigente — respeita hierarquia
+  // FASE→TAREFA via calcIntervaloCronograma (mesmo cálculo usado na aba Cronograma).
+  const tarefasParaIntervalo = cronAprovRow
+    ? (db.prepare(
+        `SELECT nivel, data_inicio, data_fim, data_conclusao, status, percentual, prazo_status
+         FROM cronograma_tarefas
+         WHERE cronograma_id = ? AND nivel IN ('FASE', 'TAREFA') AND (ativo IS NULL OR ativo = 1)
+         ORDER BY ordem`
+      ).all(cronAprovRow.id) as {
+        nivel: string; data_inicio: string | null; data_fim: string | null
+        data_conclusao: string | null; status: string | null
+        percentual: number | null; prazo_status: string | null
+      }[])
+    : []
+  const execucaoRange = cronAprovRow ? calcIntervaloCronograma(tarefasParaIntervalo) : null
 
   // Tarefas pendentes no cronograma atual (para aviso no modal de conclusão)
   const cronAtualId = (cronogramaData as { id?: number } | undefined)?.id
@@ -211,6 +229,7 @@ export default async function ProjetoDetalhePage({
       workflowViabilidade={workflowViabilidade as never}
       workflowCronograma={workflowCronograma as never}
       cronogramaAprovadoData={cronogramaAprovadoData as never}
+      execucaoRange={execucaoRange}
       snapshotFinal={snapshotFinal as never}
       tarefasPendentes={tarefasPendentes}
       initialTab={tab}

@@ -25,6 +25,8 @@ interface ProjetoResumo {
   id: number; codigo: string; nome: string; status: string; prioridade?: string
   complexidade?: string; investimento?: number; roi_previsto?: number
   data_inicio_prevista?: string; data_fim_prevista?: string
+  /** Prazo de apresentação no Comitê: fase inicial usa a Data limite da macro fase; Cronograma/Execução usa o cronograma vigente. */
+  data_fim_efetiva?: string | null
   diretoria?: string; area?: string; gerente_nome?: string
 }
 
@@ -89,8 +91,11 @@ interface MacroTarefa {
   codigo?: string
   percentual?: number
   data_inicio?: string
+  data_inicio_baseline?: string | null
   data_fim?: string
+  data_fim_baseline?: string | null
   data_conclusao?: string
+  status?: string
   bloqueio?: number
   motivo_bloqueio?: string
   motivo_atraso?: string
@@ -244,7 +249,7 @@ const DECISAO_BADGE: Record<string, string> = {
 
 const fmt = (v: number) => new Intl.NumberFormat('pt-BR', { notation: 'compact', maximumFractionDigits: 1 }).format(v)
 const fmtR = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', notation: 'compact' }).format(v)
-const fmtDate = (s?: string) => s ? new Date(s + (s.length === 10 ? 'T00:00:00' : '')).toLocaleDateString('pt-BR') : ''
+const fmtDate = (s?: string | null) => s ? new Date(s + (s.length === 10 ? 'T00:00:00' : '')).toLocaleDateString('pt-BR') : ''
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
@@ -1659,8 +1664,8 @@ function SlideAtencao({ projetos }: { projetos: ProjetoResumo[] }) {
   const atencao = projetos.filter(p => {
     if (['CANCELADO','SUSPENSO','ENCERRAMENTO'].includes(p.status)) return false
     const hoje = new Date()
-    if (p.data_fim_prevista) {
-      const fim = new Date(p.data_fim_prevista + 'T00:00:00')
+    if (p.data_fim_efetiva) {
+      const fim = new Date(p.data_fim_efetiva + 'T00:00:00')
       if (fim < hoje) return true
     }
     return p.complexidade === 'ALTA' || p.prioridade === 'CRITICA'
@@ -1677,7 +1682,7 @@ function SlideAtencao({ projetos }: { projetos: ProjetoResumo[] }) {
       ) : (
         <div className="space-y-3">
           {atencao.map(p => {
-            const atrasado = p.data_fim_prevista && new Date(p.data_fim_prevista + 'T00:00:00') < new Date()
+            const atrasado = p.data_fim_efetiva && new Date(p.data_fim_efetiva + 'T00:00:00') < new Date()
             return (
               <div key={p.id} className="flex items-start gap-3 p-3 bg-red-50 border border-red-100 rounded-lg">
                 <AlertCircle size={18} className="text-red-500 shrink-0 mt-0.5" />
@@ -1685,7 +1690,7 @@ function SlideAtencao({ projetos }: { projetos: ProjetoResumo[] }) {
                   <p className="font-medium text-gray-900 text-sm">{p.codigo} — {p.nome}</p>
                   <p className="text-xs text-gray-500 mt-0.5">{p.diretoria} · {STATUS_GRUPOS[p.status]?.label || p.status}</p>
                   <div className="flex gap-2 mt-1 flex-wrap">
-                    {atrasado && <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded">Atrasado (prazo: {fmtDate(p.data_fim_prevista)})</span>}
+                    {atrasado && <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded">Atrasado (prazo: {fmtDate(p.data_fim_efetiva)})</span>}
                     {p.complexidade === 'ALTA' && <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded">Alta Complexidade</span>}
                     {p.prioridade === 'CRITICA' && <span className="text-xs bg-red-100 text-red-800 px-2 py-0.5 rounded">Prioridade Crítica</span>}
                   </div>
@@ -2066,19 +2071,24 @@ function SlidePropostasDetalhe({
         </div>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
           {[
-            { icon: Building2, label: 'Diretoria',         value: proj.diretoria },
-            { icon: Layers,    label: 'Área',              value: proj.area },
-            ...(d.data_limite_tap ? [{ icon: Calendar, label: 'Prazo TAP', value: new Date(d.data_limite_tap + 'T00:00:00').toLocaleDateString('pt-BR') }] : []),
-            { icon: User,      label: 'Solicitante',       value: d.solicitante_nome },
-            { icon: Briefcase, label: 'Gerente do Projeto',value: proj.gerente_nome },
-          ].map(({ icon: Icon, label, value }) => (
-            <div key={label} className="bg-white border border-gray-100 rounded-xl shadow-sm px-4 py-3 flex items-start gap-3">
-              <div className="mt-0.5 w-8 h-8 rounded-lg bg-[#003087]/5 flex items-center justify-center flex-shrink-0">
-                <Icon size={16} className="text-[#003087]" />
+            { icon: Building2, label: 'Diretoria',         value: proj.diretoria, atrasado: false },
+            { icon: Layers,    label: 'Área',              value: proj.area, atrasado: false },
+            ...(d.data_limite_tap ? [{ icon: Calendar, label: 'Prazo TAP', value: new Date(d.data_limite_tap + 'T00:00:00').toLocaleDateString('pt-BR'), atrasado: false }] : []),
+            { icon: User,      label: 'Solicitante',       value: d.solicitante_nome, atrasado: false },
+            { icon: Briefcase, label: 'Gerente do Projeto',value: proj.gerente_nome, atrasado: false },
+            {
+              icon: Calendar, label: 'Apresentação Prevista',
+              value: proj.data_fim_efetiva ? fmtDate(proj.data_fim_efetiva) : undefined,
+              atrasado: !!proj.data_fim_efetiva && new Date(proj.data_fim_efetiva + 'T00:00:00') < new Date(),
+            },
+          ].map(({ icon: Icon, label, value, atrasado }) => (
+            <div key={label} className={`bg-white border rounded-xl shadow-sm px-4 py-3 flex items-start gap-3 ${atrasado ? 'border-red-200' : 'border-gray-100'}`}>
+              <div className={`mt-0.5 w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${atrasado ? 'bg-red-50' : 'bg-[#003087]/5'}`}>
+                <Icon size={16} className={atrasado ? 'text-red-500' : 'text-[#003087]'} />
               </div>
               <div className="min-w-0">
                 <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide leading-none mb-1">{label}</div>
-                <div className="text-sm font-semibold text-gray-800 leading-snug truncate">{value || '—'}</div>
+                <div className={`text-sm font-semibold leading-snug truncate ${atrasado ? 'text-red-600' : 'text-gray-800'}`}>{value || '—'}</div>
               </div>
             </div>
           ))}
@@ -2657,18 +2667,23 @@ function SlideViabilidadeDetalhe({
         </div>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
           {[
-            { icon: Building2, label: 'Diretoria',          value: proj.diretoria },
-            { icon: Layers,    label: 'Área',               value: proj.area },
-            { icon: User,      label: 'Solicitante',        value: d.solicitante_nome },
-            { icon: Briefcase, label: 'Gerente do Projeto', value: proj.gerente_nome },
-          ].map(({ icon: Icon, label, value }) => (
-            <div key={label} className="bg-white border border-gray-100 rounded-xl shadow-sm px-4 py-3 flex items-start gap-3">
-              <div className="mt-0.5 w-8 h-8 rounded-lg bg-[#003087]/5 flex items-center justify-center flex-shrink-0">
-                <Icon size={16} className="text-[#003087]" />
+            { icon: Building2, label: 'Diretoria',          value: proj.diretoria, atrasado: false },
+            { icon: Layers,    label: 'Área',               value: proj.area, atrasado: false },
+            { icon: User,      label: 'Solicitante',        value: d.solicitante_nome, atrasado: false },
+            { icon: Briefcase, label: 'Gerente do Projeto', value: proj.gerente_nome, atrasado: false },
+            {
+              icon: Calendar, label: 'Apresentação Prevista',
+              value: proj.data_fim_efetiva ? fmtDate(proj.data_fim_efetiva) : undefined,
+              atrasado: !!proj.data_fim_efetiva && new Date(proj.data_fim_efetiva + 'T00:00:00') < new Date(),
+            },
+          ].map(({ icon: Icon, label, value, atrasado }) => (
+            <div key={label} className={`bg-white border rounded-xl shadow-sm px-4 py-3 flex items-start gap-3 ${atrasado ? 'border-red-200' : 'border-gray-100'}`}>
+              <div className={`mt-0.5 w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${atrasado ? 'bg-red-50' : 'bg-[#003087]/5'}`}>
+                <Icon size={16} className={atrasado ? 'text-red-500' : 'text-[#003087]'} />
               </div>
               <div className="min-w-0">
                 <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide leading-none mb-1">{label}</div>
-                <div className="text-sm font-semibold text-gray-800 leading-snug truncate">{value || '—'}</div>
+                <div className={`text-sm font-semibold leading-snug truncate ${atrasado ? 'text-red-600' : 'text-gray-800'}`}>{value || '—'}</div>
               </div>
             </div>
           ))}
@@ -2974,11 +2989,14 @@ function SlideProjetosPorDiretoria({
                       <th>Área Responsável</th>
                       <th>Gerente</th>
                       <th>Status</th>
-                      <th>Data Prevista</th>
+                      <th>Apresentação Prevista</th>
+                      <th>Situação do Prazo</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {porDir[dirNome].map(p => (
+                    {porDir[dirNome].map(p => {
+                      const atrasado = !!p.data_fim_efetiva && new Date(p.data_fim_efetiva + 'T00:00:00') < new Date()
+                      return (
                       <tr key={p.id} className="hover:bg-gray-50 transition-colors">
                         <td>
                           <div className="font-semibold text-sm text-gray-900">{p.nome}</div>
@@ -2991,11 +3009,19 @@ function SlideProjetosPorDiretoria({
                             {STATUS_GRUPOS[p.status]?.label || p.status}
                           </span>
                         </td>
-                        <td className="text-xs text-gray-500 font-medium">
-                          {p.data_fim_prevista ? fmtDate(p.data_fim_prevista) : '—'}
+                        <td className={`text-xs font-medium ${atrasado ? 'text-red-600' : 'text-gray-500'}`}>
+                          {p.data_fim_efetiva ? fmtDate(p.data_fim_efetiva) : '—'}
+                        </td>
+                        <td className="text-xs">
+                          {p.data_fim_efetiva
+                            ? (atrasado
+                                ? <span className="text-red-600 font-semibold bg-red-50 px-2 py-0.5 rounded-full">🔴 Atrasado</span>
+                                : <span className="text-green-700 font-semibold bg-green-50 px-2 py-0.5 rounded-full">🟢 No prazo</span>)
+                            : <span className="text-gray-400">—</span>}
                         </td>
                       </tr>
-                    ))}
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -3710,7 +3736,12 @@ function SlideExecucaoDetalhe({
                           </span>
                         </td>
                         <td className="px-4 py-3 text-xs text-gray-500">{t.responsavel_nome || '—'}</td>
-                        <td className="px-4 py-3 text-center text-xs text-gray-600 whitespace-nowrap">{fmtDate(t.data_fim)}</td>
+                        <td className="px-4 py-3 text-center text-xs text-gray-600 whitespace-nowrap">
+                          {fmtDate(t.data_fim)}
+                          {t.data_fim_baseline && (
+                            <div className="text-[10px] text-gray-400 leading-tight">Base: {fmtDate(t.data_fim_baseline)}</div>
+                          )}
+                        </td>
                         <td className="px-4 py-3 text-center text-xs">
                           {dias === null ? '—'
                             : <span className={`font-medium ${dias <= 7 ? 'text-amber-600' : 'text-gray-600'}`}>
@@ -3764,7 +3795,12 @@ function SlideExecucaoDetalhe({
                             )}
                           </td>
                           <td className="px-4 py-3 text-xs text-gray-500">{t.responsavel_nome || '—'}</td>
-                          <td className="px-4 py-3 text-center text-xs text-gray-600 whitespace-nowrap">{fmtDate(t.data_fim)}</td>
+                          <td className="px-4 py-3 text-center text-xs text-gray-600 whitespace-nowrap">
+                            {fmtDate(t.data_fim)}
+                            {t.data_fim_baseline && (
+                              <div className="text-[10px] text-gray-400 leading-tight">Base: {fmtDate(t.data_fim_baseline)}</div>
+                            )}
+                          </td>
                           <td className="px-4 py-3 text-center text-xs">
                             {dias !== null
                               ? <span className="font-bold text-red-600">{dias}d</span>
@@ -3812,8 +3848,8 @@ function SlideExecucaoDetalhe({
                                     try {
                                       const res = await fetch(
                                         `/api/projetos/${t.projeto_id}/cronograma/${t.cronograma_id}/tarefas/${t.id}/reprogramar`,
-                                        { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                          body: JSON.stringify({ nova_data_fim: novaDataFim }) }
+                                        { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                                          body: JSON.stringify({ nova_data: novaDataFim }) }
                                       )
                                       if (res.ok) { setReprogramarId(null); setNovaDataFim(''); onRefresh() }
                                     } finally { setReprogramandoLoading(false) }
@@ -3828,8 +3864,10 @@ function SlideExecucaoDetalhe({
                                 >
                                   Cancelar
                                 </button>
-                                {t.data_fim && (
-                                  <span className="text-xs text-gray-400">Linha de base: {fmtDate(t.data_fim)}</span>
+                                {(t.data_fim_baseline || t.data_fim) && (
+                                  <span className="text-xs text-gray-400">
+                                    Linha de base: {fmtDate(t.data_fim_baseline || t.data_fim)}
+                                  </span>
                                 )}
                               </div>
                             </td>

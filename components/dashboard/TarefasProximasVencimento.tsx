@@ -23,13 +23,6 @@ function fData(iso: string | null): string {
 }
 
 function DiasBadge({ item }: { item: ProximaTarefaItem }) {
-  if (item.situacao === 'ATRASADA') {
-    return (
-      <span className="text-xs font-semibold text-red-600">
-        {Math.abs(item.dias)} dia{Math.abs(item.dias) !== 1 ? 's' : ''} de atraso
-      </span>
-    )
-  }
   if (item.situacao === 'VENCE_HOJE') {
     return <span className="text-xs font-semibold text-amber-600">Vence hoje</span>
   }
@@ -40,13 +33,13 @@ function DiasBadge({ item }: { item: ProximaTarefaItem }) {
   )
 }
 
-export default function ProximasTarefas({ total, itens, verTodasHref }: Props) {
+export default function TarefasProximasVencimento({ total, itens, verTodasHref }: Props) {
   return (
     <div className="card mb-6">
       <div className="card-header">
         <span className="card-title flex items-center gap-2">
           <ListTodo size={16} className="text-megag-azul" />
-          Próximas Tarefas
+          Tarefas Próximas ao Vencimento
         </span>
         {verTodasHref && total > itens.length && (
           <Link href={verTodasHref} className="text-xs text-megag-azul hover:underline flex items-center gap-1">
@@ -57,7 +50,7 @@ export default function ProximasTarefas({ total, itens, verTodasHref }: Props) {
 
       {itens.length === 0 ? (
         <p className="text-megag-cinza-texto text-sm text-center py-6">
-          Nenhuma tarefa atrasada ou vencendo nos próximos 7 dias.
+          Nenhuma tarefa vencendo hoje ou nos próximos 7 dias úteis.
         </p>
       ) : (
         <>

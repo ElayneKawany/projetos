@@ -15,6 +15,8 @@
 
 import getDb from './db'
 import type { SessionUser } from './auth'
+import { CronogramaRepository } from './repositories/cronograma'
+import { diasUteisEntre } from './utils/dias-uteis'
 
 // ─── Interfaces ───────────────────────────────────────────────────────────────
 
@@ -345,9 +347,7 @@ export interface IndicadoresCronograma {
 export function indicadoresCronograma(projetoId: number): IndicadoresCronograma {
   const db = getDb()
 
-  const cron = db
-    .prepare("SELECT id FROM cronogramas WHERE projeto_id = ? ORDER BY versao DESC LIMIT 1")
-    .get(projetoId) as { id: number } | undefined
+  const cron = CronogramaRepository.findCronogramaVigente(projetoId)
 
   if (!cron) {
     return {
@@ -360,7 +360,7 @@ export function indicadoresCronograma(projetoId: number): IndicadoresCronograma 
     SELECT ct.*, u.nome AS responsavel_nome
     FROM cronograma_tarefas ct
     LEFT JOIN usuarios u ON u.id = ct.responsavel_id
-    WHERE ct.cronograma_id = ? AND ct.nivel = 'TAREFA'
+    WHERE ct.cronograma_id = ? AND ct.nivel = 'TAREFA' AND (ct.ativo IS NULL OR ct.ativo = 1)
   `).all(cron.id) as Array<{
     id: number
     responsavel_id: number | null
@@ -434,8 +434,13 @@ export interface ProximaTarefaItem {
 const CRONOGRAMA_STATUS_APROVADO = ['APROVADO', 'EM_EXECUCAO', 'PRONTO_PARA_ENCERRAMENTO', 'ENCERRADO']
 
 /**
- * Tarefas de cronograma atrasadas, vencendo hoje ou vencendo nos próximos 7
- * dias, filtradas por perfil do usuário logado (aplicado aqui, no backend):
+ * Busca de base (query + CTE de cronograma vigente + filtro de permissão)
+ * compartilhada por `buscarProximasTarefasDashboard` (página /proximas-tarefas,
+ * janela de 7 dias corridos — comportamento existente, não alterado) e pelos
+ * dois painéis novos do Dashboard (`buscarTarefasProximasVencimento` /
+ * `buscarTarefasAtrasadas`, que aplicam dias úteis em cima do mesmo resultado).
+ *
+ * Filtro de permissão (aplicado aqui, no backend):
  *  - ADMIN, PMO, CEO: todas as tarefas de todos os projetos.
  *  - DIRETOR: apenas tarefas de projetos da própria diretoria.
  *  - Demais perfis: apenas tarefas onde é responsável ou executor
@@ -445,11 +450,15 @@ const CRONOGRAMA_STATUS_APROVADO = ['APROVADO', 'EM_EXECUCAO', 'PRONTO_PARA_ENCE
  * (RASCUNHO/PENDENTE_APROVACAO são ignorados) e aplica a hierarquia
  * fase>tarefa>subtarefa: uma tarefa não aparece se tiver subtarefa ativa,
  * uma fase não aparece se tiver tarefa ativa — evita linhas duplicadas.
+ *
+ * `janelaDiasCorridos` limita o upper bound de data_fim no SQL (atrasadas não
+ * têm limite inferior — sempre entram). Cada chamador aplica o corte fino
+ * (dias corridos ou dias úteis) em JS sobre o resultado.
  */
-export function buscarProximasTarefasDashboard(
+function buscarTarefasCronogramaJanela(
   session: SessionUser,
-  opts?: { limit?: number }
-): { total: number; itens: ProximaTarefaItem[] } {
+  janelaDiasCorridos: number
+): ProximaTarefaItem[] {
   const db = getDb()
 
   const wheres: string[] = [
@@ -466,7 +475,7 @@ export function buscarProximasTarefasDashboard(
     )`,
     "NOT (ct.data_conclusao IS NOT NULL OR ct.status = 'CONCLUIDA' OR ct.percentual >= 100)",
     'ct.data_fim IS NOT NULL',
-    "date(ct.data_fim) <= date('now', '+7 days')",
+    `date(ct.data_fim) <= date('now', '+${janelaDiasCorridos} days')`,
   ]
   const params: Record<string, unknown> = {
     statusAprovado0: CRONOGRAMA_STATUS_APROVADO[0],
@@ -544,7 +553,7 @@ export function buscarProximasTarefasDashboard(
 
   const hoje = new Date().toISOString().slice(0, 10)
 
-  const itensCompletos: ProximaTarefaItem[] = rows.map(r => {
+  return rows.map(r => {
     const situacao: ProximaTarefaItem['situacao'] =
       r.data_fim < hoje ? 'ATRASADA' : r.data_fim === hoje ? 'VENCE_HOJE' : 'PROXIMA'
     const dias = Math.round(
@@ -567,9 +576,112 @@ export function buscarProximasTarefasDashboard(
       observacoes: r.observacoes,
     }
   })
+}
+
+/**
+ * Tarefas de cronograma atrasadas, vencendo hoje ou vencendo nos próximos 7
+ * dias corridos — usado pela página cheia /proximas-tarefas. Comportamento
+ * inalterado (dias corridos, não úteis) — ver `buscarTarefasCronogramaJanela`
+ * para a regra de permissão/fonte compartilhada com os painéis do Dashboard.
+ */
+export function buscarProximasTarefasDashboard(
+  session: SessionUser,
+  opts?: { limit?: number }
+): { total: number; itens: ProximaTarefaItem[] } {
+  const itensCompletos = buscarTarefasCronogramaJanela(session, 7)
+  const total = itensCompletos.length
+  const itens = opts?.limit ? itensCompletos.slice(0, opts.limit) : itensCompletos
+  return { total, itens }
+}
+
+/**
+ * Painel "Tarefas Próximas ao Vencimento" do Dashboard: tarefas que vencem
+ * hoje (sempre incluídas — ordenação por data_fim já as coloca primeiro) ou
+ * faltam de 1 a 7 dias ÚTEIS para vencer. Atrasadas nunca entram aqui.
+ */
+export function buscarTarefasProximasVencimento(
+  session: SessionUser,
+  opts?: { limit?: number }
+): { total: number; itens: ProximaTarefaItem[] } {
+  // Janela generosa em dias corridos (7 dias úteis cabem em até 9 dias
+  // corridos considerando um fim de semana no meio) — o corte exato é feito
+  // abaixo, em dias úteis.
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0)
+  const todas = buscarTarefasCronogramaJanela(session, 9)
+
+  const itensCompletos = todas.filter(t => {
+    if (t.situacao === 'VENCE_HOJE') return true
+    if (t.situacao !== 'PROXIMA') return false
+    const fim = new Date(t.data_fim + 'T00:00:00')
+    const uteis = diasUteisEntre(hoje, fim)
+    return uteis >= 1 && uteis <= 7
+  })
 
   const total = itensCompletos.length
   const itens = opts?.limit ? itensCompletos.slice(0, opts.limit) : itensCompletos
-
   return { total, itens }
+}
+
+export interface TarefaAtrasadaResumo {
+  projeto_id: number
+  projeto_codigo: string | null
+  projeto_nome: string
+  diretoria_nome: string | null
+  tarefa_id: number
+  nivel: ProximaTarefaItem['nivel']
+  nome: string
+  data_fim: string
+  dias_atraso: number
+}
+
+export interface ResponsavelAtrasos {
+  responsavel_nome: string
+  itens: TarefaAtrasadaResumo[]
+}
+
+/**
+ * Painel "Tarefas Atrasadas" do Dashboard: uma linha por projeto (a tarefa
+ * atrasada de vencimento mais antigo — o "primeiro impedimento" do projeto),
+ * agrupado por responsável. Não repete várias tarefas do mesmo projeto.
+ */
+export function buscarTarefasAtrasadas(
+  session: SessionUser
+): { total_projetos: number; porResponsavel: ResponsavelAtrasos[] } {
+  const atrasadas = buscarTarefasCronogramaJanela(session, 0)
+    .filter(t => t.situacao === 'ATRASADA')
+
+  // Uma por projeto: a de menor data_fim (mais antiga = primeiro impedimento).
+  const primeiraPorProjeto = new Map<number, ProximaTarefaItem>()
+  for (const t of atrasadas) {
+    const atual = primeiraPorProjeto.get(t.projeto_id)
+    if (!atual || t.data_fim < atual.data_fim) primeiraPorProjeto.set(t.projeto_id, t)
+  }
+
+  // Agrupa por responsável (sem responsável vira seu próprio grupo).
+  const porResp = new Map<string, TarefaAtrasadaResumo[]>()
+  for (const t of primeiraPorProjeto.values()) {
+    const resp = t.responsavel_nome ?? 'Sem responsável'
+    const resumo: TarefaAtrasadaResumo = {
+      projeto_id: t.projeto_id,
+      projeto_codigo: t.projeto_codigo,
+      projeto_nome: t.projeto_nome,
+      diretoria_nome: t.diretoria_nome,
+      tarefa_id: t.tarefa_id,
+      nivel: t.nivel,
+      nome: t.nome,
+      data_fim: t.data_fim,
+      dias_atraso: Math.abs(t.dias),
+    }
+    if (!porResp.has(resp)) porResp.set(resp, [])
+    porResp.get(resp)!.push(resumo)
+  }
+
+  const porResponsavel: ResponsavelAtrasos[] = Array.from(porResp.entries())
+    .map(([responsavel_nome, itens]) => ({
+      responsavel_nome,
+      itens: itens.sort((a, b) => a.data_fim.localeCompare(b.data_fim)),
+    }))
+    .sort((a, b) => a.responsavel_nome.localeCompare(b.responsavel_nome, 'pt-BR'))
+
+  return { total_projetos: primeiraPorProjeto.size, porResponsavel }
 }

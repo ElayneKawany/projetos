@@ -50,6 +50,9 @@ export async function POST(
     // 1. Marcar cronograma como APROVADO (timestamp server-side via SQLite)
     CronogramaRepository.updateStatusAprovado(Number(cronogramaId), session.id)
 
+    // 1b. Trava a Data Base de Entrega na 1ª aprovação (no-op se já existir — ver método)
+    ProjetosRepository.capturarDataBaseEntrega(Number(projetoId), Number(cronogramaId))
+
     // 2. Timeline — Cronograma aprovado
     registrarEvento({
       projeto_id:      Number(projetoId),

@@ -3,6 +3,7 @@ import { getSession } from '@/lib/auth'
 import getDb from '@/lib/db'
 import ComiteDetalheClient from './ComiteDetalheClient'
 import { DEV2026_ATIVIDADES } from '@/lib/ti/dev2026-data'
+import { DATA_FIM_EFETIVA_SQL } from '@/lib/repositories/projetos'
 
 export default async function ComiteDetalhePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -49,11 +50,16 @@ export default async function ComiteDetalhePage({ params }: { params: Promise<{ 
   const ataHistorico = db.prepare('SELECT * FROM comite_ata_historico WHERE comite_id = ? ORDER BY created_at DESC LIMIT 20').all(comiteId)
 
   // Portfolio data for slides
+  // data_fim_efetiva = fonte única de prazo/atraso (DATA_FIM_EFETIVA_SQL) — Data Base de
+  // Entrega imutável quando o projeto já tem Cronograma aprovado, senão a "Data limite" da
+  // macro fase atual (projeto_fase_prazo). Mesma expressão usada pelo Dashboard e pela
+  // listagem/detalhe de Projetos — nunca duplicar esse cálculo aqui.
   const todosProjetos = db.prepare(`
     SELECT p.id, p.codigo, p.nome, p.status, p.prioridade, p.complexidade,
            p.capex_aprovado AS investimento,
            p.data_inicio_prev AS data_inicio_prevista,
            p.data_fim_prev AS data_fim_prevista,
+           ${DATA_FIM_EFETIVA_SQL},
            d.nome AS diretoria, a.nome AS area,
            u.nome AS gerente_nome,
            (SELECT tv.roi_previsto FROM tap_versoes tv WHERE tv.projeto_id = p.id ORDER BY tv.versao DESC LIMIT 1) AS roi_previsto
@@ -178,23 +184,29 @@ export default async function ComiteDetalhePage({ params }: { params: Promise<{ 
 
   // Macro tarefas (FASE + TAREFA direta) from latest active cronograma for each EXECUCAO project
   // TAREFA rows are included so SlideExecucaoDetalhe can expand FASEs that have child tasks
+  // Mesmo critério de "cronograma vigente" de CronogramaRepository.findCronogramaVigente:
+  // ativo, não arquivado, status aprovado/em execução — nunca um RASCUNHO/PENDENTE_APROVACAO.
   const macroTarefasExecucao = db.prepare(`
     SELECT
       t.id, c.id AS cronograma_id, c.projeto_id, t.nome, t.nivel, t.codigo, t.percentual,
-      t.data_inicio, t.data_fim, t.data_conclusao,
+      t.data_inicio, t.data_inicio_baseline, t.data_fim, t.data_fim_baseline, t.data_conclusao,
       t.bloqueio, t.motivo_bloqueio, t.motivo_atraso, t.criticidade,
-      t.observacoes, t.prazo_status, t.ordem,
+      t.observacoes, t.prazo_status, t.ordem, t.status,
       COALESCE(u.nome, t.responsavel_nome_ext) AS responsavel_nome
     FROM cronograma_tarefas t
     JOIN cronogramas c ON c.id = t.cronograma_id
     LEFT JOIN usuarios u ON u.id = t.responsavel_id
     WHERE (c.ativo IS NULL OR c.ativo = 1)
+      AND (c.arquivado IS NULL OR c.arquivado = 0)
+      AND c.status IN ('APROVADO', 'EM_EXECUCAO', 'PRONTO_PARA_ENCERRAMENTO', 'ENCERRADO')
       AND t.nivel IN ('FASE', 'TAREFA')
       AND (t.ativo IS NULL OR t.ativo = 1)
       AND c.versao = (
         SELECT MAX(c2.versao) FROM cronogramas c2
         WHERE c2.projeto_id = c.projeto_id
           AND (c2.ativo IS NULL OR c2.ativo = 1)
+          AND (c2.arquivado IS NULL OR c2.arquivado = 0)
+          AND c2.status IN ('APROVADO', 'EM_EXECUCAO', 'PRONTO_PARA_ENCERRAMENTO', 'ENCERRADO')
       )
       AND c.projeto_id IN (
         SELECT id FROM projetos WHERE ativo = 1 AND status IN ('EXECUCAO', 'GOLIVE')

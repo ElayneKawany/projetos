@@ -185,6 +185,24 @@ export const CronogramaRepository = {
     )
   },
 
+  /**
+   * Resolve a versão vigente do cronograma de um projeto: a de maior `versao`
+   * entre as que estão ativas, aprovadas (ou em estágio pós-aprovação) e não
+   * arquivadas. Fonte única para "qual cronograma alimenta a Timeline/dashboard/
+   * Comitê" — nunca um RASCUNHO/PENDENTE_APROVACAO nem uma versão arquivada.
+   */
+  findCronogramaVigente(projetoId: number): { id: number; versao: number } | undefined {
+    return db.queryOne<{ id: number; versao: number }>(
+      `SELECT id, versao FROM cronogramas
+       WHERE projeto_id = ?
+         AND (ativo IS NULL OR ativo = 1)
+         AND (arquivado IS NULL OR arquivado = 0)
+         AND status IN ('APROVADO', 'EM_EXECUCAO', 'PRONTO_PARA_ENCERRAMENTO', 'ENCERRADO')
+       ORDER BY versao DESC LIMIT 1`,
+      [projetoId]
+    )
+  },
+
   maxVersao(projetoId: number): number {
     const row = db.queryOne<{ max_v: number | null }>(
       'SELECT MAX(versao) as max_v FROM cronogramas WHERE projeto_id = ?',
@@ -238,9 +256,17 @@ export const CronogramaRepository = {
 
   // ── Tarefas ────────────────────────────────────────────────────────────────
 
+  /**
+   * Tarefas ativas de um cronograma, em ordem — fonte usada para copiar a
+   * estrutura ao criar uma Nova Versão. O filtro de `ativo` é essencial: sem
+   * ele, linhas desativadas pelo editor inline (substituídas por uma versão
+   * mais nova da mesma linha, mas nunca removidas da tabela) seriam copiadas
+   * de volta como ativas — causando tarefas/fases duplicadas na nova versão,
+   * e esse efeito compõe a cada nova versão criada a partir da anterior.
+   */
   findTarefasOrdered(cronogramaId: number): Record<string, unknown>[] {
     return db.queryMany<Record<string, unknown>>(
-      `SELECT * FROM cronograma_tarefas WHERE cronograma_id = ? ORDER BY ordem`,
+      `SELECT * FROM cronograma_tarefas WHERE cronograma_id = ? AND (ativo IS NULL OR ativo = 1) ORDER BY ordem`,
       [cronogramaId]
     )
   },
@@ -631,6 +657,34 @@ export const CronogramaRepository = {
       `INSERT INTO cronograma_tarefa_parcelas (cronograma_tarefa_id, numero, valor, data_vencimento)
        VALUES (?, ?, ?, ?)`,
       [params.cronograma_tarefa_id, params.numero, params.valor, params.data_vencimento]
+    )
+    return result.lastInsertRowid
+  },
+
+  /**
+   * Copia uma parcela preservando todo o estado (status pago, data de
+   * pagamento, linha de base) — usado só pela criação de Nova Versão do
+   * Cronograma, para levar o histórico financeiro da tarefa de pagamento
+   * para a nova versão sem recriar/resetar o que já foi pago.
+   */
+  insertParcelaCompleta(params: {
+    cronograma_tarefa_id: number
+    numero: number
+    valor: number
+    data_vencimento: string
+    data_vencimento_baseline: string | null
+    status: string
+    data_pagamento: string | null
+    pago_por: number | null
+  }): number | bigint {
+    const result = db.execute(
+      `INSERT INTO cronograma_tarefa_parcelas
+         (cronograma_tarefa_id, numero, valor, data_vencimento, data_vencimento_baseline, status, data_pagamento, pago_por)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        params.cronograma_tarefa_id, params.numero, params.valor, params.data_vencimento,
+        params.data_vencimento_baseline, params.status, params.data_pagamento, params.pago_por,
+      ]
     )
     return result.lastInsertRowid
   },

@@ -40,6 +40,14 @@ interface Props {
   historicoStatus?: HistoricoItem[]
   temViabilidadeAprovada?: boolean
   temCronogramaAprovado?: boolean
+  /** Início/fim reais da execução, derivados do cronograma vigente (não da data de entrada no status). */
+  execucaoRange?: { inicio: string; fim: string } | null
+}
+
+function formatDateISO(iso: string): string {
+  try {
+    return new Date(iso + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' })
+  } catch { return '' }
 }
 
 function formatDate(iso: string): string {
@@ -54,7 +62,7 @@ function formatTime(iso: string): string {
   } catch { return '' }
 }
 
-export default function CicloVidaTimeline({ statusAtual, historicoStatus = [], temViabilidadeAprovada, temCronogramaAprovado }: Props) {
+export default function CicloVidaTimeline({ statusAtual, historicoStatus = [], temViabilidadeAprovada, temCronogramaAprovado, execucaoRange }: Props) {
   const currentIdx = LIFECYCLE_ORDER.indexOf(statusAtual as StatusProjeto)
 
   // Para cada etapa, encontra a entrada histórica que marcou sua conclusão
@@ -136,6 +144,11 @@ export default function CicloVidaTimeline({ statusAtual, historicoStatus = [], t
                       <p className="text-[10px] text-gray-400 leading-tight whitespace-nowrap">{info.time}</p>
                       <p className="text-[10px] text-gray-400 leading-tight whitespace-nowrap max-w-[72px] truncate">{info.user}</p>
                     </div>
+                  )}
+                  {stage.label === 'Execução' && execucaoRange && (
+                    <p className="text-[10px] text-megag-azul leading-tight whitespace-nowrap font-medium mt-0.5">
+                      {formatDateISO(execucaoRange.inicio)} → {formatDateISO(execucaoRange.fim)}
+                    </p>
                   )}
                 </div>
               </div>

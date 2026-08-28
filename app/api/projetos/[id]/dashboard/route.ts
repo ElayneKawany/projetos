@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
 import getDb from '@/lib/db'
+import { CronogramaRepository } from '@/lib/repositories/cronograma'
 
 export async function GET(
   request: NextRequest,
@@ -14,11 +15,7 @@ export async function GET(
   const db = getDb()
 
   // 1. Cronograma — ALL levels (FASE, TAREFA, SUBTAREFA)
-  const cronRow = db.prepare(`
-    SELECT id FROM cronogramas
-    WHERE projeto_id = ? AND (ativo IS NULL OR ativo = 1)
-    ORDER BY versao DESC LIMIT 1
-  `).get(projeto_id) as { id: number } | undefined
+  const cronRow = CronogramaRepository.findCronogramaVigente(projeto_id)
 
   let cronTotal = 0, cronConcluidas = 0, cronAtrasadas = 0
   if (cronRow) {
