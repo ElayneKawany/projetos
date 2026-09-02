@@ -4,12 +4,13 @@ import React, { useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Monitor, User, Calendar, Clock, AlertTriangle, CheckCircle2, Circle,
-  Loader2, ChevronDown, ChevronRight, ExternalLink, Info,
+  Loader2, ChevronDown, ChevronRight, ExternalLink, Info, Edit3,
   LayoutGrid, List, Table2, ArrowUpDown,
 } from 'lucide-react'
 import type { Dev2026Atividade } from '@/lib/ti/dev2026-data'
 import type { SessionUser } from '@/lib/auth'
 import { calcularCapacidadeMes, mesesTocados, type PeriodoOcupado } from '@/lib/ti/capacidade'
+import { calcStatusAuto } from '@/lib/cronograma/resumo-fase'
 
 interface TarefaCronograma {
   id: number
@@ -17,7 +18,9 @@ interface TarefaCronograma {
   nivel: string
   percentual: number
   data_inicio: string | null
+  data_inicio_baseline?: string | null
   data_fim: string | null
+  data_fim_baseline?: string | null
   data_conclusao: string | null
   analista: string
   responsavel_nome_ext: string | null
@@ -177,6 +180,8 @@ interface ItemKanban {
   fonte: 'cronograma' | 'dev2026'
   inicio: string | null
   fim: string | null
+  /** Data original (antes da reprogramação) — só para tarefas de Cronograma que já foram reprogramadas. */
+  fimBaseline?: string | null
   duracao: number | null
   progresso: Dev2026Atividade['progresso'] | null
   pct: number | null
@@ -226,27 +231,35 @@ function obterColunaKanban(item: ItemKanban): KanbanColunaId {
 
 // ── Card de atividade (visão Agenda) ──────────────────────────────────────────
 function CardAtividade({
-  titulo, analista, inicio, fim, duracao, progresso, pct,
+  titulo, analista, inicio, fim, fimBaseline, duracao, progresso, pct,
   projetoId, projetoCodigo, projetoNome, fonte, statusTexto, conflito, semDatas,
-  observacoes, prioridade, requisito, confirmada, onOpen, onVincular,
+  observacoes, prioridade, requisito, confirmada, atrasada, podeEditar, onOpen, onVincular,
 }: {
   titulo: string; analista: string; inicio: string | null; fim: string | null
+  fimBaseline?: string | null
   duracao: number | null; progresso?: Dev2026Atividade['progresso']
   pct?: number; projetoId?: number; projetoCodigo?: string; projetoNome?: string; fonte: 'cronograma' | 'dev2026'
   statusTexto?: string; conflito: boolean; semDatas: boolean
   observacoes?: string | null; prioridade?: number | ''; requisito?: string; confirmada?: boolean
+  /** Tarefa não concluída com data fim (ou linha de base) já vencida — mesma regra de atraso já usada no sistema. */
+  atrasada?: boolean
+  /** Permissão do usuário logado pra editar (mesma regra de `podeGerenciar` já usada na página do projeto). */
+  podeEditar?: boolean
   onOpen?: () => void
   onVincular?: () => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const cor = COR_ANALISTA[analista] ?? '#6B7280'
   const handleClick = onOpen ? onOpen : () => setExpanded(e => !e)
+  const temNovaData = !!fimBaseline && fimBaseline.slice(0, 10) !== (fim ?? '').slice(0, 10)
   return (
     <div
-      className={`bg-white rounded-xl border shadow-sm overflow-hidden transition-shadow hover:shadow-md cursor-pointer ${conflito ? 'border-amber-400 ring-1 ring-amber-300' : 'border-gray-100'}`}
+      className={`bg-white rounded-xl border shadow-sm overflow-hidden transition-shadow hover:shadow-md cursor-pointer ${
+        atrasada ? 'border-red-400 ring-1 ring-red-300' : conflito ? 'border-amber-400 ring-1 ring-amber-300' : 'border-gray-100'
+      }`}
       onClick={handleClick}
     >
-      <div className="h-1" style={{ background: cor }} />
+      <div className="h-1" style={{ background: atrasada ? '#DC2626' : cor }} />
       <div className="p-4">
         <div className="flex items-start justify-between gap-2 mb-2">
           <div className="flex items-start gap-2 min-w-0">
@@ -254,6 +267,9 @@ function CardAtividade({
             <span className="font-semibold text-sm text-gray-900 leading-snug">{titulo}</span>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
+            {atrasada && (
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 border border-red-300">🔴 ATRASADA</span>
+            )}
             {confirmada && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 border border-green-200">✓ Confirmada</span>}
             {conflito && <span title="Conflito de agenda detectado"><AlertTriangle size={13} className="text-amber-500" /></span>}
             {prioridade !== '' && prioridade !== undefined && (
@@ -270,13 +286,23 @@ function CardAtividade({
         </div>
 
         {projetoCodigo ? (
-          <div className="flex items-center gap-1.5 mb-2">
+          <div className="flex items-center gap-1.5 mb-2 flex-wrap">
             <ExternalLink size={11} className="text-gray-400 shrink-0" />
             <a href={projetoId ? `/projetos/${projetoId}` : '#'} target="_blank" rel="noreferrer"
               onClick={e => e.stopPropagation()}
               className="text-xs text-megag-azul hover:underline truncate font-medium">
               {projetoCodigo} — {projetoNome}
             </a>
+            {fonte === 'cronograma' && podeEditar && projetoId && (
+              <a
+                href={`/projetos/${projetoId}?tab=cronograma`}
+                onClick={e => e.stopPropagation()}
+                className="ml-auto shrink-0 flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200"
+                title="Editar no Cronograma do projeto"
+              >
+                <Edit3 size={11} /> Editar
+              </a>
+            )}
           </div>
         ) : fonte === 'dev2026' ? (
           <div className="flex items-center gap-1.5 mb-2 flex-wrap">
@@ -303,9 +329,10 @@ function CardAtividade({
             <p className="text-xs text-gray-400 mb-0.5">Início</p>
             <p className="text-xs font-semibold text-gray-700">{fmtDate(inicio)}</p>
           </div>
-          <div className="bg-gray-50 rounded-lg px-2 py-1.5">
-            <p className="text-xs text-gray-400 mb-0.5">Fim</p>
-            <p className="text-xs font-semibold text-gray-700">{fmtDate(fim)}</p>
+          <div className={`rounded-lg px-2 py-1.5 ${temNovaData ? 'bg-amber-50' : 'bg-gray-50'}`}>
+            <p className="text-xs text-gray-400 mb-0.5">{temNovaData ? 'Nova Data' : 'Fim'}</p>
+            <p className={`text-xs font-semibold ${temNovaData ? 'text-amber-700' : 'text-gray-700'}`}>{fmtDate(fim)}</p>
+            {temNovaData && <p className="text-[10px] text-gray-400 leading-tight mt-0.5">Original: {fmtDate(fimBaseline)}</p>}
           </div>
           <div className="bg-gray-50 rounded-lg px-2 py-1.5">
             <p className="text-xs text-gray-400 mb-0.5">Duração</p>
@@ -871,6 +898,9 @@ export default function TIAgendaClient({
   usuariosInfo, cargosDistinct, perfisDistinct, diretoriasDistinct,
   projetosDisponiveis, session,
 }: Props) {
+  // Mesma regra de permissão já usada pra editar artefatos do projeto (ProjetoDetalheClient.tsx) —
+  // reaproveitada aqui, não uma regra de acesso nova.
+  const podeGerenciar = ['ADMIN', 'PMO', 'GESTOR'].includes(session.perfil)
   const [viewMode, setViewMode] = useState<ViewMode>('agenda')
   const [filtroAnalista, setFiltroAnalista] = useState<string>('TODOS')
   const [filtroFonte, setFiltroFonte] = useState<'TODOS' | 'cronograma' | 'dev2026'>('TODOS')
@@ -895,7 +925,10 @@ export default function TIAgendaClient({
     return tarefasCronograma.map(t => {
       const analista = normalizarAnalista(t.analista || t.responsavel_nome_ext || '')
       const duracao = (t.data_inicio && t.data_fim) ? diasEntre(t.data_inicio, t.data_fim) : null
-      return { ...t, analistaNorm: analista, duracao }
+      // Mesma regra de atraso já usada no Cronograma/Dashboard (lib/cronograma/resumo-fase.ts) —
+      // não recalculada aqui, só reaproveitada.
+      const atrasada = calcStatusAuto(t) === 'ATRASADO'
+      return { ...t, analistaNorm: analista, duracao, atrasada }
     })
   }, [tarefasCronograma])
 
@@ -914,6 +947,8 @@ export default function TIAgendaClient({
       const duracao = (a.inicio_dev && a.fim_dev) ? diasEntre(a.inicio_dev, a.fim_dev) : null
       const semDatas = !a.inicio_dev && !a.fim_dev
       const concluida = a.progresso === 'Concluído'
+      // Mesma regra de atraso (fim vencido + não concluída) já usada no restante do sistema.
+      const atrasada = !concluida && !!a.fim_dev && new Date(a.fim_dev + 'T00:00:00') < new Date()
       // Merge prioridade do DB (override a estática)
       const dbPrio = priMap.get(a.id)
       const prioridade: number | '' = dbPrio && dbPrio.prioridade !== null ? dbPrio.prioridade : a.prioridade
@@ -926,7 +961,7 @@ export default function TIAgendaClient({
         projeto_codigo: projetoCodigoFinal,
         projeto_nome: projetoNomeFinal,
         projeto_id_num: projetoIdFinal,
-        analistaNorm: analista, ehAnalistaTI, duracao, semDatas, concluida,
+        analistaNorm: analista, ehAnalistaTI, duracao, semDatas, concluida, atrasada,
         prioridade_confirmada: dbPrio?.confirmada === 1,
         prioridade_db_id: dbPrio?.id,
         solicitacao_alteracao: dbPrio?.solicitacao_alteracao === 1,
@@ -998,6 +1033,7 @@ export default function TIAgendaClient({
       fonte: 'cronograma' as const,
       inicio: t.data_inicio,
       fim: t.data_fim,
+      fimBaseline: t.data_fim_baseline,
       duracao: t.duracao,
       progresso: null,
       pct: t.percentual,
@@ -1346,12 +1382,15 @@ export default function TIAgendaClient({
                             {tarefas.map(t => (
                               <CardAtividade key={`c-${t.id}`}
                                 titulo={t.nome} analista={t.analistaNorm}
-                                inicio={t.data_inicio} fim={t.data_fim} duracao={t.duracao}
+                                inicio={t.data_inicio} fim={t.data_fim} fimBaseline={t.data_fim_baseline}
+                                duracao={t.duracao}
                                 pct={t.percentual}
                                 projetoId={t.projeto_id} projetoCodigo={t.projeto_codigo} projetoNome={t.projeto_nome}
                                 fonte="cronograma"
                                 observacoes={t.observacoes}
                                 conflito={conflitos.has(`${analista}::${t.nome}`)}
+                                atrasada={t.atrasada}
+                                podeEditar={podeGerenciar}
                                 semDatas={!t.data_inicio && !t.data_fim}
                                 onOpen={() => setModalItem({ id: `c-${t.id}`, nome: t.nome, analista: t.analistaNorm, projetoId: t.projeto_id, projetoCodigo: t.projeto_codigo, projetoNome: t.projeto_nome, fonte: 'cronograma', inicio: t.data_inicio, fim: t.data_fim, duracao: t.duracao, progresso: null, pct: t.percentual ?? null, prioridade: '', statusTexto: '', dataConclusao: null, observacoes: t.observacoes ?? null })}
                               />
@@ -1374,6 +1413,7 @@ export default function TIAgendaClient({
                                 requisito={a.requisito}
                                 confirmada={a.prioridade_confirmada}
                                 conflito={conflitos.has(`${a.analistaNorm}::${a.nome}`)}
+                                atrasada={a.atrasada}
                                 semDatas={a.semDatas}
                                 onOpen={() => setModalItem({ id: `d-${a.id}`, nome: a.nome, analista: a.analistaNorm, projetoId: (a as any).projeto_id_num ?? undefined, projetoCodigo: a.projeto_codigo, projetoNome: a.projeto_nome, fonte: 'dev2026', inicio: a.inicio_dev || null, fim: a.fim_dev || null, duracao: a.duracao, progresso: a.progresso, pct: null, prioridade: a.prioridade, statusTexto: a.status || '', dataConclusao: null, observacoes: null, confirmada: a.prioridade_confirmada, requisito: a.requisito, devId: a.id })}
                                 onVincular={!a.projeto_codigo ? () => setVincularModal({ devId: a.id, nome: a.nome }) : undefined}
@@ -1399,10 +1439,12 @@ export default function TIAgendaClient({
               ...tarefas.map(t => (
                 <CardAtividade key={`c-${t.id}`}
                   titulo={t.nome} analista={t.analistaNorm}
-                  inicio={t.data_inicio} fim={t.data_fim} duracao={t.duracao}
+                  inicio={t.data_inicio} fim={t.data_fim} fimBaseline={t.data_fim_baseline} duracao={t.duracao}
                   pct={t.percentual}
                   projetoId={t.projeto_id} projetoCodigo={t.projeto_codigo} projetoNome={t.projeto_nome}
                   fonte="cronograma" conflito={conflitos.has(`${analista}::${t.nome}`)}
+                  atrasada={t.atrasada}
+                  podeEditar={podeGerenciar}
                   observacoes={t.observacoes}
                   semDatas={!t.data_inicio && !t.data_fim}
                   onOpen={() => setModalItem({ id: `c-${t.id}`, nome: t.nome, analista: t.analistaNorm, projetoId: t.projeto_id, projetoCodigo: t.projeto_codigo, projetoNome: t.projeto_nome, fonte: 'cronograma', inicio: t.data_inicio, fim: t.data_fim, duracao: t.duracao, progresso: null, pct: t.percentual ?? null, prioridade: '', statusTexto: '', dataConclusao: null, observacoes: t.observacoes ?? null })}
@@ -1419,6 +1461,7 @@ export default function TIAgendaClient({
                   requisito={a.requisito}
                   confirmada={a.prioridade_confirmada}
                   conflito={conflitos.has(`${a.analistaNorm}::${a.nome}`)}
+                  atrasada={a.atrasada}
                   semDatas={a.semDatas}
                   onOpen={() => setModalItem({ id: `d-${a.id}`, nome: a.nome, analista: a.analistaNorm, projetoId: (a as any).projeto_id_num ?? undefined, projetoCodigo: a.projeto_codigo, projetoNome: a.projeto_nome, fonte: 'dev2026', inicio: a.inicio_dev || null, fim: a.fim_dev || null, duracao: a.duracao, progresso: a.progresso, pct: null, prioridade: a.prioridade, statusTexto: a.status || '', dataConclusao: null, observacoes: null, confirmada: a.prioridade_confirmada, requisito: a.requisito, devId: a.id })}
                   onVincular={!a.projeto_codigo ? () => setVincularModal({ devId: a.id, nome: a.nome }) : undefined}
