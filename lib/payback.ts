@@ -15,6 +15,7 @@
  */
 
 import getDb from './db'
+import { asyncDb } from './database'
 import type {
   PaybackResumo,
   PaybackCompetencia,
@@ -170,7 +171,7 @@ export function projetarPayback(
  * Busca o resumo executivo do Payback para um projeto.
  * Combina dados do projeto, snapshot final e competências lançadas.
  */
-export function buscarResumoPayback(projeto_id: number): PaybackResumo {
+export async function buscarResumoPayback(projeto_id: number): Promise<PaybackResumo> {
   const db = getDb()
 
   const projeto = db.prepare(
@@ -190,12 +191,10 @@ export function buscarResumoPayback(projeto_id: number): PaybackResumo {
      WHERE projeto_id = ? ORDER BY versao DESC LIMIT 1`
   ).get(projeto_id) as ViabilidadeRow | undefined
 
-  const tap = db.prepare(
-    `SELECT roi_previsto, payback_meses FROM tap_versoes
-     WHERE projeto_id = ? AND status = 'APROVADO' ORDER BY versao DESC LIMIT 1`
-  ).get(projeto_id) as TapRow | undefined
-
-  const indicadores = buscarIndicadoresFinanceiros(projeto_id)
+  // Consulta a tap_versoes que existia aqui foi removida: o resultado nunca era
+  // usado (só `void tap` pra suprimir aviso de variável não lida) — os dados de
+  // TAP realmente usados neste resumo vêm de buscarIndicadoresFinanceiros abaixo.
+  const indicadores = await buscarIndicadoresFinanceiros(projeto_id)
 
   const ultimaComp = competencias.length > 0
     ? `${competencias[competencias.length - 1].ano}-${String(competencias[competencias.length - 1].mes).padStart(2, '0')}`
@@ -213,7 +212,6 @@ export function buscarResumoPayback(projeto_id: number): PaybackResumo {
 
   void snapshot
   void viab
-  void tap
 
   return {
     projeto_id,
@@ -268,7 +266,7 @@ export function buscarFluxoCaixa(projeto_id: number): PaybackFluxo[] {
  * Planejado → TAP / Viabilidade.
  * Realizado → Financeiro (contratos) / Competências de Payback.
  */
-export function buscarIndicadoresFinanceiros(projeto_id: number): PaybackIndicadores {
+export async function buscarIndicadoresFinanceiros(projeto_id: number): Promise<PaybackIndicadores> {
   const db = getDb()
 
   const viab = db.prepare(
@@ -276,10 +274,11 @@ export function buscarIndicadoresFinanceiros(projeto_id: number): PaybackIndicad
      WHERE projeto_id = ? ORDER BY versao DESC LIMIT 1`
   ).get(projeto_id) as Omit<ViabilidadeRow, 'payback_informado'> | undefined
 
-  const tap = db.prepare(
-    `SELECT roi_previsto FROM tap_versoes
-     WHERE projeto_id = ? AND status = 'APROVADO' ORDER BY versao DESC LIMIT 1`
-  ).get(projeto_id) as Pick<TapRow, 'roi_previsto'> | undefined
+  const tap = await asyncDb.queryOne<Pick<TapRow, 'roi_previsto'>>(
+    `SELECT roi_previsto FROM "AI"."TI_PMO_TAP_VERSOES"
+     WHERE projeto_id = ? AND status = 'APROVADO' ORDER BY versao DESC LIMIT 1`,
+    [projeto_id]
+  )
 
   const snapshot = db.prepare(
     `SELECT capex_executado, opex_executado, economia_realizada FROM projeto_snapshot_final
@@ -322,15 +321,15 @@ export function buscarIndicadoresFinanceiros(projeto_id: number): PaybackIndicad
 /**
  * Gera o resumo executivo do Payback como texto estruturado (para relatórios).
  */
-export function gerarResumoExecutivo(projeto_id: number): {
+export async function gerarResumoExecutivo(projeto_id: number): Promise<{
   resumo: PaybackResumo
   fluxo: PaybackFluxo[]
   indicadores: PaybackIndicadores
   projecao: PaybackFluxo[]
-} {
-  const resumo      = buscarResumoPayback(projeto_id)
+}> {
+  const resumo      = await buscarResumoPayback(projeto_id)
   const fluxo       = buscarFluxoCaixa(projeto_id)
-  const indicadores = buscarIndicadoresFinanceiros(projeto_id)
+  const indicadores = await buscarIndicadoresFinanceiros(projeto_id)
   const projecao    = projetarPayback(fluxo, 6)
 
   return { resumo, fluxo, indicadores, projecao }
@@ -359,12 +358,12 @@ export function buscarHistorico(projeto_id: number): PaybackHistorico[] {
  * Cria um snapshot pontual do estado atual do Payback.
  * Diferente de ProjetoSnapshotFinal — pode ser gerado a qualquer momento durante o acompanhamento.
  */
-export function criarSnapshot(
+export async function criarSnapshot(
   projeto_id: number,
   criado_por: string,
   observacoes?: string,
-): PaybackSnapshot {
-  const indicadores = buscarIndicadoresFinanceiros(projeto_id)
+): Promise<PaybackSnapshot> {
+  const indicadores = await buscarIndicadoresFinanceiros(projeto_id)
   const fluxo       = buscarFluxoCaixa(projeto_id)
   const agora       = new Date().toISOString()
 
@@ -383,8 +382,8 @@ export function criarSnapshot(
  * Prepara os cards do dashboard executivo de Payback.
  * Retorna estrutura pronta para renderização — sem cálculos nos componentes.
  */
-export function buscarDashboardCards(projeto_id: number): PaybackDashboardCard[] {
-  const ind = buscarIndicadoresFinanceiros(projeto_id)
+export async function buscarDashboardCards(projeto_id: number): Promise<PaybackDashboardCard[]> {
+  const ind = await buscarIndicadoresFinanceiros(projeto_id)
   const competencias = buscarCompetencias(projeto_id)
   const receitaAcum  = competencias.reduce((a, c) => a + c.receita, 0)
   const economiaAcum = competencias.reduce((a, c) => a + c.economia, 0)

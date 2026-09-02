@@ -13,6 +13,6 @@ export async function GET(
   const projetoId = Number(id)
   if (isNaN(projetoId)) return NextResponse.json({ error: 'ID inválido' }, { status: 400 })
 
-  const indicadores = buscarIndicadoresFinanceiros(projetoId)
+  const indicadores = await buscarIndicadoresFinanceiros(projetoId)
   return NextResponse.json({ indicadores })
 }

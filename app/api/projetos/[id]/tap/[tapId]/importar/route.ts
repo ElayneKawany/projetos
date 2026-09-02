@@ -15,7 +15,7 @@ export async function POST(
   const projeto_id = Number(id)
   const tap_id     = Number(tapId)
 
-  const tap = TapRepository.findByIdAndProjetoId(tap_id, projeto_id)
+  const tap = await TapRepository.findByIdAndProjetoId(tap_id, projeto_id)
   if (!tap) return NextResponse.json({ error: 'TAP não encontrado.' }, { status: 404 })
   if (tap.status !== 'RASCUNHO') {
     return NextResponse.json({ error: 'Somente TAPs em rascunho podem ser importados.' }, { status: 400 })

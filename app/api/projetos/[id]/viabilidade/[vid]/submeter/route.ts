@@ -38,7 +38,7 @@ export async function POST(
     return NextResponse.json({ error: 'Apenas estudos em rascunho podem ser enviados para aprovação.' }, { status: 400 })
   }
 
-  submeterArtefato({
+  await submeterArtefato({
     projeto_id: Number(projetoId),
     tipo: 'VIABILIDADE',
     referencia_id: Number(vid),

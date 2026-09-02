@@ -10,8 +10,15 @@
  * dois bancos endereçáveis em paralelo durante a migração gradual).
  */
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { Pool, type PoolClient } from 'pg'
+import { Pool, type PoolClient, types as pgTypes } from 'pg'
 import type { AsyncDatabaseClient, AsyncExecuteResult, DbParams } from './async-client'
+
+// node-postgres devolve NUMERIC como string por padrão (evita perda de precisão
+// arbitrária) — mas o SQLite sempre devolveu REAL como number, e o app inteiro
+// (cálculos de ROI, payback, financeiro) espera number. Sem isso, `soma += valor`
+// vira concatenação de string em vez de soma (bug real encontrado testando esta
+// migração: roi_medio por diretoria em fetchDashboard virava NaN).
+pgTypes.setTypeParser(pgTypes.builtins.NUMERIC, (v: string) => parseFloat(v))
 
 let _pool: Pool | null = null
 

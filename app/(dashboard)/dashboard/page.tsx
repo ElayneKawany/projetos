@@ -6,7 +6,7 @@ import DashboardClient from './DashboardClient'
 export default async function DashboardPage() {
   const session = await getSession()
   if (!session) return null
-  const dados = buscarDashboardPMO()
+  const dados = await buscarDashboardPMO()
   const tarefasProximas = buscarTarefasProximasVencimento(session, { limit: 8 })
   const tarefasAtrasadas = buscarTarefasAtrasadas(session)
   return (

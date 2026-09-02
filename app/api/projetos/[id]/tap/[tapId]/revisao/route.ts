@@ -21,7 +21,7 @@ export async function POST(
     return NextResponse.json({ error: 'Observação obrigatória para solicitar revisão.' }, { status: 400 })
   }
 
-  const tap = TapRepository.findByIdAndProjetoId(Number(tapId), Number(projetoId))
+  const tap = await TapRepository.findByIdAndProjetoId(Number(tapId), Number(projetoId))
   if (!tap) return NextResponse.json({ error: 'TAP não encontrada.' }, { status: 404 })
   if (tap.status !== 'PENDENTE_APROVACAO') {
     return NextResponse.json({ error: 'Apenas TAPs pendentes podem ser enviadas para revisão.' }, { status: 400 })
@@ -45,10 +45,13 @@ export async function POST(
 
   let viabilidadesAtivas: { id: number }[] = []
 
+  // TapRepository já está em Postgres (asyncDb); os demais repositórios usados aqui
+  // ainda estão em SQLite (db, síncrono). Enquanto a migração for gradual, os dois
+  // bancos não podem participar da mesma transação — o updateStatus do TAP roda à
+  // parte, depois que a transação SQLite abaixo já confirmou, para que uma falha no
+  // Postgres não deixe a aprovação SQLite com efeitos colaterais não registrados.
   db.transaction(() => {
     processarResposta({ workflow, acao: 'REJEITAR', observacao: body.observacao })
-
-    TapRepository.updateStatus(Number(tapId), 'RASCUNHO')
 
     ProjetosRepository.updateAprovacao({
       referencia_id: Number(tapId),
@@ -102,6 +105,8 @@ export async function POST(
       dados_depois: { tap_status: 'RASCUNHO', observacao: body.observacao, viabilidades_canceladas: viabilidadesAtivas.length },
     })
   })
+
+  await TapRepository.updateStatus(Number(tapId), 'RASCUNHO')
 
   const projeto = ProjetosRepository.findById(Number(projetoId))
   notificarPMOs({

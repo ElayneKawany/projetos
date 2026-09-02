@@ -1,4 +1,9 @@
-import { db } from '@/lib/database'
+import { asyncDb } from '@/lib/database'
+
+// Tabelas Postgres reais (schema AI, prefixo TI_PMO_, ver lib/db/drizzle/schema.postgres.ts) —
+// precisam de aspas duplas por causa do case: sem isso o Postgres dobra pra minúsculo e não acha a tabela.
+const T_TAP_VERSOES = '"AI"."TI_PMO_TAP_VERSOES"'
+const T_USUARIOS = '"AI"."TI_PMO_USUARIOS"'
 
 export interface TapVersao {
   id: number
@@ -37,44 +42,45 @@ export interface TapVersao {
 }
 
 export const TapRepository = {
-  findLatestByProjectId(projetoId: number): TapVersao | undefined {
-    return db.queryOne<TapVersao>(
+  async findLatestByProjectId(projetoId: number): Promise<TapVersao | undefined> {
+    return asyncDb.queryOne<TapVersao>(
       `SELECT tv.*, u.nome AS aprovador_nome
-       FROM tap_versoes tv
-       LEFT JOIN usuarios u ON u.id = tv.aprovado_por
+       FROM ${T_TAP_VERSOES} tv
+       LEFT JOIN ${T_USUARIOS} u ON u.id = tv.aprovado_por
        WHERE tv.projeto_id = ?
        ORDER BY tv.versao DESC LIMIT 1`,
       [projetoId]
     )
   },
 
-  findById(id: number): TapVersao | undefined {
-    return db.queryOne<TapVersao>(
+  async findById(id: number): Promise<TapVersao | undefined> {
+    return asyncDb.queryOne<TapVersao>(
       `SELECT tv.*, u.nome AS aprovador_nome
-       FROM tap_versoes tv
-       LEFT JOIN usuarios u ON u.id = tv.aprovado_por
+       FROM ${T_TAP_VERSOES} tv
+       LEFT JOIN ${T_USUARIOS} u ON u.id = tv.aprovado_por
        WHERE tv.id = ?`,
       [id]
     )
   },
 
-  findAllByProjectId(projetoId: number): TapVersao[] {
-    return db.queryMany<TapVersao>(
+  async findAllByProjectId(projetoId: number): Promise<TapVersao[]> {
+    return asyncDb.queryMany<TapVersao>(
       `SELECT tv.*, u.nome AS aprovador_nome
-       FROM tap_versoes tv
-       LEFT JOIN usuarios u ON u.id = tv.aprovado_por
+       FROM ${T_TAP_VERSOES} tv
+       LEFT JOIN ${T_USUARIOS} u ON u.id = tv.aprovado_por
        WHERE tv.projeto_id = ?
        ORDER BY tv.versao DESC`,
       [projetoId]
     )
   },
 
-  create(dados: Partial<TapVersao>): number | bigint {
-    const result = db.execute(
-      `INSERT INTO tap_versoes
+  async create(dados: Partial<TapVersao>): Promise<number | null> {
+    const result = await asyncDb.execute(
+      `INSERT INTO ${T_TAP_VERSOES}
          (projeto_id, versao, status, titulo, objetivo, descricao, justificativa,
           beneficios_tap, riscos_iniciais, payback_meses, situacao_atual)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)
+       RETURNING id`,
       [
         dados.projeto_id, dados.versao ?? 1, dados.status ?? 'RASCUNHO',
         dados.titulo ?? null, dados.objetivo ?? null, dados.descricao ?? null,
@@ -83,17 +89,17 @@ export const TapRepository = {
         dados.situacao_atual ?? null,
       ]
     )
-    return result.lastInsertRowid
+    return result.insertedId
   },
 
-  findByIdAndProjetoId(id: number, projetoId: number): TapVersao | undefined {
-    return db.queryOne<TapVersao>(
-      'SELECT * FROM tap_versoes WHERE id = ? AND projeto_id = ?',
+  async findByIdAndProjetoId(id: number, projetoId: number): Promise<TapVersao | undefined> {
+    return asyncDb.queryOne<TapVersao>(
+      `SELECT * FROM ${T_TAP_VERSOES} WHERE id = ? AND projeto_id = ?`,
       [id, projetoId]
     )
   },
 
-  update(id: number, dados: Partial<TapVersao>): void {
+  async update(id: number, dados: Partial<TapVersao>): Promise<void> {
     const sets: string[] = []
     const params: unknown[] = []
     const campos = [
@@ -109,38 +115,71 @@ export const TapRepository = {
     if (!sets.length) return
     sets.push('updated_at = CURRENT_TIMESTAMP')
     params.push(id)
-    db.execute(`UPDATE tap_versoes SET ${sets.join(', ')} WHERE id = ?`, params)
+    await asyncDb.execute(`UPDATE ${T_TAP_VERSOES} SET ${sets.join(', ')} WHERE id = ?`, params)
   },
 
-  insertCopia(vals: Record<string, unknown>): number | bigint {
+  async insertCopia(vals: Record<string, unknown>): Promise<number | null> {
     const cols = Object.keys(vals)
     const placeholders = cols.map(c => `@${c}`).join(', ')
-    const result = db.execute(
-      `INSERT INTO tap_versoes (${cols.join(', ')}) VALUES (${placeholders})`,
+    const result = await asyncDb.execute(
+      `INSERT INTO ${T_TAP_VERSOES} (${cols.join(', ')}) VALUES (${placeholders}) RETURNING id`,
       vals
     )
-    return result.lastInsertRowid
+    return result.insertedId
   },
 
-  updateStatus(id: number, status: string, aprovadoPor?: number): void {
+  async updateStatus(id: number, status: string, aprovadoPor?: number): Promise<void> {
     if (aprovadoPor) {
-      db.execute(
-        'UPDATE tap_versoes SET status = ?, aprovado_por = ?, aprovado_em = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      await asyncDb.execute(
+        `UPDATE ${T_TAP_VERSOES} SET status = ?, aprovado_por = ?, aprovado_em = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
         [status, aprovadoPor, id]
       )
     } else {
-      db.execute(
-        'UPDATE tap_versoes SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      await asyncDb.execute(
+        `UPDATE ${T_TAP_VERSOES} SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
         [status, id]
       )
     }
   },
 
-  nextVersao(projetoId: number): number {
-    const row = db.queryOne<{ versao: number }>(
-      'SELECT MAX(versao) AS versao FROM tap_versoes WHERE projeto_id = ?',
+  async nextVersao(projetoId: number): Promise<number> {
+    const row = await asyncDb.queryOne<{ versao: number }>(
+      `SELECT MAX(versao) AS versao FROM ${T_TAP_VERSOES} WHERE projeto_id = ?`,
       [projetoId]
     )
     return (row?.versao ?? 0) + 1
+  },
+
+  // ── Suporte a merge em JS para queries que hoje cruzam tap_versoes com
+  // tabelas ainda em SQLite (projetos, aprovacoes) — ver lib/repositories/projetos.ts
+  // (findAllComplexo, fetchDashboard) e lib/repositories/comites.ts (findPortfolioAtivoParaIA).
+
+  /** Dado uma lista de ids de tap_versoes, retorna os que estão com status='RASCUNHO'. */
+  async findRascunhoIds(ids: number[]): Promise<number[]> {
+    if (ids.length === 0) return []
+    const rows = await asyncDb.queryMany<{ id: number }>(
+      `SELECT id FROM ${T_TAP_VERSOES} WHERE id = ANY(?) AND status = 'RASCUNHO'`,
+      [ids]
+    )
+    return rows.map(r => r.id)
+  },
+
+  /** Toda linha com roi_previsto não nulo, sem dedupe por projeto (replica o cálculo atual de roiPorDir). */
+  async findRoiPrevistoTodos(): Promise<{ projeto_id: number; roi_previsto: number | null }[]> {
+    return asyncDb.queryMany(
+      `SELECT projeto_id, roi_previsto FROM ${T_TAP_VERSOES} WHERE roi_previsto IS NOT NULL`
+    )
+  },
+
+  /** roi_previsto da versão mais recente de tap_versoes por projeto, entre os ids informados. */
+  async findLatestRoiPrevistoPorProjetos(ids: number[]): Promise<{ projeto_id: number; roi_previsto: number | null }[]> {
+    if (ids.length === 0) return []
+    return asyncDb.queryMany(
+      `SELECT DISTINCT ON (projeto_id) projeto_id, roi_previsto
+       FROM ${T_TAP_VERSOES}
+       WHERE projeto_id = ANY(?)
+       ORDER BY projeto_id, versao DESC`,
+      [ids]
+    )
   },
 }

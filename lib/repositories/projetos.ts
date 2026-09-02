@@ -1,5 +1,9 @@
-import { db } from '@/lib/database'
+import { db, asyncDb } from '@/lib/database'
+import { TapRepository } from './tap'
 import type { Projeto, StatusProjeto, Prioridade } from '@/types'
+
+// tap_versoes já está em Postgres — nome real da tabela (ver lib/db/drizzle/schema.postgres.ts).
+const T_TAP_VERSOES = '"AI"."TI_PMO_TAP_VERSOES"'
 
 export interface ProjetoFiltros {
   status?: string
@@ -111,14 +115,14 @@ export const ProjetosRepository = {
   },
 
   /** Usado por buscarProjetos — full query com named params para visibilidade */
-  findAllComplexo(
+  async findAllComplexo(
     conditions: string[],
     namedParams: Record<string, unknown>,
     limit: number,
     offset: number
-  ): Projeto[] {
+  ): Promise<Projeto[]> {
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
-    return db.queryMany<Projeto>(
+    const projetos = db.queryMany<Projeto & { tem_revisao_pendente: number }>(
       `SELECT p.*,
               us.nome  as solicitante_nome,
               d.nome   as diretoria_nome,
@@ -131,8 +135,7 @@ export const ProjetosRepository = {
                 SELECT 1 FROM aprovacoes apr
                 WHERE apr.projeto_id = p.id AND apr.status = 'REJEITADO'
                 AND (
-                  (apr.tipo = 'TAP'         AND EXISTS (SELECT 1 FROM tap_versoes tv WHERE tv.id = apr.referencia_id AND tv.status = 'RASCUNHO'))
-                  OR (apr.tipo = 'VIABILIDADE' AND EXISTS (SELECT 1 FROM viabilidade v  WHERE v.id  = apr.referencia_id AND v.status  = 'RASCUNHO'))
+                  (apr.tipo = 'VIABILIDADE' AND EXISTS (SELECT 1 FROM viabilidade v  WHERE v.id  = apr.referencia_id AND v.status  = 'RASCUNHO'))
                   OR (apr.tipo = 'CRONOGRAMA'  AND EXISTS (SELECT 1 FROM cronogramas cr WHERE cr.id = apr.referencia_id AND cr.status = 'RASCUNHO'))
                 )
               ) THEN 1 ELSE 0 END AS tem_revisao_pendente,
@@ -155,6 +158,34 @@ export const ProjetosRepository = {
        LIMIT ${limit} OFFSET ${offset}`,
       namedParams
     )
+
+    // Ramo TAP do tem_revisao_pendente: tap_versoes já está em Postgres, não dá
+    // pra fazer EXISTS cruzando bancos em uma query só. Busca as aprovações
+    // REJEITADO de tipo TAP destes projetos no SQLite (barato, mesma tabela da
+    // query acima), depois confere no Postgres quais dessas tap_versoes ainda
+    // estão em RASCUNHO, e faz o OR em JS — nunca reduz um true já calculado
+    // pelos ramos de Viabilidade/Cronograma acima.
+    if (projetos.length > 0) {
+      const idsProjetos = projetos.map(p => p.id)
+      const placeholders = idsProjetos.map(() => '?').join(',')
+      const aprovacoesTap = db.queryMany<{ projeto_id: number; referencia_id: number }>(
+        `SELECT projeto_id, referencia_id FROM aprovacoes
+         WHERE status = 'REJEITADO' AND tipo = 'TAP' AND projeto_id IN (${placeholders})`,
+        idsProjetos
+      )
+      if (aprovacoesTap.length > 0) {
+        const tapIds = aprovacoesTap.map(a => a.referencia_id)
+        const rascunhoIds = new Set(await TapRepository.findRascunhoIds(tapIds))
+        const projetosComRevisaoTap = new Set(
+          aprovacoesTap.filter(a => rascunhoIds.has(a.referencia_id)).map(a => a.projeto_id)
+        )
+        for (const p of projetos) {
+          if (projetosComRevisaoTap.has(p.id)) p.tem_revisao_pendente = 1
+        }
+      }
+    }
+
+    return projetos
   },
 
   // ── Criação ───────────────────────────────────────────────────────────────
@@ -214,15 +245,15 @@ export const ProjetosRepository = {
     return result.lastInsertRowid
   },
 
-  /** Insere o TAP V1 automático gerado na criação do projeto */
-  insertTapV1(params: {
+  /** Insere o TAP V1 automático gerado na criação do projeto — tap_versoes já está em Postgres. */
+  async insertTapV1(params: {
     projeto_id: number
     criado_por: number
     objetivo_detalhado: string
     nome_projeto: string
-  }): void {
-    db.execute(
-      `INSERT INTO tap_versoes
+  }): Promise<void> {
+    await asyncDb.execute(
+      `INSERT INTO ${T_TAP_VERSOES}
         (projeto_id, versao, label, fase_origem, status, criado_por,
          escopo_inicial, escopo_fisico, escopo_sistemico, escopo_processo,
          objetivo_detalhado, situacao_atual, etapas_projeto, setores_envolvidos)
@@ -528,9 +559,9 @@ export const ProjetosRepository = {
     return row?.total ?? 0
   },
 
-  findTapAprovado(projeto_id: number): { roi_previsto: number | null } | undefined {
-    return db.queryOne<{ roi_previsto: number | null }>(
-      `SELECT roi_previsto FROM tap_versoes WHERE projeto_id = ? AND status = 'APROVADO' ORDER BY versao DESC LIMIT 1`,
+  async findTapAprovado(projeto_id: number): Promise<{ roi_previsto: number | null } | undefined> {
+    return asyncDb.queryOne<{ roi_previsto: number | null }>(
+      `SELECT roi_previsto FROM ${T_TAP_VERSOES} WHERE projeto_id = ? AND status = 'APROVADO' ORDER BY versao DESC LIMIT 1`,
       [projeto_id]
     )
   },
@@ -619,7 +650,7 @@ export const ProjetosRepository = {
 
   // ── Dashboard PMO ─────────────────────────────────────────────────────────
 
-  fetchDashboard(hoje: string) {
+  async fetchDashboard(hoje: string) {
     const totalProjetos = (db.queryOne<{ total: number }>('SELECT COUNT(*) as total FROM projetos WHERE ativo=1') as { total: number }).total
     const projetosAtivos = (db.queryOne<{ total: number }>(`SELECT COUNT(*) as total FROM projetos WHERE ativo=1 AND status NOT IN ('ENCERRAMENTO','CANCELADO','SUSPENSO')`) as { total: number }).total
     const aprovacoesPendentes = (db.queryOne<{ total: number }>(`SELECT COUNT(*) as total FROM aprovacoes WHERE status='PENDENTE'`) as { total: number }).total
@@ -643,7 +674,10 @@ export const ProjetosRepository = {
 AND ${DATA_FIM_EFETIVA_EXPR} IS NOT NULL AND ${DATA_FIM_EFETIVA_EXPR} < date('now')
 AND p.status NOT IN ('ENCERRAMENTO','CANCELADO','SUSPENSO','GOLIVE','ROI','PROJETO_ENCERRADO','PAYBACK_ENCERRADO')`) as { total: number }).total
     const proximosComites = db.queryMany(`SELECT * FROM comites WHERE status='AGENDADO' AND data_realizacao >= ? ORDER BY data_realizacao LIMIT 5`, [hoje])
-    const paybackMedio = (db.queryOne<{ media: number }>(`SELECT COALESCE(AVG(payback_meses),0) as media FROM tap_versoes WHERE payback_meses IS NOT NULL`) as { media: number }).media
+    const paybackMedioRow = await asyncDb.queryOne<{ media: number }>(
+      `SELECT COALESCE(AVG(payback_meses),0) as media FROM ${T_TAP_VERSOES} WHERE payback_meses IS NOT NULL`
+    )
+    const paybackMedio = paybackMedioRow?.media ?? 0
     const projetosPausados = (db.queryOne<{ total: number }>(`SELECT COUNT(*) as total FROM projetos WHERE ativo=1 AND status='PAUSADO'`) as { total: number }).total
     const projetosConcluidos = (db.queryOne<{ total: number }>(`SELECT COUNT(*) as total FROM projetos WHERE ativo=1 AND status IN ('PROJETO_CONCLUIDO','PAYBACK_ACOMPANHAMENTO','PAYBACK_ENCERRADO')`) as { total: number }).total
     const projetosEncerrados = (db.queryOne<{ total: number }>(`SELECT COUNT(*) as total FROM projetos WHERE ativo=1 AND status='PROJETO_ENCERRADO'`) as { total: number }).total
@@ -706,13 +740,28 @@ AND p.status NOT IN ('ENCERRAMENTO','CANCELADO','SUSPENSO','GOLIVE','ROI','PROJE
       GROUP BY p.diretoria_id
     `)
 
-    const roiPorDir = db.queryMany<{ diretoria_id: number; roi_medio: number }>(`
-      SELECT p.diretoria_id, AVG(t.roi_previsto) AS roi_medio
-      FROM tap_versoes t
-      JOIN projetos p ON p.id = t.projeto_id
-      WHERE t.roi_previsto IS NOT NULL AND p.ativo = 1
-      GROUP BY p.diretoria_id
-    `)
+    // tap_versoes já está em Postgres — não dá pra fazer esse JOIN em SQL puro.
+    // Busca todas as linhas com roi_previsto (sem filtrar por status/versão —
+    // preserva o cálculo atual, que já mistura todas as versões por projeto),
+    // junta com diretoria_id (SQLite) e recalcula a média por diretoria em JS.
+    const tapRoiRows = await TapRepository.findRoiPrevistoTodos()
+    const projetoDiretoriaRows = db.queryMany<{ id: number; diretoria_id: number | null }>(
+      'SELECT id, diretoria_id FROM projetos WHERE ativo = 1'
+    )
+    const diretoriaPorProjeto = new Map(projetoDiretoriaRows.map(p => [p.id, p.diretoria_id]))
+    const roiAcumPorDir = new Map<number, { soma: number; count: number }>()
+    for (const row of tapRoiRows) {
+      const dirId = diretoriaPorProjeto.get(row.projeto_id)
+      if (dirId == null || row.roi_previsto == null) continue
+      const acc = roiAcumPorDir.get(dirId) ?? { soma: 0, count: 0 }
+      acc.soma += row.roi_previsto
+      acc.count += 1
+      roiAcumPorDir.set(dirId, acc)
+    }
+    const roiPorDir = Array.from(roiAcumPorDir.entries()).map(([diretoria_id, acc]) => ({
+      diretoria_id,
+      roi_medio: acc.soma / acc.count,
+    }))
 
     const invRealizadoPorDir = db.queryMany<{ diretoria_id: number; total: number }>(`
       SELECT p.diretoria_id, COALESCE(SUM(fp.valor_pago), 0) AS total

@@ -14,7 +14,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
   const historicoStatus = buscarHistoricoStatus(projeto.id)
   const historicoPrioridade = buscarHistoricoPrioridade(projeto.id)
-  const tapVersoes = TapRepository.findAllByProjectId(projeto.id)
+  const tapVersoes = await TapRepository.findAllByProjectId(projeto.id)
 
   return NextResponse.json({ projeto, historicoStatus, historicoPrioridade, tapVersoes })
 }

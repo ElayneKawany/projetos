@@ -26,7 +26,7 @@ export async function POST(
   }
 
   try {
-    concluirProjeto(
+    await concluirProjeto(
       projeto_id,
       {
         data_conclusao_real,

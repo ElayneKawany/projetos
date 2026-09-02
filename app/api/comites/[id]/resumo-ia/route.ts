@@ -18,7 +18,7 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   const hoje = new Date().toISOString().substring(0, 10)
 
-  const projetos = ComitesRepository.findPortfolioAtivoParaIA() as Record<string, unknown>[]
+  const projetos = await ComitesRepository.findPortfolioAtivoParaIA()
   const totalFinPago = ComitesRepository.findTotalFinanceiroPago()
   const totalBeneficio = ComitesRepository.findTotalBeneficioPayback()
   const decisoesPendentes = ComitesRepository.findDecisoesPendentes(comiteId) as Record<string, unknown>[]

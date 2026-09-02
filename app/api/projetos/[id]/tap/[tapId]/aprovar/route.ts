@@ -14,7 +14,7 @@ export async function POST(
 
   const { id: projetoId, tapId } = await params
 
-  const tap = TapRepository.findByIdAndProjetoId(Number(tapId), Number(projetoId))
+  const tap = await TapRepository.findByIdAndProjetoId(Number(tapId), Number(projetoId))
   if (!tap) return NextResponse.json({ error: 'TAP não encontrada.' }, { status: 404 })
   if (tap.status !== 'PENDENTE_APROVACAO') {
     return NextResponse.json({ error: 'Apenas TAPs pendentes de aprovação podem ser processadas.' }, { status: 400 })
@@ -51,7 +51,7 @@ export async function POST(
   }
 
   if (resultado === 'COMPLETED') {
-    TapRepository.updateStatus(Number(tapId), 'APROVADO', session.id)
+    await TapRepository.updateStatus(Number(tapId), 'APROVADO', session.id)
 
     ProjetosRepository.updateAprovacao({
       referencia_id: Number(tapId),

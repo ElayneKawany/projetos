@@ -17,6 +17,7 @@ import getDb from './db'
 import { criarWorkflow, type EtapaInput } from './workflow'
 import { registrarHistoricoAlteracao } from './projetos'
 import { registrarAuditoria } from './db/auditoria'
+import { TapRepository } from './repositories'
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
 
@@ -126,7 +127,7 @@ export function verificarBloqueioEdicao(status: string): boolean {
  * })
  * ```
  */
-export function submeterArtefato(params: SubmeterArtefatoParams): void {
+export async function submeterArtefato(params: SubmeterArtefatoParams): Promise<void> {
   const {
     projeto_id, tipo, referencia_id, tabela, campoHistorico,
     session, etapas, novoModelo,
@@ -160,9 +161,14 @@ export function submeterArtefato(params: SubmeterArtefatoParams): void {
     })
 
     // 3. Atualizar status do artefato para PENDENTE_APROVACAO
-    db.prepare(
-      `UPDATE ${tabela} SET status = 'PENDENTE_APROVACAO' WHERE id = ?`
-    ).run(referencia_id)
+    // tap_versoes já está em Postgres (asyncDb) — esse UPDATE roda fora desta
+    // transação SQLite, depois que ela confirmar (ver abaixo). Viabilidade e
+    // Cronograma continuam em SQLite, dentro da transação, como sempre.
+    if (tabela !== 'tap_versoes') {
+      db.prepare(
+        `UPDATE ${tabela} SET status = 'PENDENTE_APROVACAO' WHERE id = ?`
+      ).run(referencia_id)
+    }
 
     // 4. Upsert no registro legado de aprovações (auditoria/compatibilidade)
     const tipoTabela = tipo === 'TAP' ? 'tap_versoes'
@@ -209,4 +215,8 @@ export function submeterArtefato(params: SubmeterArtefatoParams): void {
   })
 
   executar()
+
+  if (tabela === 'tap_versoes') {
+    await TapRepository.updateStatus(referencia_id, 'PENDENTE_APROVACAO')
+  }
 }

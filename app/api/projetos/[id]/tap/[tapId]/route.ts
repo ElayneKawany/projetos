@@ -11,7 +11,7 @@ export async function PATCH(
   const session = await getSession(request)
   if (!session) return NextResponse.json({ error: 'Não autenticado.' }, { status: 401 })
   const { id, tapId } = await params
-  const tap = TapRepository.findByIdAndProjetoId(Number(tapId), Number(id))
+  const tap = await TapRepository.findByIdAndProjetoId(Number(tapId), Number(id))
   if (!tap) return NextResponse.json({ error: 'TAP não encontrado.' }, { status: 404 })
   const body = await request.json()
 
@@ -35,7 +35,7 @@ export async function PATCH(
     return NextResponse.json({ error: 'Este documento não pode ser editado no status atual.' }, { status: 403 })
   }
   if (!Object.keys(dados).length) return NextResponse.json({ error: 'Nada para atualizar.' }, { status: 400 })
-  TapRepository.update(Number(tapId), dados)
+  await TapRepository.update(Number(tapId), dados)
   registrarAuditoria({
     usuario_id: session.id,
     usuario_nome: session.nome,

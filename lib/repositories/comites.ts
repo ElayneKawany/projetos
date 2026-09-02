@@ -1,4 +1,5 @@
 import { db } from '@/lib/database'
+import { TapRepository } from './tap'
 
 export interface Comite {
   id: number
@@ -470,14 +471,12 @@ export const ComitesRepository = {
     )
   },
 
-  findPortfolioAtivoParaIA(): Record<string, unknown>[] {
-    return db.queryMany(
+  async findPortfolioAtivoParaIA(): Promise<Record<string, unknown>[]> {
+    const projetos = db.queryMany<Record<string, unknown> & { id: number }>(
       `SELECT p.id, p.codigo, p.nome, p.status, p.prioridade, p.complexidade,
               p.capex_aprovado, p.data_inicio_prev, p.data_fim_prev,
               p.responsavel_nome, p.gestor_nome,
-              d.nome AS diretoria, a.nome AS area,
-              (SELECT tv.roi_previsto FROM tap_versoes tv WHERE tv.projeto_id = p.id
-               ORDER BY tv.versao DESC LIMIT 1) AS roi_previsto
+              d.nome AS diretoria, a.nome AS area
        FROM projetos p
        LEFT JOIN diretorias d ON d.id = p.diretoria_id
        LEFT JOIN areas a ON a.id = p.area_id
@@ -485,6 +484,17 @@ export const ComitesRepository = {
        ORDER BY p.status, p.nome`,
       []
     )
+
+    // roi_previsto vinha de uma subquery correlacionada em tap_versoes, que já
+    // está em Postgres — busca em lote (versão mais recente por projeto) e faz
+    // o merge em JS.
+    const roiPorProjeto = await TapRepository.findLatestRoiPrevistoPorProjetos(projetos.map(p => p.id))
+    const roiMap = new Map(roiPorProjeto.map(r => [r.projeto_id, r.roi_previsto]))
+    for (const p of projetos) {
+      p.roi_previsto = roiMap.get(p.id) ?? null
+    }
+
+    return projetos
   },
 
   findTotalFinanceiroPago(): number {

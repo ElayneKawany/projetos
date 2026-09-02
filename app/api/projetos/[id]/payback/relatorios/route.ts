@@ -17,7 +17,7 @@ export async function GET(
   const tipo = searchParams.get('tipo')
 
   if (tipo === 'RESUMO_EXECUTIVO') {
-    const dados = gerarResumoExecutivo(projetoId)
+    const dados = await gerarResumoExecutivo(projetoId)
     return NextResponse.json(dados)
   }
 

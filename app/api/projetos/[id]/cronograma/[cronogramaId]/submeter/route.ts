@@ -39,7 +39,7 @@ export async function POST(
     return NextResponse.json({ error: 'Apenas cronogramas em rascunho podem ser submetidos para aprovação.' }, { status: 400 })
   }
 
-  submeterArtefato({
+  await submeterArtefato({
     projeto_id: Number(projetoId),
     tipo: 'CRONOGRAMA',
     referencia_id: Number(cronogramaId),

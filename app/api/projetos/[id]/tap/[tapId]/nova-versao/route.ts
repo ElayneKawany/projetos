@@ -25,7 +25,7 @@ export async function POST(
   const projeto_id = Number(id)
   const tap_id = Number(tapId)
 
-  const tapOriginal = TapRepository.findByIdAndProjetoId(tap_id, projeto_id)
+  const tapOriginal = await TapRepository.findByIdAndProjetoId(tap_id, projeto_id)
   if (!tapOriginal) {
     return NextResponse.json({ error: 'TAP não encontrado.' }, { status: 404 })
   }
@@ -43,7 +43,7 @@ export async function POST(
     return NextResponse.json({ error: 'Corpo da requisição inválido.' }, { status: 400 })
   }
 
-  const novaVersao = TapRepository.nextVersao(projeto_id)
+  const novaVersao = await TapRepository.nextVersao(projeto_id)
   const novoLabel = `TAP V${novaVersao}`
 
   const vals: Record<string, unknown> = {
@@ -63,7 +63,7 @@ export async function POST(
     if (body[campo] !== undefined) vals[campo] = body[campo]
   }
 
-  const novoTapId = TapRepository.insertCopia(vals)
+  const novoTapId = await TapRepository.insertCopia(vals)
 
   registrarEvento({
     projeto_id,

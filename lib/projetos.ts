@@ -23,7 +23,7 @@ export function gerarCodigoProjeto(): string {
   return ProjetosRepository.nextCodigo()
 }
 
-export function buscarProjetos(filtros: {
+export async function buscarProjetos(filtros: {
   status?: string
   diretoria_id?: number
   prioridade?: string
@@ -32,7 +32,7 @@ export function buscarProjetos(filtros: {
   perfil?: string
   limit?: number
   offset?: number
-}): Projeto[] {
+}): Promise<Projeto[]> {
   const conditions: string[] = ['p.ativo = 1']
   const params: Record<string, unknown> = {}
 
@@ -64,7 +64,7 @@ export function buscarProjetos(filtros: {
   const limit = filtros.limit ?? 100
   const offset = filtros.offset ?? 0
 
-  return ProjetosRepository.findAllComplexo(conditions, params, limit, offset)
+  return await ProjetosRepository.findAllComplexo(conditions, params, limit, offset)
 }
 
 export function buscarProjetoPorId(id: number): Projeto | null {
@@ -152,7 +152,7 @@ export async function criarProjeto(dados: {
     acao: 'CREATE',
   })
 
-  ProjetosRepository.insertTapV1({
+  await ProjetosRepository.insertTapV1({
     projeto_id: projeto.id,
     criado_por: dados.created_by,
     objetivo_detalhado: dados.objetivo,
@@ -293,9 +293,9 @@ export function buscarHistoricoPrioridade(projeto_id: number) {
   return ProjetosRepository.findHistoricoPrioridade(projeto_id)
 }
 
-export function buscarDashboardPMO() {
+export async function buscarDashboardPMO() {
   const hoje = new Date().toISOString().split('T')[0]
-  return ProjetosRepository.fetchDashboard(hoje)
+  return await ProjetosRepository.fetchDashboard(hoje)
 }
 
 export interface ConcluirProjetoInput {
@@ -306,12 +306,12 @@ export interface ConcluirProjetoInput {
   checklist_conclusao: string
 }
 
-export function concluirProjeto(
+export async function concluirProjeto(
   projeto_id: number,
   dados: ConcluirProjetoInput,
   usuario_id: number,
   usuario_nome: string,
-): void {
+): Promise<void> {
   const projeto = buscarProjetoPorId(projeto_id)
   if (!projeto) throw new Error('Projeto não encontrado.')
   if (projeto.status !== 'EXECUCAO') throw new Error('Projeto deve estar em Execução para ser concluído.')
@@ -369,7 +369,7 @@ export function concluirProjeto(
     },
   })
 
-  const tap = ProjetosRepository.findTapAprovado(projeto_id)
+  const tap = await ProjetosRepository.findTapAprovado(projeto_id)
   const viab = ViabilidadeRepository.findLatestByProjectId(projeto_id)
 
   const capexExec = ProjetosRepository.calcCapexExecutado(projeto_id)

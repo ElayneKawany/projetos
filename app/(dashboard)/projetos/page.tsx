@@ -13,7 +13,7 @@ export default async function ProjetosPage({
 
   const { diretoria, status } = await searchParams
 
-  const projetos = buscarProjetos({ usuario_id: session.id, perfil: session.perfil })
+  const projetos = await buscarProjetos({ usuario_id: session.id, perfil: session.perfil })
 
   const db = getDb()
   const diretorias = db.prepare('SELECT * FROM diretorias WHERE ativo=1 ORDER BY nome').all()

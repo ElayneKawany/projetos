@@ -32,13 +32,13 @@ export async function POST(
     return NextResponse.json({ error: 'Todas as etapas devem ter usuário e tipo preenchidos.' }, { status: 400 })
   }
 
-  const tap = TapRepository.findByIdAndProjetoId(Number(tapId), Number(projetoId))
+  const tap = await TapRepository.findByIdAndProjetoId(Number(tapId), Number(projetoId))
   if (!tap) return NextResponse.json({ error: 'TAP não encontrada.' }, { status: 404 })
   if (tap.status !== 'RASCUNHO') {
     return NextResponse.json({ error: 'Apenas TAPs em rascunho podem ser enviadas para aprovação.' }, { status: 400 })
   }
 
-  submeterArtefato({
+  await submeterArtefato({
     projeto_id: Number(projetoId),
     tipo: 'TAP',
     referencia_id: Number(tapId),

@@ -8,7 +8,7 @@ export async function GET(request: NextRequest) {
   if (!session) return NextResponse.json({ error: 'Não autenticado.' }, { status: 401 })
 
   const { searchParams } = new URL(request.url)
-  const projetos = buscarProjetos({
+  const projetos = await buscarProjetos({
     status: searchParams.get('status') || undefined,
     diretoria_id: searchParams.get('diretoria_id') ? Number(searchParams.get('diretoria_id')) : undefined,
     prioridade: searchParams.get('prioridade') || undefined,

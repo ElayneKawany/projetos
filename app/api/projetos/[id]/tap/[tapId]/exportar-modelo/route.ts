@@ -19,7 +19,7 @@ export async function GET(
     const projeto = ProjetosRepository.findById(projeto_id)
     if (!projeto) return NextResponse.json({ error: 'Projeto não encontrado.' }, { status: 404 })
 
-    const tap = TapRepository.findByIdAndProjetoId(tap_id, projeto_id)
+    const tap = await TapRepository.findByIdAndProjetoId(tap_id, projeto_id)
     if (!tap) return NextResponse.json({ error: 'TAP não encontrado.' }, { status: 404 })
 
     const buf = gerarXlsxTap()
