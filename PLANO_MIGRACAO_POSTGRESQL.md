@@ -8,13 +8,15 @@ Levantamento real no código, não estimativa:
 
 | Métrica | Valor |
 |---|---|
-| Tabelas no schema atual | 32 (`lib/db/schema.sql`) |
+| Tabelas no schema real | **69** — corrigido em 2026-09-02 (ver nota abaixo; a contagem original de 32 vinha só de `lib/db/schema.sql`) |
 | Chamadas `db.prepare(...)` (SQL cru, síncrono) | 245, em 55 arquivos |
 | Usos de `.lastInsertRowid` | 62 |
 | Usos de `db.transaction(...)` | 19 |
 | Usos de `datetime('now')` (sintaxe SQLite) | 63 |
 | Usos de `INSERT OR IGNORE` / `OR REPLACE` (sintaxe SQLite) | 14 |
-| `FOREIGN KEY` declaradas no schema | 0 — relacionamento hoje é só convenção de nome de coluna |
+| Foreign keys reais | **103** — corrigido em 2026-09-02 (ver nota abaixo; SQLite as declara inline via `coluna REFERENCES tabela(id)`, sem a palavra `FOREIGN KEY`, por isso a varredura original não achou nenhuma) |
+
+> **Correção de escopo (2026-09-02):** a Fase 1 (schema) foi executada e revelou que a contagem inicial estava errada em dois pontos. `lib/db/schema.sql` só define a base original (32 tabelas) — `lib/db/index.ts → runMigrations()` cria **mais 38 tabelas** direto em código (`db.exec('CREATE TABLE IF NOT EXISTS ...')`) mais de 100 `ALTER TABLE ADD COLUMN`, então o banco real tem **69 tabelas**. E as FKs não são zero: `npx drizzle-kit pull` (introspecção contra o banco real) encontrou **103 foreign keys** — elas já existem, só usam a sintaxe inline do SQLite (`coluna INTEGER REFERENCES tabela(id)`), que não contém a palavra `FOREIGN KEY` e por isso não apareceu na varredura textual original. O resto das métricas (245 call sites, 55 arquivos, etc.) segue confirmado.
 
 Três características do SQLite que a aplicação inteira assume hoje, e que mudam com Postgres:
 
@@ -28,6 +30,8 @@ Três características do SQLite que a aplicação inteira assume hoje, e que mu
 
 **Decisão que isso implica no plano:** usar Drizzle ORM como camada final de acesso a dados (não voltar a escrever SQL cru para Postgres), e tratar a conversão como "terminar a migração para Drizzle que já começou", com Postgres como o dialect de destino desde o início — evita migrar SQLite→Drizzle/SQLite e depois Drizzle/SQLite→Drizzle/Postgres em dois passos.
 
+> **Correção (2026-09-02):** essa "frente já existente" é mais frágil do que parecia. Conferindo quem de fato importa `lib/db/drizzle/schema.ts`, só **2 tabelas estão em uso real** (`usuarios` em `lib/repositories/usuarios.ts`, `configGlobal` em `lib/repositories/configuracoes.ts`) — as outras ~30 definições no arquivo nunca são importadas em lugar nenhum, e pelo menos uma está **errada**: modela uma tabela `viabilidade_versoes` que não existe no banco real (a tabela é `viabilidade`), e modela `aprovacoes` com colunas (`tipo_documento`, `documento_id` NOT NULL) que não batem com as colunas reais (`referencia_id`, `referencia_tipo`, `solicitante_id`). `npx drizzle-kit pull` contra o banco real já gerou a versão correta e completa (69 tabelas) em `lib/db/drizzle/migrations/schema.ts` — mas **trocar o `lib/db/drizzle/schema.ts` live por essa versão quebra a compilação** dos 2 repositórios em uso, porque a introspecção usa nomes de propriedade camelCase (`senhaHash`, `updatedAt`) e o arquivo antigo usava snake_case (`senha_hash`, `updated_at`) direto. Confirmado com `tsc --noEmit`. Por isso a troca do arquivo live foi **deixada para a Fase 2** (que já ia tocar nesses repositórios de qualquer forma) — nesta rodada o schema correto ficou disponível só para revisão, sem substituir o que está em produção.
+
 ## 3. Fases
 
 ### Fase 0 — Decisões e ambiente (sem tocar em código de produção)
@@ -40,19 +44,18 @@ Decisões que precisam de resposta sua antes de eu escrever qualquer coisa:
 
 Sem ambiente de homologação e sem essas três respostas, não faz sentido eu começar a Fase 1.
 
-### Fase 1 — Modelagem do schema Postgres
+### Fase 1 — Modelagem do schema Postgres ✅ concluída em 2026-09-02, aguardando sua revisão
 
-- Criar `AI.TI_PMO_<TABELA>` para as 32 tabelas (prefixo confirmado na auditoria), com:
-  - `ativo` como `BOOLEAN` em vez de `INTEGER`.
-  - `permissoes`, `riscos`, `impactos`, `marcos`, `entregas`, `areas_impactadas`, `receitas_previstas`, `custos_previstos`, `economia_prevista` (colunas hoje `TEXT` com JSON serializado — 10 colunas identificadas) como `JSONB`.
-  - Datas/timestamps como `TIMESTAMPTZ` (não `TEXT`).
-  - IDs como `GENERATED ALWAYS AS IDENTITY`.
-  - `FOREIGN KEY` reais e nomeadas em português (ex. `fk_cronograma_tarefas_projeto`) para toda coluna `*_id` que hoje só existe por convenção — junto disso, decidir explicitamente `ON DELETE` de cada uma (o projeto nunca apaga linha, só usa `ativo`/`deleted_at` — então provavelmente `ON DELETE RESTRICT` em tudo, mas isso precisa ser conferido tabela a tabela, não presumido).
-- Escrever esse schema como schema Drizzle (`lib/db/drizzle/schema.ts`, dialect Postgres) — vira a fonte da verdade, e o Drizzle Kit gera as migrations formais a partir dele (resolve também o item "ORM/Migrations = Não conforme" do relatório).
-- Revisar com você antes de aplicar em qualquer banco real — esse é o desenho que fica definitivo.
+Entregáveis (nenhum aplicado a banco algum ainda — nem teste, nem produção; arquivo `lib/db/drizzle/schema.ts`, o que os repositórios realmente usam, **não foi tocado**):
+
+- `lib/db/drizzle/migrations/schema.ts` — schema SQLite gerado por `npx drizzle-kit pull` direto do banco real (69 tabelas, 892 colunas, 103 FKs, 21 índices) — substitui a suposição por fato; é o schema antigo (`lib/db/drizzle/schema.ts`) que estava errado, não este.
+- `scripts/gen-schema-postgres.js` — gerador que lê o snapshot da introspecção (`lib/db/drizzle/migrations/meta/0000_snapshot.json`) e escreve o schema Postgres, com as regras de conversão documentadas no topo do próprio arquivo (não escondidas em código): `AI.TI_PMO_<TABELA>`, `boolean`/`jsonb`/`date` só por lista de override revisada manualmente (não por nome parecido), `timestamp with time zone` por padrão pro resto, IDs como `generatedAlwaysAsIdentity()`, FKs nomeadas em português via `foreignKey()` (as 103 já detectadas pela introspecção — nenhuma inventada).
+- `lib/db/drizzle/schema.postgres.ts` — o resultado, gerado (não editar à mão — reeditar as listas no gerador e rodar de novo). Compila limpo (`tsc --noEmit`). Termina com uma seção `REVISAR` (134 colunas classificadas como timestamp só pelo nome, sem estar em nenhuma lista de override — candidatas a `date` que podem ter passado batido).
+- `ON DELETE` das FKs: **ainda não decidido** — o gerador não define nenhuma política (fica no padrão `NO ACTION` do Postgres). Fica para quando a Fase 2 tocar cada repositório e puder confirmar tabela a tabela, como já estava previsto aqui.
 
 ### Fase 2 — Camada de acesso a dados
 
+- Substituir `lib/db/drizzle/schema.ts` pela versão gerada na Fase 1 (`lib/db/drizzle/schema.postgres.ts`, após revisão) — e nesse mesmo passo, ajustar `lib/repositories/usuarios.ts` e `lib/repositories/configuracoes.ts` para os nomes de propriedade camelCase da versão nova (`senhaHash`, `updatedAt`, etc., em vez de `senha_hash`/`updated_at`) — são só esses 2 arquivos que quebram, confirmado via `tsc --noEmit` na Fase 1.
 - Trocar `drizzle-orm/better-sqlite3` → `drizzle-orm/node-postgres` (ou `postgres-js`) em `lib/database/drizzle.ts`.
 - Migrar os 55 arquivos com `db.prepare()` cru para o query builder do Drizzle, um repositório por vez (não tudo de uma vez — cada arquivo migrado é testável isoladamente). Ordem sugerida: começar pelos repositórios menores/menos críticos (ex. `lib/repositories/cronograma.ts` só depois de validar o padrão em 2-3 arquivos simples), guardando `CronogramaRepository` (peça central desta sessão, com a lógica de Nova Versão já corrigida) para o fim, com testes manuais extras.
 - Cada `await` novo precisa ser conferido: função que chama esse repositório também precisa virar/já ser `async`, e cada `catch`/tratamento de erro precisa ser revisado (driver Postgres lança erros com formato diferente do SQLite — ex. `SQLITE_CONSTRAINT` vira `23505`/`23503`, códigos usados hoje em pelo menos duas rotas desta sessão, como o guard de `UNIQUE constraint failed` no `nova-versao/route.ts`).
