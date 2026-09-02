@@ -87,11 +87,11 @@ export function buscarHistoricoAlteracoes(projeto_id: number) {
   return ProjetosRepository.findHistoricoAlteracoes(projeto_id)
 }
 
-export function buscarConfigStatus() {
+export async function buscarConfigStatus() {
   return ConfiguracoesRepository.findConfigStatusAll()
 }
 
-export function criarProjeto(dados: {
+export async function criarProjeto(dados: {
   nome: string
   solicitante_id: number
   diretoria_id: number
@@ -106,9 +106,9 @@ export function criarProjeto(dados: {
   classificacao?: string
   prioridade?: string
   created_by: number
-}): Projeto {
+}): Promise<Projeto> {
   const codigo = gerarCodigoProjeto()
-  const statusInicial = ConfiguracoesRepository.findStatusInicial()
+  const statusInicial = await ConfiguracoesRepository.findStatusInicial()
   const prioridade = dados.prioridade ?? 'MEDIA'
   const classificacao = dados.classificacao ?? null
 

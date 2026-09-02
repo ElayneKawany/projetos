@@ -27,7 +27,7 @@ export default async function ProjetoDetalhePage({
   const historicoStatus         = buscarHistoricoStatus(projeto.id)
   const historicoPrioridade     = buscarHistoricoPrioridade(projeto.id)
   const historicoAlteracoes     = buscarHistoricoAlteracoes(projeto.id)
-  const configStatus            = buscarConfigStatus()
+  const configStatus            = await buscarConfigStatus()
 
   const tapVersoes = db.prepare(`
     SELECT tv.*, u.nome as criador_nome, ua.nome as aprovador_nome

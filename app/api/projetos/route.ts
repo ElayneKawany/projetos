@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Campos obrigatórios: nome, diretoria, área e objetivo.' }, { status: 400 })
     }
 
-    const projeto = criarProjeto({
+    const projeto = await criarProjeto({
       nome,
       solicitante_id: solicitante_id || session.id,
       diretoria_id: Number(diretoria_id),

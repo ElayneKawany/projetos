@@ -39,8 +39,11 @@
 export { sqliteClient as db } from './sqlite'
 export type { DatabaseClient, ExecuteResult } from './client'
 
-// ── Driver assíncrono — pronto para PostgreSQL ───────────────────────────────
-export { asyncSqliteClient as asyncDb } from './sqlite'
+// ── Driver assíncrono — PostgreSQL ────────────────────────────────────────────
+// PASSO 2 do roteiro acima, aplicado: só ConfiguracoesRepository usa `asyncDb`
+// até agora (migração gradual, ver PLANO_MIGRACAO_POSTGRESQL.md) — os demais
+// repositórios continuam em `db` (SQLite síncrono), intocados.
+export { postgresClient as asyncDb } from './postgres'
 export type { AsyncDatabaseClient, AsyncExecuteResult } from './async-client'
 
 // ── Drizzle ORM — query builder type-safe ────────────────────────────────────

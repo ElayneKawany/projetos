@@ -9,13 +9,13 @@
  * Ainda não aplicado a nenhum banco (nem teste, nem produção) — revisar antes.
  * Ver seção "REVISAR" no final do arquivo para colunas de classificação incerta.
  */
-import { pgSchema, integer, text, boolean, jsonb, date, timestamp, numeric, foreignKey } from 'drizzle-orm/pg-core'
+import { pgSchema, integer, text, boolean, jsonb, date, timestamp, numeric, foreignKey, unique, index, uniqueIndex } from 'drizzle-orm/pg-core'
 
 export const ai = pgSchema('AI')
 
 export const perfis = ai.table('TI_PMO_PERFIS', {
   id: integer().primaryKey().generatedAlwaysAsIdentity(),
-  codigo: text().notNull(),
+  codigo: text().notNull().unique(),
   nome: text().notNull(),
   descricao: text(),
   permissoes: jsonb().notNull().default('{}'),
@@ -25,7 +25,7 @@ export const perfis = ai.table('TI_PMO_PERFIS', {
 
 export const diretorias = ai.table('TI_PMO_DIRETORIAS', {
   id: integer().primaryKey().generatedAlwaysAsIdentity(),
-  codigo: text().notNull(),
+  codigo: text().notNull().unique(),
   nome: text().notNull(),
   sigla: text().notNull(),
   ativo: boolean().notNull().default(true),
@@ -39,7 +39,7 @@ export const diretorias = ai.table('TI_PMO_DIRETORIAS', {
 export const areas = ai.table('TI_PMO_AREAS', {
   id: integer().primaryKey().generatedAlwaysAsIdentity(),
   diretoriaId: integer('diretoria_id').notNull(),
-  codigo: text().notNull(),
+  codigo: text().notNull().unique(),
   nome: text().notNull(),
   sigla: text().notNull(),
   ativo: boolean().notNull().default(true),
@@ -52,9 +52,9 @@ export const areas = ai.table('TI_PMO_AREAS', {
 
 export const usuarios = ai.table('TI_PMO_USUARIOS', {
   id: integer().primaryKey().generatedAlwaysAsIdentity(),
-  cpf: text().notNull(),
+  cpf: text().notNull().unique(),
   nome: text().notNull(),
-  email: text().notNull(),
+  email: text().notNull().unique(),
   senhaHash: text('senha_hash').notNull(),
   cargo: text(),
   diretoriaId: integer('diretoria_id'),
@@ -72,7 +72,7 @@ export const usuarios = ai.table('TI_PMO_USUARIOS', {
 
 export const projetos = ai.table('TI_PMO_PROJETOS', {
   id: integer().primaryKey().generatedAlwaysAsIdentity(),
-  codigo: text().notNull(),
+  codigo: text().notNull().unique(),
   nome: text().notNull(),
   solicitanteId: integer('solicitante_id').notNull(),
   diretoriaId: integer('diretoria_id').notNull(),
@@ -122,6 +122,9 @@ export const projetos = ai.table('TI_PMO_PROJETOS', {
   foreignKey({ columns: [table.areaId], foreignColumns: [areas.id], name: 'fk_projetos_area' }),
   foreignKey({ columns: [table.diretoriaId], foreignColumns: [diretorias.id], name: 'fk_projetos_diretoria' }),
   foreignKey({ columns: [table.solicitanteId], foreignColumns: [usuarios.id], name: 'fk_projetos_solicitante' }),
+  index('idx_projetos_gerente').on(table.gerenteId),
+  index('idx_projetos_diretoria').on(table.diretoriaId),
+  index('idx_projetos_status').on(table.status),
 ])
 
 export const aprovacoes = ai.table('TI_PMO_APROVACOES', {
@@ -142,6 +145,7 @@ export const aprovacoes = ai.table('TI_PMO_APROVACOES', {
   foreignKey({ columns: [table.aprovadorId], foreignColumns: [usuarios.id], name: 'fk_aprovacoes_aprovador' }),
   foreignKey({ columns: [table.solicitanteId], foreignColumns: [usuarios.id], name: 'fk_aprovacoes_solicitante' }),
   foreignKey({ columns: [table.projetoId], foreignColumns: [projetos.id], name: 'fk_aprovacoes_projeto' }),
+  index('idx_aprovacoes_status').on(table.status, table.aprovadorId),
 ])
 
 export const auditoria = ai.table('TI_PMO_AUDITORIA', {
@@ -161,6 +165,9 @@ export const auditoria = ai.table('TI_PMO_AUDITORIA', {
 }, (table) => [
   foreignKey({ columns: [table.projetoId], foreignColumns: [projetos.id], name: 'fk_auditoria_projeto' }),
   foreignKey({ columns: [table.usuarioId], foreignColumns: [usuarios.id], name: 'fk_auditoria_usuario' }),
+  index('idx_auditoria_usuario').on(table.usuarioId),
+  index('idx_auditoria_projeto').on(table.projetoId),
+  index('idx_auditoria_entidade').on(table.entidade, table.entidadeId),
 ])
 
 export const comites = ai.table('TI_PMO_COMITES', {
@@ -190,7 +197,7 @@ export const comites = ai.table('TI_PMO_COMITES', {
 
 export const comiteAta = ai.table('TI_PMO_COMITE_ATA', {
   id: integer().primaryKey().generatedAlwaysAsIdentity(),
-  comiteId: integer('comite_id').notNull(),
+  comiteId: integer('comite_id').notNull().unique(),
   conteudo: text(),
   versao: integer().default(1),
   geradoPorIa: boolean('gerado_por_ia').default(false),
@@ -310,7 +317,7 @@ export const comiteProjetos = ai.table('TI_PMO_COMITE_PROJETOS', {
 
 export const configCentrosCusto = ai.table('TI_PMO_CONFIG_CENTROS_CUSTO', {
   id: integer().primaryKey().generatedAlwaysAsIdentity(),
-  codigo: text().notNull(),
+  codigo: text().notNull().unique(),
   descricao: text().notNull(),
   empresa: text(),
   filial: text(),
@@ -321,7 +328,7 @@ export const configCentrosCusto = ai.table('TI_PMO_CONFIG_CENTROS_CUSTO', {
 
 export const configChecklistConclusao = ai.table('TI_PMO_CONFIG_CHECKLIST_CONCLUSAO', {
   id: integer().primaryKey().generatedAlwaysAsIdentity(),
-  codigo: text().notNull(),
+  codigo: text().notNull().unique(),
   label: text().notNull(),
   obrigatorio: boolean().notNull().default(false),
   ordem: integer().notNull().default(0),
@@ -330,7 +337,7 @@ export const configChecklistConclusao = ai.table('TI_PMO_CONFIG_CHECKLIST_CONCLU
 
 export const configContasContabeis = ai.table('TI_PMO_CONFIG_CONTAS_CONTABEIS', {
   id: integer().primaryKey().generatedAlwaysAsIdentity(),
-  codigo: text().notNull(),
+  codigo: text().notNull().unique(),
   descricao: text().notNull(),
   tipo: text().notNull().default('CAPEX_ATIVO'),
   empresa: text(),
@@ -345,7 +352,7 @@ export const configContasContabeis = ai.table('TI_PMO_CONFIG_CONTAS_CONTABEIS', 
 
 export const configCronogramaCriticidades = ai.table('TI_PMO_CONFIG_CRONOGRAMA_CRITICIDADES', {
   id: integer().primaryKey().generatedAlwaysAsIdentity(),
-  codigo: text().notNull(),
+  codigo: text().notNull().unique(),
   label: text().notNull(),
   cor: text().default('#6B7280'),
   ordem: integer().default(0),
@@ -356,7 +363,7 @@ export const configCronogramaCriticidades = ai.table('TI_PMO_CONFIG_CRONOGRAMA_C
 
 export const configCronogramaTipos = ai.table('TI_PMO_CONFIG_CRONOGRAMA_TIPOS', {
   id: integer().primaryKey().generatedAlwaysAsIdentity(),
-  codigo: text().notNull(),
+  codigo: text().notNull().unique(),
   label: text().notNull(),
   ordem: integer().default(0),
   ativo: boolean().notNull().default(true),
@@ -366,7 +373,7 @@ export const configCronogramaTipos = ai.table('TI_PMO_CONFIG_CRONOGRAMA_TIPOS', 
 
 export const configGlobal = ai.table('TI_PMO_CONFIG_GLOBAL', {
   id: integer().primaryKey().generatedAlwaysAsIdentity(),
-  chave: text().notNull(),
+  chave: text().notNull().unique(),
   valor: text().notNull(),
   descricao: text(),
   updatedBy: integer('updated_by'),
@@ -385,7 +392,7 @@ export const configMotivosPausa = ai.table('TI_PMO_CONFIG_MOTIVOS_PAUSA', {
 
 export const configStatusProjeto = ai.table('TI_PMO_CONFIG_STATUS_PROJETO', {
   id: integer().primaryKey().generatedAlwaysAsIdentity(),
-  codigo: text().notNull(),
+  codigo: text().notNull().unique(),
   label: text().notNull(),
   descricao: text(),
   cor: text().default('#6B7280'),
@@ -429,6 +436,8 @@ export const cronogramas = ai.table('TI_PMO_CRONOGRAMAS', {
   foreignKey({ columns: [table.criadoPor], foreignColumns: [usuarios.id], name: 'fk_cronogramas_criado_por' }),
   foreignKey({ columns: [table.aprovadoPor], foreignColumns: [usuarios.id], name: 'fk_cronogramas_aprovado_por' }),
   foreignKey({ columns: [table.projetoId], foreignColumns: [projetos.id], name: 'fk_cronogramas_projeto' }),
+  uniqueIndex('idx_cronogramas_projeto_versao').on(table.projetoId, table.versao),
+  index('idx_cronograma_projeto').on(table.projetoId),
 ])
 
 export const cronogramaTarefas = ai.table('TI_PMO_CRONOGRAMA_TAREFAS', {
@@ -480,7 +489,7 @@ export const cronogramaTarefas = ai.table('TI_PMO_CRONOGRAMA_TAREFAS', {
 
 export const cronogramaTarefaPagamento = ai.table('TI_PMO_CRONOGRAMA_TAREFA_PAGAMENTO', {
   id: integer().primaryKey().generatedAlwaysAsIdentity(),
-  cronogramaTarefaId: integer('cronograma_tarefa_id').notNull(),
+  cronogramaTarefaId: integer('cronograma_tarefa_id').notNull().unique(),
   beneficiario: text(),
   valorTotal: numeric('valor_total').notNull(),
   qtdParcelas: integer('qtd_parcelas').notNull(),
@@ -543,6 +552,7 @@ export const documentoAprovadores = ai.table('TI_PMO_DOCUMENTO_APROVADORES', {
 }, (table) => [
   foreignKey({ columns: [table.createdBy], foreignColumns: [usuarios.id], name: 'fk_documento_aprovadores_created_by' }),
   foreignKey({ columns: [table.usuarioId], foreignColumns: [usuarios.id], name: 'fk_documento_aprovadores_usuario' }),
+  index('idx_doc_aprovadores_tipo').on(table.tipoDocumento, table.ativo),
 ])
 
 export const documentos = ai.table('TI_PMO_DOCUMENTOS', {
@@ -583,7 +593,7 @@ export const documentosVersoes = ai.table('TI_PMO_DOCUMENTOS_VERSOES', {
 
 export const encerramentos = ai.table('TI_PMO_ENCERRAMENTOS', {
   id: integer().primaryKey().generatedAlwaysAsIdentity(),
-  projetoId: integer('projeto_id').notNull(),
+  projetoId: integer('projeto_id').notNull().unique(),
   licoesAprendidas: text('licoes_aprendidas'),
   roiPrevisto: numeric('roi_previsto'),
   roiRealizado: numeric('roi_realizado'),
@@ -609,7 +619,7 @@ export const encerramentos = ai.table('TI_PMO_ENCERRAMENTOS', {
 
 export const estruturacao = ai.table('TI_PMO_ESTRUTURACAO', {
   id: integer().primaryKey().generatedAlwaysAsIdentity(),
-  projetoId: integer('projeto_id').notNull(),
+  projetoId: integer('projeto_id').notNull().unique(),
   gerenteId: integer('gerente_id'),
   patrocinadorId: integer('patrocinador_id'),
   metodologia: text(),
@@ -679,6 +689,7 @@ export const financeiroLancamentos = ai.table('TI_PMO_FINANCEIRO_LANCAMENTOS', {
   foreignKey({ columns: [table.aprovadoPor], foreignColumns: [usuarios.id], name: 'fk_financeiro_lancamentos_aprovado_por' }),
   foreignKey({ columns: [table.criadoPor], foreignColumns: [usuarios.id], name: 'fk_financeiro_lancamentos_criado_por' }),
   foreignKey({ columns: [table.projetoId], foreignColumns: [projetos.id], name: 'fk_financeiro_lancamentos_projeto' }),
+  index('idx_lancamentos_projeto').on(table.projetoId, table.tipo),
 ])
 
 export const financeiroAnexos = ai.table('TI_PMO_FINANCEIRO_ANEXOS', {
@@ -694,6 +705,7 @@ export const financeiroAnexos = ai.table('TI_PMO_FINANCEIRO_ANEXOS', {
 }, (table) => [
   foreignKey({ columns: [table.criadoPor], foreignColumns: [usuarios.id], name: 'fk_financeiro_anexos_criado_por' }),
   foreignKey({ columns: [table.lancamentoId], foreignColumns: [financeiroLancamentos.id], name: 'fk_financeiro_anexos_lancamento' }),
+  index('idx_financeiro_anexos').on(table.lancamentoId),
 ])
 
 export const financeiroContratos = ai.table('TI_PMO_FINANCEIRO_CONTRATOS', {
@@ -796,6 +808,7 @@ export const notificacoes = ai.table('TI_PMO_NOTIFICACOES', {
 }, (table) => [
   foreignKey({ columns: [table.projetoId], foreignColumns: [projetos.id], name: 'fk_notificacoes_projeto' }),
   foreignKey({ columns: [table.usuarioId], foreignColumns: [usuarios.id], name: 'fk_notificacoes_usuario' }),
+  index('idx_notificacoes_usuario').on(table.usuarioId, table.lida),
 ])
 
 export const orcamentoGrupos = ai.table('TI_PMO_ORCAMENTO_GRUPOS', {
@@ -848,7 +861,9 @@ export const paybackCompetencias = ai.table('TI_PMO_PAYBACK_COMPETENCIAS', {
   criadoPor: integer('criado_por'),
   createdAt: timestamp('created_at', { withTimezone: true }),
   updatedAt: timestamp('updated_at', { withTimezone: true }),
-})
+}, (table) => [
+  unique('ux_payback_competencias_projeto_id_ano_mes').on(table.projetoId, table.ano, table.mes),
+])
 
 export const paybackLancamentos = ai.table('TI_PMO_PAYBACK_LANCAMENTOS', {
   id: integer().primaryKey().generatedAlwaysAsIdentity(),
@@ -905,6 +920,7 @@ export const projetoFasePrazo = ai.table('TI_PMO_PROJETO_FASE_PRAZO', {
 }, (table) => [
   foreignKey({ columns: [table.usuarioId], foreignColumns: [usuarios.id], name: 'fk_projeto_fase_prazo_usuario' }),
   foreignKey({ columns: [table.projetoId], foreignColumns: [projetos.id], name: 'fk_projeto_fase_prazo_projeto' }),
+  unique('ux_projeto_fase_prazo_projeto_id_status').on(table.projetoId, table.status),
 ])
 
 export const projetoFasePrazoHistorico = ai.table('TI_PMO_PROJETO_FASE_PRAZO_HISTORICO', {
@@ -949,7 +965,7 @@ export const projetoPrioridadeHistorico = ai.table('TI_PMO_PROJETO_PRIORIDADE_HI
 
 export const projetoSnapshotFinal = ai.table('TI_PMO_PROJETO_SNAPSHOT_FINAL', {
   id: integer().primaryKey().generatedAlwaysAsIdentity(),
-  projetoId: integer('projeto_id').notNull(),
+  projetoId: integer('projeto_id').notNull().unique(),
   roiPrevisto: numeric('roi_previsto'),
   roiAtual: numeric('roi_atual'),
   capexPrevisto: numeric('capex_previsto'),
@@ -1013,7 +1029,7 @@ export const roiAcompanhamento = ai.table('TI_PMO_ROI_ACOMPANHAMENTO', {
 export const sessoes = ai.table('TI_PMO_SESSOES', {
   id: integer().primaryKey().generatedAlwaysAsIdentity(),
   usuarioId: integer('usuario_id').notNull(),
-  token: text().notNull(),
+  token: text().notNull().unique(),
   ip: text(),
   userAgent: text('user_agent'),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
@@ -1062,6 +1078,7 @@ export const tapVersoes = ai.table('TI_PMO_TAP_VERSOES', {
   foreignKey({ columns: [table.aprovadoPor], foreignColumns: [usuarios.id], name: 'fk_tap_versoes_aprovado_por' }),
   foreignKey({ columns: [table.criadoPor], foreignColumns: [usuarios.id], name: 'fk_tap_versoes_criado_por' }),
   foreignKey({ columns: [table.projetoId], foreignColumns: [projetos.id], name: 'fk_tap_versoes_projeto' }),
+  index('idx_tap_projeto').on(table.projetoId, table.versao),
 ])
 
 export const tiPrioridades = ai.table('TI_PMO_TI_PRIORIDADES', {
@@ -1086,11 +1103,13 @@ export const tiPrioridades = ai.table('TI_PMO_TI_PRIORIDADES', {
   projetoId: integer('projeto_id'),
   projetoCodigo: text('projeto_codigo'),
   projetoNome: text('projeto_nome'),
-})
+}, (table) => [
+  unique('ux_ti_prioridades_atividade_id_fonte').on(table.atividadeId, table.fonte),
+])
 
 export const triagens = ai.table('TI_PMO_TRIAGENS', {
   id: integer().primaryKey().generatedAlwaysAsIdentity(),
-  projetoId: integer('projeto_id').notNull(),
+  projetoId: integer('projeto_id').notNull().unique(),
   escopoInicial: text('escopo_inicial'),
   escopoFora: text('escopo_fora'),
   beneficios: text(),
@@ -1250,7 +1269,7 @@ export const workflowModelos = ai.table('TI_PMO_WORKFLOW_MODELOS', {
 export const workflowTiposParticipacao = ai.table('TI_PMO_WORKFLOW_TIPOS_PARTICIPACAO', {
   id: integer().primaryKey().generatedAlwaysAsIdentity(),
   nome: text().notNull(),
-  codigo: text().notNull(),
+  codigo: text().notNull().unique(),
   descricao: text(),
   ativo: boolean().default(true),
   createdAt: timestamp('created_at', { withTimezone: true }),

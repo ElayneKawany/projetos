@@ -31,6 +31,19 @@
  * em _at/_em, não começam com data_) ficam como TEXT por padrão — o mapeamento
  * conservador é "quando em dúvida, não converte o tipo", pra nunca perder dado por
  * suposição errada. Ver seção "REVISAR" no rodapé do arquivo gerado.
+ *
+ * CORREÇÃO (encontrada testando o 1º repositório migrado, Fase 2): `drizzle-kit pull`
+ * captura corretamente índices NOMEADOS do SQLite (ex. idx_cronogramas_projeto_versao,
+ * a trava contra duplicação de versão do Cronograma corrigida nesta sessão), mas
+ * **descarta os índices únicos implícitos** que o SQLite cria sozinho pra toda coluna
+ * `UNIQUE` inline (ex. `chave TEXT NOT NULL UNIQUE`) — confirmado batendo o snapshot
+ * contra `pragma_index_list` do banco real. Sem isso, `ON CONFLICT` (upsert) falha em
+ * Postgres com "no unique or exclusion constraint matching". Por isso:
+ *   - UNIQUE_COLUMNS abaixo: toda coluna com `UNIQUE` inline em lib/db/schema.sql ou
+ *     lib/db/index.ts, levantada por grep, não por suposição.
+ *   - UNIQUE_COMPOSITE abaixo: todo `UNIQUE(col1, col2, ...)` em nível de tabela.
+ *   - Índices nomeados (unique ou não) vêm de `table.indexes` do snapshot — esses o
+ *     drizzle-kit já captura certo, só não estavam sendo emitidos por este gerador.
  */
 'use strict'
 
@@ -107,6 +120,26 @@ const TEXT_DATE_EXCEPTIONS = new Set([
   'financeiro_contrato_projecao_parcelas.competencia',
 ])
 
+// UNIQUE inline de coluna única — levantado por grep de "UNIQUE" em schema.sql/index.ts
+// (o drizzle-kit pull descarta esses; ver nota de correção no topo do arquivo).
+const UNIQUE_COLUMNS = new Set([
+  'config_global.chave', 'diretorias.codigo', 'areas.codigo', 'perfis.codigo',
+  'usuarios.cpf', 'usuarios.email', 'sessoes.token', 'projetos.codigo',
+  'triagens.projeto_id', 'estruturacao.projeto_id', 'encerramentos.projeto_id',
+  'config_status_projeto.codigo', 'workflow_tipos_participacao.codigo',
+  'config_contas_contabeis.codigo', 'config_centros_custo.codigo',
+  'config_cronograma_tipos.codigo', 'config_cronograma_criticidades.codigo',
+  'projeto_snapshot_final.projeto_id', 'config_checklist_conclusao.codigo',
+  'comite_ata.comite_id', 'cronograma_tarefa_pagamento.cronograma_tarefa_id',
+])
+
+// UNIQUE(col1, col2, ...) em nível de tabela — mesma origem/ressalva acima.
+const UNIQUE_COMPOSITE = [
+  { table: 'projeto_fase_prazo', columns: ['projeto_id', 'status'] },
+  { table: 'payback_competencias', columns: ['projeto_id', 'ano', 'mes'] },
+  { table: 'ti_prioridades', columns: ['atividade_id', 'fonte'] },
+]
+
 const isTimestampName = (col) => /(_at|_em)$/i.test(col) || /^data_/i.test(col) || col === 'data'
 
 function pgIdentifier(table) {
@@ -135,7 +168,7 @@ function main() {
   lines.push(' * Ainda não aplicado a nenhum banco (nem teste, nem produção) — revisar antes.')
   lines.push(' * Ver seção "REVISAR" no final do arquivo para colunas de classificação incerta.')
   lines.push(' */')
-  lines.push("import { pgSchema, integer, text, boolean, jsonb, date, timestamp, numeric, foreignKey } from 'drizzle-orm/pg-core'")
+  lines.push("import { pgSchema, integer, text, boolean, jsonb, date, timestamp, numeric, foreignKey, unique, index, uniqueIndex } from 'drizzle-orm/pg-core'")
   lines.push('')
   lines.push("export const ai = pgSchema('AI')")
   lines.push('')
@@ -231,20 +264,38 @@ function main() {
         }
       }
 
+      if (UNIQUE_COLUMNS.has(key) && !(col.primaryKey && col.autoincrement)) pgType += '.unique()'
+
       lines.push(`  ${propName}: ${pgType},`)
     }
 
     const fkEntries = Object.keys(fkByColumn)
-    if (fkEntries.length === 0) {
+    const composite = UNIQUE_COMPOSITE.filter(u => u.table === t)
+    const namedIndexes = Object.values(table.indexes || {})
+
+    const tableConstraints = []
+    for (const c of fkEntries) {
+      const fk = fkByColumn[c]
+      const colFrom = toCamel(c)
+      const toRef = fk.selfRef ? `table.${fk.refCol}` : `${fk.refVar}.${fk.refCol}`
+      tableConstraints.push(`  foreignKey({ columns: [table.${colFrom}], foreignColumns: [${toRef}], name: '${fk.name}' }),`)
+    }
+    for (const u of composite) {
+      const cols = u.columns.map(c => `table.${toCamel(c)}`).join(', ')
+      const name = `ux_${t}_${u.columns.join('_')}`
+      tableConstraints.push(`  unique('${name}').on(${cols}),`)
+    }
+    for (const idx of namedIndexes) {
+      const builder = idx.isUnique ? 'uniqueIndex' : 'index'
+      const cols = idx.columns.map(c => `table.${toCamel(c)}`).join(', ')
+      tableConstraints.push(`  ${builder}('${idx.name}').on(${cols}),`)
+    }
+
+    if (tableConstraints.length === 0) {
       lines.push('})')
     } else {
       lines.push('}, (table) => [')
-      for (const c of fkEntries) {
-        const fk = fkByColumn[c]
-        const colFrom = toCamel(c)
-        const toRef = fk.selfRef ? `table.${fk.refCol}` : `${fk.refVar}.${fk.refCol}`
-        lines.push(`  foreignKey({ columns: [table.${colFrom}], foreignColumns: [${toRef}], name: '${fk.name}' }),`)
-      }
+      for (const line of tableConstraints) lines.push(line)
       lines.push('])')
     }
     lines.push('')
@@ -262,6 +313,8 @@ function main() {
   console.log(`Gerado: ${OUT_PATH}`)
   console.log(`Tabelas: ${tableNames.length}`)
   console.log(`Colunas classificadas boolean: ${BOOLEAN_COLUMNS.size}`)
+  console.log(`Colunas UNIQUE recuperadas (drizzle-kit pull descartava): ${UNIQUE_COLUMNS.size}`)
+  console.log(`UNIQUE compostos recuperados: ${UNIQUE_COMPOSITE.length}`)
   console.log(`Colunas classificadas jsonb: ${JSONB_COLUMNS.size}`)
   console.log(`Colunas classificadas date: ${DATE_ONLY_COLUMNS.size}`)
   console.log(`Colunas timestamptz por nome (REVISAR): ${new Set(revisar).size}`)
