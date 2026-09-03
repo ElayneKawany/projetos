@@ -16,7 +16,7 @@ export async function DELETE(req: NextRequest, { params }: Params) {
   const cronogramaId_ = Number(cronogramaId)
   const tarefaId_    = Number(tarefaId)
 
-  const cronograma = CronogramaRepository.findByIdAndProjetoId(cronogramaId_, projetoId)
+  const cronograma = await CronogramaRepository.findByIdAndProjetoId(cronogramaId_, projetoId)
   if (!cronograma)
     return NextResponse.json({ error: 'Cronograma não encontrado.' }, { status: 404 })
   if (cronograma.status !== 'RASCUNHO')

@@ -16,7 +16,7 @@ export async function PATCH(
   const userId = parseInt(id)
   if (isNaN(userId)) return NextResponse.json({ error: 'ID inválido.' }, { status: 400 })
 
-  const atual = UsuariosRepository.findRawById(userId)
+  const atual = await UsuariosRepository.findRawById(userId)
   if (!atual) return NextResponse.json({ error: 'Usuário não encontrado.' }, { status: 404 })
 
   let body: Record<string, unknown>
@@ -33,7 +33,7 @@ export async function PATCH(
   if (body.cpf !== undefined) {
     const cpf = String(body.cpf).replace(/\D/g, '')
     if (cpf) {
-      const dup = UsuariosRepository.checkCpfDuplicado(cpf, userId)
+      const dup = await UsuariosRepository.checkCpfDuplicado(cpf, userId)
       if (dup) return NextResponse.json({ error: 'Este CPF já está cadastrado para outro usuário.' }, { status: 409 })
       fields.cpf = cpf
     }
@@ -42,7 +42,7 @@ export async function PATCH(
   if (body.email !== undefined) {
     const email = String(body.email).trim().toLowerCase()
     if (!email) return NextResponse.json({ error: 'E-mail é obrigatório.' }, { status: 422 })
-    const dup = UsuariosRepository.checkEmailDuplicado(email, userId)
+    const dup = await UsuariosRepository.checkEmailDuplicado(email, userId)
     if (dup) return NextResponse.json({ error: 'Este e-mail já está em uso por outro usuário.' }, { status: 409 })
     fields.email = email
   }
@@ -78,9 +78,9 @@ export async function PATCH(
 
   if (Object.keys(fields).length === 0) return NextResponse.json({ ok: true })
 
-  UsuariosRepository.updateFull(userId, fields)
+  await UsuariosRepository.updateFull(userId, fields)
 
-  const depois = UsuariosRepository.findRawById(userId)
+  const depois = await UsuariosRepository.findRawById(userId)
 
   registrarAuditoria({
     usuario_id: session.id,
@@ -112,7 +112,7 @@ export async function DELETE(
   if (userId === session.id)
     return NextResponse.json({ error: 'Não é possível excluir o próprio usuário.', pode_inativar: false }, { status: 422 })
 
-  const atual = UsuariosRepository.findRawById(userId)
+  const atual = await UsuariosRepository.findRawById(userId)
   if (!atual) return NextResponse.json({ error: 'Usuário não encontrado.' }, { status: 404 })
 
   if (UsuariosRepository.checkDependencias(userId)) {
@@ -123,7 +123,7 @@ export async function DELETE(
   }
 
   try {
-    UsuariosRepository.hardDelete(userId)
+    await UsuariosRepository.hardDelete(userId)
   } catch {
     return NextResponse.json({
       error: 'Este usuário possui vínculos com projetos ou registros do sistema e não pode ser excluído.',

@@ -22,7 +22,7 @@ export async function PATCH(
   const cronograma_id = Number(cronogramaId)
   const tarefa_id     = Number(tarefaId)
 
-  const cronograma = CronogramaRepository.findByIdAndProjetoId(cronograma_id, projeto_id)
+  const cronograma = await CronogramaRepository.findByIdAndProjetoId(cronograma_id, projeto_id)
   if (!cronograma) return NextResponse.json({ error: 'Cronograma não encontrado.' }, { status: 404 })
 
   const tarefa = CronogramaRepository.findTarefaByIdAndCronograma(tarefa_id, cronograma_id) as

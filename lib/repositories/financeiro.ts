@@ -1,4 +1,5 @@
 import { db, asyncDb } from '@/lib/database'
+import { UsuariosRepository } from './usuarios'
 
 // Tabela Postgres real (schema AI, prefixo TI_PMO_, ver lib/db/drizzle/schema.postgres.ts).
 const T_VIABILIDADE = '"AI"."TI_PMO_VIABILIDADE"'
@@ -178,15 +179,21 @@ export const FinanceiroRepository = {
 
   // ── Lançamentos (financeiro_lancamentos — módulo legado) ───────────────────
 
-  findLancamentos(projetoId: number): Record<string, unknown>[] {
-    return db.queryMany(
-      `SELECT fl.*, u.nome AS criador_nome
+  async findLancamentos(projetoId: number): Promise<Record<string, unknown>[]> {
+    const rows = db.queryMany<Record<string, unknown> & { criado_por: number | null }>(
+      `SELECT fl.*
        FROM financeiro_lancamentos fl
-       LEFT JOIN usuarios u ON fl.criado_por = u.id
        WHERE fl.projeto_id = ?
        ORDER BY fl.created_at DESC`,
       [projetoId]
     )
+    const nomes = await UsuariosRepository.findNomesPorIds(
+      rows.map(r => r.criado_por).filter((v): v is number => v != null)
+    )
+    return rows.map(r => ({
+      ...r,
+      criador_nome: r.criado_por != null ? nomes.get(r.criado_por)?.nome ?? null : null,
+    }))
   },
 
   insertLancamento(dados: {

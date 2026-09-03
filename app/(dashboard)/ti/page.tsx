@@ -1,8 +1,11 @@
 import { getSession } from '@/lib/auth'
 import { notFound } from 'next/navigation'
 import getDb from '@/lib/db'
+import { asyncDb } from '@/lib/database'
 import TIAgendaClient from './TIAgendaClient'
 import { DEV2026_ATIVIDADES } from '@/lib/ti/dev2026-data'
+
+const T_USUARIOS = '"AI"."TI_PMO_USUARIOS"'
 
 export default async function TIAgendaPage() {
   const session = await getSession()
@@ -10,8 +13,21 @@ export default async function TIAgendaPage() {
 
   const db = getDb()
 
-  // Tarefas de TI dos cronogramas ativos onde responsável é Michel, Divonzi ou Plinio
-  const tarefasCronograma = db.prepare(`
+  // Tarefas de TI dos cronogramas ativos onde responsável é Michel, Divonzi ou Plinio.
+  // usuarios já está em Postgres — resolve primeiro quem bate com esses nomes lá,
+  // depois filtra cronograma_tarefas (SQLite) por id ou pelo nome externo (fallback
+  // de quando a tarefa não tem usuário cadastrado vinculado).
+  const usuariosFiltro = await asyncDb.queryMany<{ id: number; nome: string }>(
+    `SELECT id, nome FROM ${T_USUARIOS} WHERE ativo = true AND (
+       LOWER(nome) LIKE '%michel cardero%' OR LOWER(nome) LIKE '%divonzi%'
+       OR LOWER(nome) LIKE '%plinio%' OR LOWER(nome) LIKE '%plínio%'
+     )`
+  )
+  const nomesPorId = new Map(usuariosFiltro.map(u => [u.id, u.nome]))
+  const idsFiltro = usuariosFiltro.map(u => u.id)
+  const idsPlaceholder = idsFiltro.length ? idsFiltro.map(() => '?').join(',') : '-1'
+
+  const tarefasCronogramaRaw = db.prepare(`
     SELECT
       t.id,
       t.nome,
@@ -22,8 +38,8 @@ export default async function TIAgendaPage() {
       t.data_fim,
       t.data_fim_baseline,
       t.data_conclusao,
+      t.responsavel_id,
       t.responsavel_nome_ext,
-      COALESCE(u.nome, t.responsavel_nome_ext) AS analista,
       t.observacoes,
       t.prazo_status,
       t.bloqueio,
@@ -35,7 +51,6 @@ export default async function TIAgendaPage() {
     FROM cronograma_tarefas t
     JOIN cronogramas c ON c.id = t.cronograma_id
     JOIN projetos p ON p.id = c.projeto_id
-    LEFT JOIN usuarios u ON u.id = t.responsavel_id
     LEFT JOIN diretorias d ON d.id = p.diretoria_id
     WHERE (t.ativo IS NULL OR t.ativo = 1)
       AND (c.ativo IS NULL OR c.ativo = 1)
@@ -46,31 +61,41 @@ export default async function TIAgendaPage() {
           AND (c2.ativo IS NULL OR c2.ativo = 1)
       )
       AND (
-        LOWER(COALESCE(u.nome, ''))             LIKE '%michel cardero%'
-        OR LOWER(COALESCE(u.nome, ''))          LIKE '%divonzi%'
-        OR LOWER(COALESCE(u.nome, ''))          LIKE '%plinio%'
-        OR LOWER(COALESCE(u.nome, ''))          LIKE '%plínio%'
+        t.responsavel_id IN (${idsPlaceholder})
         OR LOWER(COALESCE(t.responsavel_nome_ext, '')) LIKE '%michel cardero%'
         OR LOWER(COALESCE(t.responsavel_nome_ext, '')) LIKE '%divonzi%'
         OR LOWER(COALESCE(t.responsavel_nome_ext, '')) LIKE '%plinio%'
         OR LOWER(COALESCE(t.responsavel_nome_ext, '')) LIKE '%plínio%'
       )
     ORDER BY p.nome, t.data_inicio
-  `).all()
+  `).all(...idsFiltro) as { id: number; responsavel_id: number | null; responsavel_nome_ext: string | null; [k: string]: unknown }[]
+
+  const tarefasCronograma = tarefasCronogramaRaw.map(t => ({
+    ...t,
+    analista: (t.responsavel_id != null ? nomesPorId.get(t.responsavel_id) : undefined) ?? t.responsavel_nome_ext,
+  }))
 
   // Dados dos usuários cadastrados: cargo, perfil, diretoria — para os filtros
-  const usuariosInfo = db.prepare(`
-    SELECT
-      u.nome,
-      COALESCE(u.cargo, '') AS cargo,
-      COALESCE(pf.codigo, '') AS perfil,
-      COALESCE(pf.nome, '') AS perfil_nome,
-      COALESCE(d.nome, '') AS diretoria
-    FROM usuarios u
-    LEFT JOIN perfis pf ON pf.id = u.perfil_id AND pf.ativo = 1
-    LEFT JOIN diretorias d ON d.id = u.diretoria_id AND d.ativo = 1
-    WHERE u.ativo = 1
-  `).all()
+  const usuariosRaw = await asyncDb.queryMany<{ nome: string; cargo: string | null; perfil_id: number; diretoria_id: number | null }>(
+    `SELECT nome, cargo, perfil_id, diretoria_id FROM ${T_USUARIOS} WHERE ativo = true`
+  )
+  const perfilIds = [...new Set(usuariosRaw.map(u => u.perfil_id))]
+  const diretoriaIds = [...new Set(usuariosRaw.map(u => u.diretoria_id).filter((v): v is number => v != null))]
+  const perfis = perfilIds.length
+    ? db.prepare(`SELECT id, codigo, nome FROM perfis WHERE ativo = 1 AND id IN (${perfilIds.map(() => '?').join(',')})`).all(...perfilIds) as { id: number; codigo: string; nome: string }[]
+    : []
+  const diretoriasPorUsuario = diretoriaIds.length
+    ? db.prepare(`SELECT id, nome FROM diretorias WHERE ativo = 1 AND id IN (${diretoriaIds.map(() => '?').join(',')})`).all(...diretoriaIds) as { id: number; nome: string }[]
+    : []
+  const perfilMap = new Map(perfis.map(p => [p.id, p]))
+  const diretoriaMap = new Map(diretoriasPorUsuario.map(d => [d.id, d.nome]))
+  const usuariosInfo = usuariosRaw.map(u => ({
+    nome: u.nome,
+    cargo: u.cargo ?? '',
+    perfil: perfilMap.get(u.perfil_id)?.codigo ?? '',
+    perfil_nome: perfilMap.get(u.perfil_id)?.nome ?? '',
+    diretoria: (u.diretoria_id != null ? diretoriaMap.get(u.diretoria_id) : undefined) ?? '',
+  }))
 
   // Valores únicos para os dropdowns de filtro
   const cargosDistinct = [...new Set(

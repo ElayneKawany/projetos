@@ -1,7 +1,10 @@
 ﻿import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
 import getDb from '@/lib/db'
+import { asyncDb } from '@/lib/database'
 import { registrarAuditoria } from '@/lib/db/auditoria'
+
+const T_USUARIOS = '"AI"."TI_PMO_USUARIOS"'
 
 export async function GET(request: NextRequest) {
   const session = await getSession(request)
@@ -15,9 +18,10 @@ export async function GET(request: NextRequest) {
   const userId = cfg?.valor ? Number(cfg.valor) : null
   let responsavel = null
   if (userId) {
-    responsavel = db
-      .prepare('SELECT id, nome, email FROM usuarios WHERE id = ? AND ativo = 1')
-      .get(userId) as { id: number; nome: string; email: string } | undefined ?? null
+    responsavel = await asyncDb.queryOne<{ id: number; nome: string; email: string }>(
+      `SELECT id, nome, email FROM ${T_USUARIOS} WHERE id = ? AND ativo = true`,
+      [userId]
+    ) ?? null
   }
 
   return NextResponse.json({ responsavel_padrao: responsavel })
@@ -35,9 +39,10 @@ export async function PATCH(request: NextRequest) {
   const db = getDb()
 
   if (usuario_id !== null && usuario_id !== undefined) {
-    const usuario = db
-      .prepare('SELECT id FROM usuarios WHERE id = ? AND ativo = 1')
-      .get(Number(usuario_id))
+    const usuario = await asyncDb.queryOne(
+      `SELECT id FROM ${T_USUARIOS} WHERE id = ? AND ativo = true`,
+      [Number(usuario_id)]
+    )
     if (!usuario) {
       return NextResponse.json({ error: 'Usuário não encontrado.' }, { status: 404 })
     }

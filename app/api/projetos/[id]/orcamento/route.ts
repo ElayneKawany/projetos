@@ -16,7 +16,7 @@ export async function GET(
   const { id } = await params
   const projeto_id = Number(id)
 
-  const grupos = buscarOrcamento(projeto_id)
+  const grupos = await buscarOrcamento(projeto_id)
   const totais  = calcularTotaisOrcamento(projeto_id)
 
   return NextResponse.json({ grupos, totais })

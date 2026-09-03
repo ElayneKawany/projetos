@@ -9,11 +9,11 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   const session = await getSession(request)
   if (!session) return NextResponse.json({ error: 'Não autenticado.' }, { status: 401 })
   const { id } = await params
-  const projeto = buscarProjetoPorId(Number(id))
+  const projeto = await buscarProjetoPorId(Number(id))
   if (!projeto) return NextResponse.json({ error: 'Projeto não encontrado.' }, { status: 404 })
 
-  const historicoStatus = buscarHistoricoStatus(projeto.id)
-  const historicoPrioridade = buscarHistoricoPrioridade(projeto.id)
+  const historicoStatus = await buscarHistoricoStatus(projeto.id)
+  const historicoPrioridade = await buscarHistoricoPrioridade(projeto.id)
   const tapVersoes = await TapRepository.findAllByProjectId(projeto.id)
 
   return NextResponse.json({ projeto, historicoStatus, historicoPrioridade, tapVersoes })
@@ -25,7 +25,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   const { id } = await params
   const body = await request.json()
 
-  const projeto = buscarProjetoPorId(Number(id))
+  const projeto = await buscarProjetoPorId(Number(id))
   if (!projeto) return NextResponse.json({ error: 'Projeto não encontrado.' }, { status: 404 })
 
   try {
@@ -34,7 +34,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     }
 
     if (body.prioridade && body.prioridade !== projeto.prioridade) {
-      atualizarPrioridadeProjeto(projeto.id, body.prioridade as Prioridade, session.id, body.motivo)
+      await atualizarPrioridadeProjeto(projeto.id, body.prioridade as Prioridade, session.id, body.motivo)
     }
 
     const camposEditaveis = [

@@ -64,7 +64,7 @@ export async function GET(
     return NextResponse.json({ error: 'Nenhum cronograma encontrado para este projeto.' }, { status: 404 })
   }
 
-  const tarefas = CronogramaRepository.findTarefasComNomes(cronograma.id) as {
+  const tarefas = await CronogramaRepository.findTarefasComNomes(cronograma.id) as {
       codigo: string | null
       nivel: string
       nome: string

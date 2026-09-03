@@ -16,6 +16,7 @@
 
 import getDb from './db'
 import type { Projeto } from '@/types'
+import { UsuariosRepository } from '@/lib/repositories'
 
 // ─── Hierarquia de Perfis ─────────────────────────────────────────────────────
 
@@ -112,8 +113,12 @@ export function getProjetoVisibility(usuario: {
  *
  * @usedBy lib/projetos.ts — buscarProjetos() delega aqui
  * @usedBy futuro Dashboard, Comitês, Documentos
+ *
+ * Sem callers hoje (`grep -rn "buscarProjetosVisiveis"` só encontra a própria
+ * definição) — convertida por consistência com a fatia `usuarios`, com menos
+ * rigor de teste já que nada chama esta função no momento.
  */
-export function buscarProjetosVisiveis(
+export async function buscarProjetosVisiveis(
   usuario: { id: number; perfil: string },
   filtros?: {
     status?: string
@@ -123,7 +128,7 @@ export function buscarProjetosVisiveis(
     limit?: number
     offset?: number
   }
-): Projeto[] {
+): Promise<Projeto[]> {
   const db = getDb()
   const vis = getProjetoVisibility(usuario)
   const conditions: string[] = ['p.ativo = 1', `(${vis.where})`]
@@ -149,23 +154,30 @@ export function buscarProjetosVisiveis(
   const limit = filtros?.limit ?? 100
   const offset = filtros?.offset ?? 0
 
-  return db.prepare(`
+  const projetos = db.prepare(`
     SELECT p.*,
-           us.nome as solicitante_nome,
            d.nome  as diretoria_nome,
-           a.nome  as area_nome,
-           g.nome  as gerente_nome
+           a.nome  as area_nome
     FROM projetos p
-    LEFT JOIN usuarios us ON p.solicitante_id = us.id
     LEFT JOIN diretorias d ON p.diretoria_id = d.id
     LEFT JOIN areas a ON p.area_id = a.id
-    LEFT JOIN usuarios g ON p.gerente_id = g.id
     WHERE ${conditions.join(' AND ')}
     ORDER BY
       CASE p.prioridade WHEN 'ALTA' THEN 1 WHEN 'MEDIA' THEN 2 ELSE 3 END,
       p.created_at DESC
     LIMIT ${limit} OFFSET ${offset}
-  `).all(params) as Projeto[]
+  `).all(params) as (Projeto & { solicitante_id: number | null; gerente_id: number | null })[]
+
+  const ids = [...new Set(
+    projetos.flatMap(p => [p.solicitante_id, p.gerente_id]).filter((v): v is number => v != null)
+  )]
+  const nomes = await UsuariosRepository.findNomesPorIds(ids)
+
+  return projetos.map(p => ({
+    ...p,
+    solicitante_nome: p.solicitante_id != null ? nomes.get(p.solicitante_id)?.nome ?? null : null,
+    gerente_nome: p.gerente_id != null ? nomes.get(p.gerente_id)?.nome ?? null : null,
+  })) as Projeto[]
 }
 
 /**

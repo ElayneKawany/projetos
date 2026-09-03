@@ -19,7 +19,7 @@ export async function GET(
   const vid_id     = Number(vid)
 
   try {
-    const projeto = ProjetosRepository.findById(projeto_id)
+    const projeto = await ProjetosRepository.findById(projeto_id)
     if (!projeto) return NextResponse.json({ error: 'Projeto não encontrado.' }, { status: 404 })
 
     const v = await ViabilidadeRepository.findByIdAndProjetoId(vid_id, projeto_id)

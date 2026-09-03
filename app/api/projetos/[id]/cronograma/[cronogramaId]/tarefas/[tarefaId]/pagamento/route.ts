@@ -14,7 +14,7 @@ async function carregarTarefaPagamento(id: string, cronogramaId: string, tarefaI
   const projeto_id    = Number(id)
   const cronograma_id = Number(cronogramaId)
   const tarefa_id     = Number(tarefaId)
-  const cronograma = CronogramaRepository.findByIdAndProjetoId(cronograma_id, projeto_id)
+  const cronograma = await CronogramaRepository.findByIdAndProjetoId(cronograma_id, projeto_id)
   const tarefa = CronogramaRepository.findTarefaByIdAndCronograma(tarefa_id, cronograma_id) as Record<string, unknown> | undefined
   return { projeto_id, cronograma_id, tarefa_id, cronograma, tarefa }
 }
@@ -70,7 +70,7 @@ export async function PATCH(
     return NextResponse.json({ error: 'Periodicidade inválida.' }, { status: 400 })
   }
 
-  const parcelasAtuais = CronogramaRepository.findParcelasByTarefaIds([tarefa_id])
+  const parcelasAtuais = await CronogramaRepository.findParcelasByTarefaIds([tarefa_id])
   const pagas      = parcelasAtuais.filter(p => p.status === 'PAGO')
   const qtdPagas   = pagas.length
   const somaPagasCentavos = pagas.reduce((s, p) => s + Math.round(p.valor * 100), 0)

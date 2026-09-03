@@ -8,7 +8,7 @@ export async function GET(request: NextRequest, { params }: Params) {
   const session = await getSession(request)
   if (!session) return NextResponse.json({ error: 'Não autenticado.' }, { status: 401 })
   const { id } = await params
-  const participantes = ComitesRepository.findParticipantes(parseInt(id))
+  const participantes = await ComitesRepository.findParticipantes(parseInt(id))
   return NextResponse.json({ participantes })
 }
 
@@ -19,7 +19,7 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   const { id } = await params
   const comiteId = parseInt(id)
-  const comite = ComitesRepository.findById(comiteId)
+  const comite = await ComitesRepository.findById(comiteId)
   if (!comite) return NextResponse.json({ error: 'Comitê não encontrado.' }, { status: 404 })
 
   const body = await request.json()

@@ -18,7 +18,7 @@ export async function POST(
   const motivo: string = body?.motivo ?? ''
 
   try {
-    const projeto = buscarProjetoPorId(projeto_id)
+    const projeto = await buscarProjetoPorId(projeto_id)
     if (!projeto) return NextResponse.json({ error: 'Projeto não encontrado.' }, { status: 404 })
     if (projeto.status === 'CANCELADO') {
       return NextResponse.json({ error: 'Projeto já está cancelado.' }, { status: 400 })

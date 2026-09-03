@@ -29,7 +29,7 @@ export async function GET(request: NextRequest, { params }: Params) {
   const ata = ComitesRepository.findAta(comiteId) as Record<string, unknown> | undefined
   if (!ata) return NextResponse.json({ error: 'Ata não encontrada.' }, { status: 404 })
 
-  const participantes = ComitesRepository.findParticipantesNomeados(comiteId)
+  const participantes = await ComitesRepository.findParticipantesNomeados(comiteId)
 
   let jsonData: AtaConteudoJson = {}
   if (ata.conteudo_json) {

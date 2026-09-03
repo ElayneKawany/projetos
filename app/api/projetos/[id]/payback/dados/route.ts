@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
 import { getDb } from '@/lib/db'
 import { asyncDb } from '@/lib/database'
+import { UsuariosRepository } from '@/lib/repositories'
 import { calcularPayback, type DadosBasePayback, type RegistroPayback } from '@/lib/payback/calcularPayback'
 
 export async function GET(
@@ -47,14 +48,19 @@ export async function GET(
   `).get(projetoId) as Record<string, unknown> | undefined
 
   // Registros de payback
-  const registros = db.prepare(`
-    SELECT pr.id, pr.data, pr.valor_real, pr.origem, pr.observacao, pr.criado_por, pr.created_at,
-           u.nome AS criador_nome
+  const registrosBrutos = db.prepare(`
+    SELECT pr.id, pr.data, pr.valor_real, pr.origem, pr.observacao, pr.criado_por, pr.created_at
     FROM payback_registros pr
-    LEFT JOIN usuarios u ON u.id = pr.criado_por
     WHERE pr.projeto_id = ?
     ORDER BY pr.data ASC
   `).all(projetoId) as RegistroPayback[]
+
+  const criadorIds = [...new Set(registrosBrutos.map(r => r.criado_por).filter((v): v is number => v != null))]
+  const criadorNomes = await UsuariosRepository.findNomesPorIds(criadorIds)
+  const registros: RegistroPayback[] = registrosBrutos.map(r => ({
+    ...r,
+    criador_nome: r.criado_por != null ? criadorNomes.get(r.criado_por)?.nome ?? undefined : undefined,
+  }))
 
   const capex = Number(v?.capex ?? 0)
   const opex = Number(v?.opex ?? 0)

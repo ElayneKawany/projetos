@@ -1,5 +1,6 @@
 import { db } from '@/lib/database'
 import { TapRepository } from './tap'
+import { UsuariosRepository } from './usuarios'
 
 export interface Comite {
   id: number
@@ -13,31 +14,41 @@ export interface Comite {
   created_by?: number | null
   created_at?: string
   updated_at?: string
+  criador_nome?: string | null
 }
 
 export const ComitesRepository = {
-  findAll(filtros: { status?: string; tipo?: string } = {}): Comite[] {
+  async findAll(filtros: { status?: string; tipo?: string } = {}): Promise<Comite[]> {
     const conditions: string[] = []
     const params: unknown[] = []
     if (filtros.status) { conditions.push('status = ?'); params.push(filtros.status) }
     if (filtros.tipo) { conditions.push('tipo = ?'); params.push(filtros.tipo) }
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
-    return db.queryMany<Comite>(
-      `SELECT c.*, u.nome AS criador_nome,
+    const rows = db.queryMany<Comite & { created_by: number | null }>(
+      `SELECT c.*,
               (SELECT COUNT(*) FROM comite_projetos WHERE comite_id = c.id) AS num_projetos
-       FROM comites c LEFT JOIN usuarios u ON u.id = c.created_by
+       FROM comites c
        ${where} ORDER BY c.data_realizacao DESC`,
       params
     )
+    const nomes = await UsuariosRepository.findNomesPorIds(
+      rows.map(r => r.created_by).filter((v): v is number => v != null)
+    )
+    return rows.map(r => ({
+      ...r,
+      criador_nome: r.created_by != null ? nomes.get(r.created_by)?.nome ?? null : null,
+    }))
   },
 
-  findById(id: number): Comite | undefined {
-    return db.queryOne<Comite>(
-      `SELECT c.*, u.nome AS criador_nome
-       FROM comites c LEFT JOIN usuarios u ON u.id = c.created_by
-       WHERE c.id = ?`,
+  async findById(id: number): Promise<Comite | undefined> {
+    const row = db.queryOne<Comite & { created_by: number | null }>(
+      `SELECT c.* FROM comites c WHERE c.id = ?`,
       [id]
     )
+    if (!row) return undefined
+    if (row.created_by == null) return { ...row, criador_nome: null }
+    const nomes = await UsuariosRepository.findNomesPorIds([row.created_by])
+    return { ...row, criador_nome: nomes.get(row.created_by)?.nome ?? null }
   },
 
   create(dados: Partial<Comite>): number | bigint {
@@ -153,24 +164,38 @@ export const ComitesRepository = {
 
   // ── Participantes ──────────────────────────────────────────────────────────
 
-  findParticipantes(comiteId: number): Record<string, unknown>[] {
-    return db.queryMany(
-      `SELECT cp.*, u.nome AS usuario_nome, u.cargo AS usuario_cargo
+  async findParticipantes(comiteId: number): Promise<Record<string, unknown>[]> {
+    const rows = db.queryMany<Record<string, unknown> & { usuario_id: number | null }>(
+      `SELECT cp.*
        FROM comite_participantes cp
-       LEFT JOIN usuarios u ON u.id = cp.usuario_id
        WHERE cp.comite_id = ? ORDER BY cp.id`,
       [comiteId]
     )
+    const nomes = await UsuariosRepository.findNomesPorIds(
+      rows.map(r => r.usuario_id).filter((v): v is number => v != null)
+    )
+    return rows.map(r => ({
+      ...r,
+      usuario_nome: r.usuario_id != null ? nomes.get(r.usuario_id)?.nome ?? null : null,
+      usuario_cargo: r.usuario_id != null ? nomes.get(r.usuario_id)?.cargo ?? null : null,
+    }))
   },
 
-  findParticipantesNomeados(comiteId: number): { nome: string; cargo: string | null; presente: number }[] {
-    return db.queryMany<{ nome: string; cargo: string | null; presente: number }>(
-      `SELECT COALESCE(u.nome, cp.nome_externo) AS nome, cp.cargo, cp.presente
+  async findParticipantesNomeados(comiteId: number): Promise<{ nome: string; cargo: string | null; presente: number }[]> {
+    const rows = db.queryMany<{ usuario_id: number | null; nome_externo: string | null; cargo: string | null; presente: number }>(
+      `SELECT cp.usuario_id, cp.nome_externo, cp.cargo, cp.presente
        FROM comite_participantes cp
-       LEFT JOIN usuarios u ON u.id = cp.usuario_id
        WHERE cp.comite_id = ?`,
       [comiteId]
     )
+    const nomes = await UsuariosRepository.findNomesPorIds(
+      rows.map(r => r.usuario_id).filter((v): v is number => v != null)
+    )
+    return rows.map(r => ({
+      nome: (r.usuario_id != null ? nomes.get(r.usuario_id)?.nome : undefined) ?? r.nome_externo ?? '',
+      cargo: r.cargo,
+      presente: r.presente,
+    }))
   },
 
   insertParticipante(dados: {

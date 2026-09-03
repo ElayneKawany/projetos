@@ -5,7 +5,7 @@ import { UsuariosRepository } from '@/lib/repositories'
 export async function GET(request: NextRequest) {
   const session = await getSession(request)
   if (!session) return NextResponse.json({ error: 'Não autenticado.' }, { status: 401 })
-  const aprovadores = UsuariosRepository.findAprovadores()
+  const aprovadores = await UsuariosRepository.findAprovadores()
   return NextResponse.json({ aprovadores })
 }
 

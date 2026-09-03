@@ -28,6 +28,7 @@
 
 import getDb from './db'
 import { registrarAuditoria } from './db/auditoria'
+import { UsuariosRepository } from './repositories/usuarios'
 
 // Tipos e constantes sem dependência de servidor — importáveis em Client Components
 export type { TipoInvestimento, OrcamentoItem, OrcamentoGrupo } from './orcamento-types'
@@ -70,14 +71,14 @@ export interface TotaisGrupo {
  *
  * @example
  * ```ts
- * const orcamento = buscarOrcamento(projetoId)
+ * const orcamento = await buscarOrcamento(projetoId)
  * const totalCapex = orcamento
  *   .filter(g => g.tipo === 'CAPEX_ATIVO')
  *   .flatMap(g => g.itens)
  *   .reduce((s, i) => s + i.valor_aprovado, 0)
  * ```
  */
-export function buscarOrcamento(projeto_id: number): OrcamentoGrupo[] {
+export async function buscarOrcamento(projeto_id: number): Promise<OrcamentoGrupo[]> {
   const db = getDb()
 
   const grupos = db.prepare(`
@@ -86,21 +87,29 @@ export function buscarOrcamento(projeto_id: number): OrcamentoGrupo[] {
     ORDER BY ordem, id
   `).all(projeto_id) as Omit<OrcamentoGrupo, 'itens'>[]
 
-  const itens = db.prepare(`
+  const itensSemNome = db.prepare(`
     SELECT
       oi.*,
       cc.codigo  AS conta_contabil_codigo,
       cc.descricao AS conta_contabil_descricao,
       ccu.codigo  AS centro_custo_codigo,
-      ccu.descricao AS centro_custo_descricao,
-      u.nome AS responsavel_nome
+      ccu.descricao AS centro_custo_descricao
     FROM orcamento_itens oi
     LEFT JOIN config_contas_contabeis cc  ON cc.id  = oi.conta_contabil_id
     LEFT JOIN config_centros_custo    ccu ON ccu.id = oi.centro_custo_id
-    LEFT JOIN usuarios                u   ON u.id   = oi.responsavel_usuario_id
     WHERE oi.projeto_id = ? AND oi.ativo = 1
     ORDER BY oi.ordem, oi.id
-  `).all(projeto_id) as OrcamentoItem[]
+  `).all(projeto_id) as Omit<OrcamentoItem, 'responsavel_nome'>[]
+
+  // responsavel_nome vinha de JOIN com usuarios, que já está em Postgres —
+  // busca em lote por responsavel_usuario_id e faz o merge em JS.
+  const nomes = await UsuariosRepository.findNomesPorIds(
+    itensSemNome.map(i => i.responsavel_usuario_id).filter((v): v is number => v != null)
+  )
+  const itens: OrcamentoItem[] = itensSemNome.map(i => ({
+    ...i,
+    responsavel_nome: i.responsavel_usuario_id != null ? nomes.get(i.responsavel_usuario_id)?.nome ?? null : null,
+  }))
 
   return grupos.map(g => ({
     ...g,

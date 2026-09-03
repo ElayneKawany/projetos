@@ -19,7 +19,7 @@ export async function POST(
   const projeto_id = Number(id)
   const cron_id    = Number(cronogramaId)
 
-  const cronograma = CronogramaRepository.findByIdAndProjetoId(cron_id, projeto_id) as Record<string, unknown> | undefined
+  const cronograma = await CronogramaRepository.findByIdAndProjetoId(cron_id, projeto_id) as Record<string, unknown> | undefined
 
   if (!cronograma) {
     return NextResponse.json({ error: 'Cronograma não encontrado.' }, { status: 404 })
@@ -32,6 +32,21 @@ export async function POST(
   }
 
   const novaVersao = (cronograma.versao as number) + 1
+
+  // Pré-busca as parcelas das tarefas de PAGAMENTO fora da transação: a query
+  // agora envolve `usuarios` (Postgres, async) e o wrapper de transação do
+  // better-sqlite3 é síncrono — não pode conter um `await` no meio do callback.
+  const tarefasParaCopia = CronogramaRepository.findTarefasOrdered(cron_id)
+  const idsPagamento = tarefasParaCopia
+    .filter(t => String(t.natureza_tarefa) === 'PAGAMENTO')
+    .map(t => Number(t.id))
+  const parcelasPagamento = await CronogramaRepository.findParcelasByTarefaIds(idsPagamento)
+  const parcelasPorTarefaAntiga = new Map<number, typeof parcelasPagamento>()
+  for (const p of parcelasPagamento) {
+    const arr = parcelasPorTarefaAntiga.get(p.cronograma_tarefa_id) ?? []
+    arr.push(p)
+    parcelasPorTarefaAntiga.set(p.cronograma_tarefa_id, arr)
+  }
 
   let novoCronId: number
   try {
@@ -106,7 +121,7 @@ export async function POST(
               data_primeira_parcela: header.data_primeira_parcela,
               criado_por: session.id,
             })
-            const parcelas = CronogramaRepository.findParcelasByTarefaIds([idAntigo])
+            const parcelas = parcelasPorTarefaAntiga.get(idAntigo) ?? []
             for (const p of parcelas) {
               CronogramaRepository.insertParcelaCompleta({
                 cronograma_tarefa_id: novaTarefaId,

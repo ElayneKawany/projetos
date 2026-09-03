@@ -1,4 +1,5 @@
 import { db, asyncDb } from '@/lib/database'
+import { UsuariosRepository } from './usuarios'
 
 export interface DistribuicaoMacroFase {
   tipo_macro: string
@@ -45,15 +46,22 @@ export interface CronogramaTarefa {
 }
 
 export const CronogramaRepository = {
-  findLatestByProjectId(projetoId: number): Cronograma | undefined {
-    return db.queryOne<Cronograma>(
-      `SELECT c.*, u.nome AS aprovado_nome
+  async findLatestByProjectId(projetoId: number): Promise<(Cronograma & { aprovado_nome: string | null }) | undefined> {
+    const row = db.queryOne<Cronograma>(
+      `SELECT c.*
        FROM cronogramas c
-       LEFT JOIN usuarios u ON u.id = c.aprovado_por
        WHERE c.projeto_id = ? AND (c.ativo IS NULL OR c.ativo = 1)
        ORDER BY c.versao DESC LIMIT 1`,
       [projetoId]
     )
+    if (!row) return undefined
+    const nomes = row.aprovado_por != null
+      ? await UsuariosRepository.findNomesPorIds([row.aprovado_por])
+      : new Map<number, { nome: string; cargo: string | null }>()
+    return {
+      ...row,
+      aprovado_nome: row.aprovado_por != null ? nomes.get(row.aprovado_por)?.nome ?? null : null,
+    }
   },
 
   findById(id: number): Cronograma | undefined {
@@ -99,18 +107,23 @@ export const CronogramaRepository = {
 
   // ── Tarefas ────────────────────────────────────────────────────────────────
 
-  findTasks(cronogramaId: number): CronogramaTarefa[] {
-    return db.queryMany<CronogramaTarefa>(
-      `SELECT t.*,
-              COALESCE(u.nome, t.responsavel_nome_ext) AS responsavel_nome,
-              COALESCE(e.nome, t.executor_nome_ext) AS executor_nome
+  async findTasks(cronogramaId: number): Promise<(CronogramaTarefa & { responsavel_nome: string | null; executor_nome: string | null })[]> {
+    const rows = db.queryMany<CronogramaTarefa>(
+      `SELECT t.*
        FROM cronograma_tarefas t
-       LEFT JOIN usuarios u ON u.id = t.responsavel_id
-       LEFT JOIN usuarios e ON e.id = t.executor_id
        WHERE t.cronograma_id = ? AND (t.ativo IS NULL OR t.ativo = 1)
        ORDER BY t.ordem, t.id`,
       [cronogramaId]
     )
+    const ids = [...new Set(
+      rows.flatMap(t => [t.responsavel_id, t.executor_id]).filter((v): v is number => v != null)
+    )]
+    const nomes = await UsuariosRepository.findNomesPorIds(ids)
+    return rows.map(t => ({
+      ...t,
+      responsavel_nome: (t.responsavel_id != null ? nomes.get(t.responsavel_id)?.nome : undefined) ?? t.responsavel_nome_ext ?? null,
+      executor_nome: (t.executor_id != null ? nomes.get(t.executor_id)?.nome : undefined) ?? t.executor_nome_ext ?? null,
+    }))
   },
 
   findTaskById(id: number): CronogramaTarefa | undefined {
@@ -167,13 +180,20 @@ export const CronogramaRepository = {
     )
   },
 
-  findByIdAndProjetoId(id: number, projetoId: number): Cronograma | undefined {
-    return db.queryOne<Cronograma>(
-      `SELECT c.*, u.nome AS aprovado_nome
-       FROM cronogramas c LEFT JOIN usuarios u ON c.aprovado_por = u.id
+  async findByIdAndProjetoId(id: number, projetoId: number): Promise<(Cronograma & { aprovado_nome: string | null }) | undefined> {
+    const row = db.queryOne<Cronograma>(
+      `SELECT c.* FROM cronogramas c
        WHERE c.id = ? AND c.projeto_id = ?`,
       [id, projetoId]
     )
+    if (!row) return undefined
+    const nomes = row.aprovado_por != null
+      ? await UsuariosRepository.findNomesPorIds([row.aprovado_por])
+      : new Map<number, { nome: string; cargo: string | null }>()
+    return {
+      ...row,
+      aprovado_nome: row.aprovado_por != null ? nomes.get(row.aprovado_por)?.nome ?? null : null,
+    }
   },
 
   findAtivoSimples(projetoId: number): { id: number; versao: number } | undefined {
@@ -271,20 +291,32 @@ export const CronogramaRepository = {
     )
   },
 
-  findTarefasComNomes(cronogramaId: number): Record<string, unknown>[] {
-    return db.queryMany<Record<string, unknown>>(
+  async findTarefasComNomes(cronogramaId: number): Promise<Record<string, unknown>[]> {
+    const rows = db.queryMany<Record<string, unknown> & {
+      responsavel_id: number | null; responsavel_nome_ext: string | null
+      executor_id: number | null; executor_nome_ext: string | null
+    }>(
       `SELECT ct.codigo, ct.nivel, ct.nome, ct.descricao, ct.tipo, ct.criticidade,
-              COALESCE(ct.responsavel_nome_ext, ur.nome) AS responsavel_nome,
-              COALESCE(ct.executor_nome_ext,    ue.nome) AS executor_nome,
+              ct.responsavel_id, ct.responsavel_nome_ext,
+              ct.executor_id, ct.executor_nome_ext,
               ct.data_inicio, ct.data_inicio_baseline, ct.data_fim, ct.data_fim_baseline,
               ct.percentual, ct.status, ct.observacoes, ct.tipo_macro
        FROM cronograma_tarefas ct
-       LEFT JOIN usuarios ur ON ct.responsavel_id = ur.id
-       LEFT JOIN usuarios ue ON ct.executor_id    = ue.id
        WHERE ct.cronograma_id = ? AND (ct.ativo IS NULL OR ct.ativo = 1)
        ORDER BY ct.ordem`,
       [cronogramaId]
     )
+    const ids = [...new Set(
+      rows.flatMap(t => [t.responsavel_id, t.executor_id]).filter((v): v is number => v != null)
+    )]
+    const nomes = await UsuariosRepository.findNomesPorIds(ids)
+    // Ordem do COALESCE original é invertida em relação a findTasks: aqui o nome
+    // externo (_ext) tem prioridade, e o nome do usuário Postgres é o fallback.
+    return rows.map(t => ({
+      ...t,
+      responsavel_nome: t.responsavel_nome_ext ?? (t.responsavel_id != null ? nomes.get(t.responsavel_id)?.nome : undefined) ?? null,
+      executor_nome: t.executor_nome_ext ?? (t.executor_id != null ? nomes.get(t.executor_id)?.nome : undefined) ?? null,
+    }))
   },
 
   findTarefasFasesTarefas(cronogramaId: number): Array<{ id: number; nivel: string; nome: string; descricao: string | null; ordem: number }> {
@@ -525,30 +557,38 @@ export const CronogramaRepository = {
     db.execute(`DELETE FROM cronograma_responsaveis WHERE cronograma_tarefa_id = ?`, [tarefaId])
   },
 
-  findResponsaveisForCronograma(cronogramaId: number): Array<{ cronograma_tarefa_id: number; usuario_id: number | null; nome: string }> {
-    return db.queryMany(
-      `SELECT cr.cronograma_tarefa_id, cr.usuario_id,
-              COALESCE(u.nome, cr.usuario_nome_ext) as nome
+  async findResponsaveisForCronograma(cronogramaId: number): Promise<Array<{ cronograma_tarefa_id: number; usuario_id: number | null; nome: string }>> {
+    const rows = db.queryMany<{ cronograma_tarefa_id: number; usuario_id: number | null; usuario_nome_ext: string | null }>(
+      `SELECT cr.cronograma_tarefa_id, cr.usuario_id, cr.usuario_nome_ext
        FROM cronograma_responsaveis cr
-       LEFT JOIN usuarios u ON cr.usuario_id = u.id
        WHERE cr.cronograma_tarefa_id IN (
          SELECT id FROM cronograma_tarefas WHERE cronograma_id = ? AND (ativo IS NULL OR ativo = 1)
        )`,
       [cronogramaId]
     )
+    const ids = [...new Set(rows.map(r => r.usuario_id).filter((v): v is number => v != null))]
+    const nomes = await UsuariosRepository.findNomesPorIds(ids)
+    return rows.map(r => ({
+      cronograma_tarefa_id: r.cronograma_tarefa_id,
+      usuario_id: r.usuario_id,
+      // Tipo de retorno mantém `nome: string` (contrato pré-existente do método,
+      // não alterado nesta fatia) — na prática nunca é null porque toda linha
+      // de cronograma_responsaveis tem usuario_id OU usuario_nome_ext preenchido.
+      nome: ((r.usuario_id != null ? nomes.get(r.usuario_id)?.nome : undefined) ?? r.usuario_nome_ext ?? null) as string,
+    }))
   },
 
   // ── Usuários / Config ─────────────────────────────────────────────────────
 
-  findUsuariosAtivos(): { id: number; nome: string }[] {
-    return db.queryMany<{ id: number; nome: string }>(
-      `SELECT id, nome FROM usuarios WHERE ativo = 1 ORDER BY nome`
+  async findUsuariosAtivos(): Promise<{ id: number; nome: string }[]> {
+    return asyncDb.queryMany<{ id: number; nome: string }>(
+      `SELECT id, nome FROM "AI"."TI_PMO_USUARIOS" WHERE ativo = true ORDER BY nome`
     )
   },
 
-  findNomesUsuariosAtivos(): { nome: string }[] {
-    return db.queryMany<{ nome: string }>(
-      `SELECT nome FROM usuarios WHERE ativo = 1 ORDER BY nome`
+  async findNomesUsuariosAtivos(): Promise<{ nome: string }[]> {
+    return asyncDb.queryMany<{ nome: string }>(
+      `SELECT nome FROM "AI"."TI_PMO_USUARIOS" WHERE ativo = true ORDER BY nome`
     )
   },
 
@@ -702,22 +742,31 @@ export const CronogramaRepository = {
     )
   },
 
-  findParcelasByTarefaIds(tarefaIds: number[]): Array<{
+  async findParcelasByTarefaIds(tarefaIds: number[]): Promise<Array<{
     id: number; cronograma_tarefa_id: number; numero: number; valor: number
     data_vencimento: string; data_vencimento_baseline: string | null
     status: string; data_pagamento: string | null; pago_por: number | null
     pago_por_nome: string | null
-  }> {
+  }>> {
     if (tarefaIds.length === 0) return []
     const placeholders = tarefaIds.map(() => '?').join(',')
-    return db.queryMany(
-      `SELECT p.*, u.nome as pago_por_nome
+    const rows = db.queryMany<{
+      id: number; cronograma_tarefa_id: number; numero: number; valor: number
+      data_vencimento: string; data_vencimento_baseline: string | null
+      status: string; data_pagamento: string | null; pago_por: number | null
+    }>(
+      `SELECT p.*
        FROM cronograma_tarefa_parcelas p
-       LEFT JOIN usuarios u ON u.id = p.pago_por
        WHERE p.cronograma_tarefa_id IN (${placeholders})
        ORDER BY p.numero ASC`,
       tarefaIds
     )
+    const ids = [...new Set(rows.map(r => r.pago_por).filter((v): v is number => v != null))]
+    const nomes = await UsuariosRepository.findNomesPorIds(ids)
+    return rows.map(r => ({
+      ...r,
+      pago_por_nome: r.pago_por != null ? nomes.get(r.pago_por)?.nome ?? null : null,
+    }))
   },
 
   findParcelaById(parcelaId: number): {

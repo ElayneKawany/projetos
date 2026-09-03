@@ -109,8 +109,8 @@ export async function POST(
     await ViabilidadeRepository.updateStatus(v.id, 'CANCELADO')
   }
 
-  const projeto = ProjetosRepository.findById(Number(projetoId))
-  notificarPMOs({
+  const projeto = await ProjetosRepository.findById(Number(projetoId))
+  await notificarPMOs({
     originador_id: session.id,
     projeto_id: Number(projetoId),
     tipo: 'REVISAO_TAP',

@@ -71,7 +71,7 @@ export async function GET(
 
   const { id } = await params
 
-  const usuarios = CronogramaRepository.findNomesUsuariosAtivos()
+  const usuarios = await CronogramaRepository.findNomesUsuariosAtivos()
 
   const wb = XLSX.utils.book_new()
 

@@ -1,6 +1,8 @@
 import { notFound } from 'next/navigation'
 import { getSession } from '@/lib/auth'
 import { buscarProjetoPorId, buscarHistoricoStatus, buscarHistoricoPrioridade, buscarHistoricoAlteracoes, buscarConfigStatus } from '@/lib/projetos'
+import { UsuariosRepository } from '@/lib/repositories'
+import { asyncDb } from '@/lib/database'
 import getDb from '@/lib/db'
 import { buscarWorkflow } from '@/lib/workflow'
 import { CronogramaRepository } from '@/lib/repositories/cronograma'
@@ -20,23 +22,33 @@ export default async function ProjetoDetalhePage({
   if (!session) return null
 
 
-  const projeto = buscarProjetoPorId(Number(id))
+  const projeto = await buscarProjetoPorId(Number(id))
   if (!projeto) notFound()
 
   const db = getDb()
-  const historicoStatus         = buscarHistoricoStatus(projeto.id)
-  const historicoPrioridade     = buscarHistoricoPrioridade(projeto.id)
+  const historicoStatus         = await buscarHistoricoStatus(projeto.id)
+  const historicoPrioridade     = await buscarHistoricoPrioridade(projeto.id)
   const historicoAlteracoes     = buscarHistoricoAlteracoes(projeto.id)
   const configStatus            = await buscarConfigStatus()
 
-  const tapVersoes = db.prepare(`
-    SELECT tv.*, u.nome as criador_nome, ua.nome as aprovador_nome
-    FROM tap_versoes tv
-    LEFT JOIN usuarios u  ON tv.criado_por   = u.id
-    LEFT JOIN usuarios ua ON tv.aprovado_por = ua.id
+  // NOTA: tap_versoes já foi migrada para Postgres (fatia 2) — esta tabela local
+  // (`tap_versoes` em SQLite) está congelada desde então e não reflete TAPs criadas/
+  // atualizadas depois da migração. Bug pré-existente, fora do escopo desta fatia
+  // (usuarios) — reportado separadamente, não corrigido aqui.
+  const tapVersoesRaw = db.prepare(`
+    SELECT * FROM tap_versoes tv
     WHERE tv.projeto_id = ?
     ORDER BY tv.versao DESC
-  `).all(projeto.id)
+  `).all(projeto.id) as { id: number; criado_por: number | null; aprovado_por: number | null; [k: string]: unknown }[]
+  const tapNomeIds = [...new Set(
+    tapVersoesRaw.flatMap(t => [t.criado_por, t.aprovado_por]).filter((v): v is number => v != null)
+  )]
+  const tapNomes = await UsuariosRepository.findNomesPorIds(tapNomeIds)
+  const tapVersoes = tapVersoesRaw.map(t => ({
+    ...t,
+    criador_nome: t.criado_por != null ? tapNomes.get(t.criado_por)?.nome ?? null : null,
+    aprovador_nome: t.aprovado_por != null ? tapNomes.get(t.aprovado_por)?.nome ?? null : null,
+  }))
 
   const triagem = db.prepare('SELECT * FROM triagens WHERE projeto_id = ?').get(projeto.id)
 
@@ -99,21 +111,22 @@ export default async function ProjetoDetalhePage({
     tarefasPendentes = pendentes
   }
 
-  const cronogramaTarefas = cronogramaData
-    ? db.prepare(`
-        SELECT ct.*,
-               ur.nome as responsavel_nome,
-               ue.nome as executor_nome
-        FROM cronograma_tarefas ct
-        LEFT JOIN usuarios ur ON ct.responsavel_id = ur.id
-        LEFT JOIN usuarios ue ON ct.executor_id    = ue.id
-        WHERE ct.cronograma_id = ?
-        ORDER BY ct.ordem
-      `).all(cronogramaData.id)
+  const cronogramaTarefasRaw = cronogramaData
+    ? db.prepare(`SELECT * FROM cronograma_tarefas WHERE cronograma_id = ? ORDER BY ordem`)
+        .all(cronogramaData.id) as (Record<string, unknown> & { id: number; responsavel_id: number | null; executor_id: number | null })[]
     : []
+  const cronNomeIds = [...new Set(
+    cronogramaTarefasRaw.flatMap(t => [t.responsavel_id, t.executor_id]).filter((v): v is number => v != null)
+  )]
+  const cronNomes = await UsuariosRepository.findNomesPorIds(cronNomeIds)
+  const cronogramaTarefas = cronogramaTarefasRaw.map(t => ({
+    ...t,
+    responsavel_nome: t.responsavel_id != null ? cronNomes.get(t.responsavel_id)?.nome ?? null : null,
+    executor_nome: t.executor_id != null ? cronNomes.get(t.executor_id)?.nome ?? null : null,
+  })) as (Record<string, unknown> & { id: number; natureza_tarefa?: string })[]
 
   // Tarefa de Pagamento: anexa cabeçalho + parcelas nas tarefas com natureza_tarefa='PAGAMENTO'
-  const tarefasPagamentoIds = (cronogramaTarefas as { id: number; natureza_tarefa?: string }[])
+  const tarefasPagamentoIds = cronogramaTarefas
     .filter(t => t.natureza_tarefa === 'PAGAMENTO')
     .map(t => t.id)
   if (tarefasPagamentoIds.length > 0) {
@@ -121,13 +134,17 @@ export default async function ProjetoDetalhePage({
     const headers = db.prepare(
       `SELECT * FROM cronograma_tarefa_pagamento WHERE cronograma_tarefa_id IN (${placeholders})`
     ).all(...tarefasPagamentoIds) as { cronograma_tarefa_id: number }[]
-    const parcelas = db.prepare(
-      `SELECT p.*, u.nome as pago_por_nome
-       FROM cronograma_tarefa_parcelas p
-       LEFT JOIN usuarios u ON u.id = p.pago_por
-       WHERE p.cronograma_tarefa_id IN (${placeholders})
-       ORDER BY p.numero ASC`
-    ).all(...tarefasPagamentoIds) as { cronograma_tarefa_id: number }[]
+    const parcelasRaw = db.prepare(
+      `SELECT * FROM cronograma_tarefa_parcelas
+       WHERE cronograma_tarefa_id IN (${placeholders})
+       ORDER BY numero ASC`
+    ).all(...tarefasPagamentoIds) as { cronograma_tarefa_id: number; pago_por: number | null }[]
+    const pagoPorIds = [...new Set(parcelasRaw.map(p => p.pago_por).filter((v): v is number => v != null))]
+    const pagoPorNomes = await UsuariosRepository.findNomesPorIds(pagoPorIds)
+    const parcelas = parcelasRaw.map(p => ({
+      ...p,
+      pago_por_nome: p.pago_por != null ? pagoPorNomes.get(p.pago_por)?.nome ?? null : null,
+    }))
     for (const t of cronogramaTarefas as (Record<string, unknown> & { id: number; pagamento?: unknown })[]) {
       const header = headers.find(h => h.cronograma_tarefa_id === t.id)
       if (!header) continue
@@ -135,34 +152,43 @@ export default async function ProjetoDetalhePage({
     }
   }
 
-  const lancamentos = db.prepare(`
-    SELECT fl.*, u.nome as criador_nome
-    FROM financeiro_lancamentos fl
-    LEFT JOIN usuarios u ON fl.criado_por = u.id
-    WHERE fl.projeto_id = ?
-    ORDER BY fl.data_lancamento DESC
-  `).all(projeto.id)
+  const lancamentosRaw = db.prepare(`
+    SELECT * FROM financeiro_lancamentos WHERE projeto_id = ? ORDER BY data_lancamento DESC
+  `).all(projeto.id) as (Record<string, unknown> & { criado_por: number | null })[]
+  const lancNomeIds = [...new Set(lancamentosRaw.map(l => l.criado_por).filter((v): v is number => v != null))]
+  const lancNomes = await UsuariosRepository.findNomesPorIds(lancNomeIds)
+  const lancamentos = lancamentosRaw.map(l => ({
+    ...l,
+    criador_nome: l.criado_por != null ? lancNomes.get(l.criado_por)?.nome ?? null : null,
+  })) as Record<string, unknown>[]
 
-  const aprovacoesProjeto = db.prepare(`
-    SELECT a.*, u.nome as solicitante_nome, ua.nome as aprovador_nome
-    FROM aprovacoes a
-    LEFT JOIN usuarios u  ON a.solicitante_id = u.id
-    LEFT JOIN usuarios ua ON a.aprovador_id   = ua.id
-    WHERE a.projeto_id = ?
-    ORDER BY a.created_at DESC
-  `).all(projeto.id)
+  const aprovacoesProjetoRaw = db.prepare(`
+    SELECT * FROM aprovacoes WHERE projeto_id = ? ORDER BY created_at DESC
+  `).all(projeto.id) as (Record<string, unknown> & { solicitante_id: number | null; aprovador_id: number | null })[]
+  const aprovNomeIds = [...new Set(
+    aprovacoesProjetoRaw.flatMap(a => [a.solicitante_id, a.aprovador_id]).filter((v): v is number => v != null)
+  )]
+  const aprovNomes = await UsuariosRepository.findNomesPorIds(aprovNomeIds)
+  const aprovacoesProjeto = aprovacoesProjetoRaw.map(a => ({
+    ...a,
+    solicitante_nome: a.solicitante_id != null ? aprovNomes.get(a.solicitante_id)?.nome ?? null : null,
+    aprovador_nome: a.aprovador_id != null ? aprovNomes.get(a.aprovador_id)?.nome ?? null : null,
+  }))
 
   const diretorias = db.prepare('SELECT * FROM diretorias WHERE ativo=1 ORDER BY nome').all()
   const areas = db.prepare(
     'SELECT a.*, d.nome as diretoria_nome FROM areas a JOIN diretorias d ON a.diretoria_id=d.id WHERE a.ativo=1'
   ).all()
-  const usuarios = db.prepare('SELECT id, nome, email, cargo FROM usuarios WHERE ativo=1 ORDER BY nome').all()
-  const usuariosPmo = db.prepare(`
-    SELECT u.id, u.nome FROM usuarios u
-    JOIN perfis p ON p.id = u.perfil_id
-    WHERE u.ativo = 1 AND p.codigo = 'PMO'
-    ORDER BY u.nome
-  `).all()
+  const usuarios = await asyncDb.queryMany(
+    `SELECT id, nome, email, cargo FROM "AI"."TI_PMO_USUARIOS" WHERE ativo = true ORDER BY nome`
+  )
+  const perfilPmo = db.prepare(`SELECT id FROM perfis WHERE codigo = 'PMO'`).get() as { id: number } | undefined
+  const usuariosPmo = perfilPmo
+    ? await asyncDb.queryMany(
+        `SELECT id, nome FROM "AI"."TI_PMO_USUARIOS" WHERE ativo = true AND perfil_id = ? ORDER BY nome`,
+        [perfilPmo.id]
+      )
+    : []
 
   const fasePrazos = db.prepare(
     'SELECT status, data_limite, data_baseline FROM projeto_fase_prazo WHERE projeto_id = ?'

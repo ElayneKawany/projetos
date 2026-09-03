@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
 import getDb from '@/lib/db'
+import { asyncDb } from '@/lib/database'
 import { registrarAuditoria } from '@/lib/db/auditoria'
+import { UsuariosRepository } from '@/lib/repositories'
+
+const T_USUARIOS = '"AI"."TI_PMO_USUARIOS"'
 
 export async function GET(request: NextRequest) {
   const session = await getSession(request)
@@ -11,19 +15,35 @@ export async function GET(request: NextRequest) {
   const diretorias = db.prepare(`
     SELECT d.*,
       COUNT(DISTINCT p.id)  AS projeto_count,
-      COUNT(DISTINCT a.id)  AS area_count,
-      COUNT(DISTINCT us.id) AS usuario_count,
-      dir.nome AS diretor_responsavel_nome
+      COUNT(DISTINCT a.id)  AS area_count
     FROM diretorias d
     LEFT JOIN projetos  p  ON p.diretoria_id  = d.id AND p.ativo = 1
     LEFT JOIN areas     a  ON a.diretoria_id  = d.id AND a.ativo = 1
-    LEFT JOIN usuarios  us ON us.diretoria_id = d.id AND us.ativo = 1
-    LEFT JOIN usuarios  dir ON dir.id = d.diretor_responsavel_id
     GROUP BY d.id
     ORDER BY d.nome
-  `).all()
+  `).all() as (Record<string, unknown> & { id: number; diretor_responsavel_id: number | null })[]
 
-  return NextResponse.json({ diretorias })
+  const diretoriaIds = diretorias.map(d => d.id)
+  const usuarioCounts = diretoriaIds.length
+    ? await asyncDb.queryMany<{ diretoria_id: number; c: number }>(
+        `SELECT diretoria_id, COUNT(*) AS c FROM ${T_USUARIOS}
+         WHERE ativo = true AND diretoria_id IN (${diretoriaIds.map(() => '?').join(',')})
+         GROUP BY diretoria_id`,
+        diretoriaIds
+      )
+    : []
+  const usuarioCountMap = new Map(usuarioCounts.map(u => [u.diretoria_id, Number(u.c)]))
+
+  const diretorIds = [...new Set(diretorias.map(d => d.diretor_responsavel_id).filter((v): v is number => v != null))]
+  const diretorNomes = await UsuariosRepository.findNomesPorIds(diretorIds)
+
+  const diretoriasComNomes = diretorias.map(d => ({
+    ...d,
+    usuario_count: usuarioCountMap.get(d.id) ?? 0,
+    diretor_responsavel_nome: d.diretor_responsavel_id != null ? diretorNomes.get(d.diretor_responsavel_id)?.nome ?? null : null,
+  }))
+
+  return NextResponse.json({ diretorias: diretoriasComNomes })
 }
 
 export async function POST(request: NextRequest) {
@@ -54,7 +74,16 @@ export async function POST(request: NextRequest) {
   const now = new Date().toISOString()
   const diretor_responsavel_id = body.diretor_responsavel_id ? Number(body.diretor_responsavel_id) : null
   if (diretor_responsavel_id) {
-    const dir = db.prepare("SELECT id FROM usuarios WHERE id = ? AND ativo = 1 AND perfil_id = (SELECT id FROM perfis WHERE codigo = 'DIRETOR')").get(diretor_responsavel_id)
+    // `perfis` continua em SQLite; `usuarios` já está em Postgres — não dá mais
+    // para resolver com subquery única, então resolve o perfil DIRETOR primeiro
+    // e depois confere o usuário (mesmo padrão de lib/repositories/usuarios.ts).
+    const perfilDiretor = db.prepare("SELECT id FROM perfis WHERE codigo = 'DIRETOR'").get() as { id: number } | undefined
+    const dir = perfilDiretor
+      ? await asyncDb.queryOne<{ id: number }>(
+          `SELECT id FROM ${T_USUARIOS} WHERE id = ? AND ativo = true AND perfil_id = ?`,
+          [diretor_responsavel_id, perfilDiretor.id]
+        )
+      : undefined
     if (!dir) return NextResponse.json({ error: 'Diretor responsável inválido. O usuário deve estar ativo e ter perfil DIRETOR.' }, { status: 422 })
   }
 

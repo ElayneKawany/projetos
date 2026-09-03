@@ -10,7 +10,7 @@ export async function GET(
   const session = await getSession(request)
   if (!session) return NextResponse.json({ error: 'Não autenticado.' }, { status: 401 })
   const { id } = await params
-  const lancamentos = FinanceiroRepository.findLancamentos(Number(id))
+  const lancamentos = await FinanceiroRepository.findLancamentos(Number(id))
   return NextResponse.json({ lancamentos })
 }
 

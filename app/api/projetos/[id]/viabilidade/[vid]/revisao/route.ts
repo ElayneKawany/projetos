@@ -75,8 +75,8 @@ export async function POST(
     dados_depois: { viabilidade_status: 'RASCUNHO', observacao: body.observacao },
   })
 
-  const projeto = ProjetosRepository.findById(Number(projetoId))
-  notificarPMOs({
+  const projeto = await ProjetosRepository.findById(Number(projetoId))
+  await notificarPMOs({
     originador_id: session.id,
     projeto_id: Number(projetoId),
     tipo: 'REVISAO_VIABILIDADE',

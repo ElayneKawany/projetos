@@ -48,7 +48,7 @@ export async function PUT(
   const projeto_id    = Number(id)
   const cronograma_id = Number(cronogramaId)
 
-  const cronograma = CronogramaRepository.findByIdAndProjetoId(cronograma_id, projeto_id)
+  const cronograma = await CronogramaRepository.findByIdAndProjetoId(cronograma_id, projeto_id)
 
   if (!cronograma)
     return NextResponse.json({ error: 'Cronograma não encontrado.' }, { status: 404 })
@@ -69,7 +69,7 @@ export async function PUT(
   const incomingIds = tarefas.filter(t => t.id).map(t => t.id as number)
   const toDelete    = existingIds.filter(eid => !incomingIds.includes(eid))
 
-  const usuariosMap = CronogramaRepository.findUsuariosAtivos()
+  const usuariosMap = await CronogramaRepository.findUsuariosAtivos()
   function resolveUserId(nome: string): number | null {
     const q = nome.trim().toLowerCase()
     const exato = usuariosMap.find(u => u.nome.toLowerCase() === q)

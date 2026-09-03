@@ -16,7 +16,7 @@ export async function GET(
   const tap_id     = Number(tapId)
 
   try {
-    const projeto = ProjetosRepository.findById(projeto_id)
+    const projeto = await ProjetosRepository.findById(projeto_id)
     if (!projeto) return NextResponse.json({ error: 'Projeto não encontrado.' }, { status: 404 })
 
     const tap = await TapRepository.findByIdAndProjetoId(tap_id, projeto_id)

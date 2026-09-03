@@ -1,6 +1,7 @@
 import { db, asyncDb } from '@/lib/database'
 import { TapRepository } from './tap'
 import { ViabilidadeRepository } from './viabilidade'
+import { UsuariosRepository } from './usuarios'
 import type { Projeto, StatusProjeto, Prioridade } from '@/types'
 
 // tap_versoes já está em Postgres — nome real da tabela (ver lib/db/drizzle/schema.postgres.ts).
@@ -37,42 +38,50 @@ export const DATA_FIM_EFETIVA_SQL = `${DATA_FIM_EFETIVA_EXPR} AS data_fim_efetiv
 export const ProjetosRepository = {
   // ── Leitura simples ───────────────────────────────────────────────────────
 
-  findById(id: number): Projeto | undefined {
-    return db.queryOne<Projeto>(
-      `SELECT p.*,
-              d.nome AS diretoria_nome, a.nome AS area_nome,
-              u.nome AS gerente_nome, sol.nome AS solicitante_nome
+  async findById(id: number): Promise<Projeto | undefined> {
+    const projeto = db.queryOne<Projeto>(
+      `SELECT p.*, d.nome AS diretoria_nome, a.nome AS area_nome
        FROM projetos p
        LEFT JOIN diretorias d ON d.id = p.diretoria_id
        LEFT JOIN areas a ON a.id = p.area_id
-       LEFT JOIN usuarios u ON u.id = p.gerente_id
-       LEFT JOIN usuarios sol ON sol.id = p.solicitante_id
        WHERE p.id = ? AND p.ativo = 1`,
       [id]
     )
+    if (!projeto) return undefined
+    const ids = [projeto.gerente_id, projeto.solicitante_id].filter((v): v is number => v != null)
+    const nomes = await UsuariosRepository.findNomesPorIds(ids)
+    return {
+      ...projeto,
+      gerente_nome: projeto.gerente_id != null ? nomes.get(projeto.gerente_id)?.nome : undefined,
+      solicitante_nome: projeto.solicitante_id != null ? nomes.get(projeto.solicitante_id)?.nome : undefined,
+    }
   },
 
   /** Full query com DATA_FIM_EFETIVA_SQL e todos os JOINs — usado por buscarProjetoPorId */
-  findByIdComplexo(id: number): Projeto | null {
-    return db.queryOne<Projeto>(
+  async findByIdComplexo(id: number): Promise<Projeto | null> {
+    const projeto = db.queryOne<Projeto>(
       `SELECT p.*,
-              us.nome  as solicitante_nome,
               d.nome   as diretoria_nome,
               a.nome   as area_nome,
-              g.nome   as gerente_nome,
               mp.nome  as motivo_pausa_nome,
-              pmo.nome as pmo_responsavel_nome,
               ${DATA_FIM_EFETIVA_SQL}
        FROM projetos p
-       LEFT JOIN usuarios us  ON p.solicitante_id    = us.id
        LEFT JOIN diretorias d ON p.diretoria_id       = d.id
        LEFT JOIN areas a      ON p.area_id            = a.id
-       LEFT JOIN usuarios g   ON p.gerente_id         = g.id
        LEFT JOIN config_motivos_pausa mp ON p.motivo_pausa_id = mp.id
-       LEFT JOIN usuarios pmo ON p.pmo_responsavel_id = pmo.id
        WHERE p.id = ? AND p.ativo = 1`,
       [id]
-    ) ?? null
+    )
+    if (!projeto) return null
+    const ids = [projeto.solicitante_id, projeto.gerente_id, projeto.pmo_responsavel_id]
+      .filter((v): v is number => v != null)
+    const nomes = await UsuariosRepository.findNomesPorIds(ids)
+    return {
+      ...projeto,
+      solicitante_nome: projeto.solicitante_id != null ? nomes.get(projeto.solicitante_id)?.nome : undefined,
+      gerente_nome: projeto.gerente_id != null ? nomes.get(projeto.gerente_id)?.nome : undefined,
+      pmo_responsavel_nome: projeto.pmo_responsavel_id != null ? nomes.get(projeto.pmo_responsavel_id)?.nome : undefined,
+    }
   },
 
   findByCodigo(codigo: string): Projeto | undefined {
@@ -86,7 +95,9 @@ export const ProjetosRepository = {
     )
   },
 
-  findAll(filtros: ProjetoFiltros = {}): Projeto[] {
+  // Sem callers hoje (`grep -rn "ProjetosRepository.findAll("` não encontrou uso) —
+  // convertida por consistência, com menos rigor de teste (mesmo critério das fatias 2/3).
+  async findAll(filtros: ProjetoFiltros = {}): Promise<Projeto[]> {
     const conditions: string[] = ['p.ativo = 1']
     const params: unknown[] = []
 
@@ -102,18 +113,22 @@ export const ProjetosRepository = {
     const limit = filtros.limit ? `LIMIT ${filtros.limit}` : ''
     const offset = filtros.offset ? `OFFSET ${filtros.offset}` : ''
 
-    return db.queryMany<Projeto>(
-      `SELECT p.*, d.nome AS diretoria_nome, a.nome AS area_nome,
-              u.nome AS gerente_nome
+    const projetos = db.queryMany<Projeto>(
+      `SELECT p.*, d.nome AS diretoria_nome, a.nome AS area_nome
        FROM projetos p
        LEFT JOIN diretorias d ON d.id = p.diretoria_id
        LEFT JOIN areas a ON a.id = p.area_id
-       LEFT JOIN usuarios u ON u.id = p.gerente_id
        WHERE ${where}
        ORDER BY p.updated_at DESC
        ${limit} ${offset}`,
       params
     )
+    const ids = [...new Set(projetos.map(p => p.gerente_id).filter((v): v is number => v != null))]
+    const nomes = await UsuariosRepository.findNomesPorIds(ids)
+    return projetos.map(p => ({
+      ...p,
+      gerente_nome: p.gerente_id != null ? nomes.get(p.gerente_id)?.nome : undefined,
+    }))
   },
 
   /** Usado por buscarProjetos — full query com named params para visibilidade */
@@ -126,12 +141,9 @@ export const ProjetosRepository = {
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
     const projetos = db.queryMany<Projeto & { tem_revisao_pendente: number }>(
       `SELECT p.*,
-              us.nome  as solicitante_nome,
               d.nome   as diretoria_nome,
               a.nome   as area_nome,
-              g.nome   as gerente_nome,
               mp.nome  as motivo_pausa_nome,
-              pmo.nome as pmo_responsavel_nome,
               CASE WHEN EXISTS (SELECT 1 FROM cronogramas c WHERE c.projeto_id = p.id AND c.ativo = 1 AND c.status = 'APROVADO') THEN 1 ELSE 0 END AS has_cronograma,
               CASE WHEN EXISTS (
                 SELECT 1 FROM aprovacoes apr
@@ -146,12 +158,9 @@ export const ProjetosRepository = {
                AND ct.percentual < 100 AND ct.data_fim IS NOT NULL AND ct.data_fim < date('now')) AS tarefas_atrasadas,
               ${DATA_FIM_EFETIVA_SQL}
        FROM projetos p
-       LEFT JOIN usuarios us  ON p.solicitante_id    = us.id
        LEFT JOIN diretorias d ON p.diretoria_id       = d.id
        LEFT JOIN areas a      ON p.area_id            = a.id
-       LEFT JOIN usuarios g   ON p.gerente_id         = g.id
        LEFT JOIN config_motivos_pausa mp ON p.motivo_pausa_id = mp.id
-       LEFT JOIN usuarios pmo ON p.pmo_responsavel_id = pmo.id
        ${where}
        ORDER BY
          CASE p.prioridade WHEN 'ALTA' THEN 1 WHEN 'MEDIA' THEN 2 ELSE 3 END,
@@ -177,9 +186,15 @@ export const ProjetosRepository = {
       const aprovacoesTap = aprovacoesRejeitadas.filter(a => a.tipo === 'TAP')
       const aprovacoesVib = aprovacoesRejeitadas.filter(a => a.tipo === 'VIABILIDADE')
 
-      const [rascunhoTapIds, rascunhoVibIds] = await Promise.all([
+      const usuarioIds = [...new Set(
+        projetos.flatMap(p => [p.solicitante_id, p.gerente_id, p.pmo_responsavel_id])
+          .filter((v): v is number => v != null)
+      )]
+
+      const [rascunhoTapIds, rascunhoVibIds, nomes] = await Promise.all([
         TapRepository.findRascunhoIds(aprovacoesTap.map(a => a.referencia_id)),
         ViabilidadeRepository.findRascunhoIds(aprovacoesVib.map(a => a.referencia_id)),
+        UsuariosRepository.findNomesPorIds(usuarioIds),
       ])
       const rascunhoTap = new Set(rascunhoTapIds)
       const rascunhoVib = new Set(rascunhoVibIds)
@@ -190,6 +205,9 @@ export const ProjetosRepository = {
       ])
       for (const p of projetos) {
         if (projetosComRevisao.has(p.id)) p.tem_revisao_pendente = 1
+        p.solicitante_nome = p.solicitante_id != null ? nomes.get(p.solicitante_id)?.nome : undefined
+        p.gerente_nome = p.gerente_id != null ? nomes.get(p.gerente_id)?.nome : undefined
+        p.pmo_responsavel_nome = p.pmo_responsavel_id != null ? nomes.get(p.pmo_responsavel_id)?.nome : undefined
       }
     }
 
@@ -359,15 +377,17 @@ export const ProjetosRepository = {
     )
   },
 
-  findStatusHistoricoComplexo(projetoId: number) {
-    return db.queryMany(
-      `SELECT h.*, u.nome as usuario_nome
-       FROM projeto_status_historico h
-       LEFT JOIN usuarios u ON h.usuario_id = u.id
-       WHERE h.projeto_id = ?
-       ORDER BY h.created_at DESC`,
+  async findStatusHistoricoComplexo(projetoId: number) {
+    const rows = db.queryMany<{ usuario_id: number | null; [key: string]: unknown }>(
+      `SELECT * FROM projeto_status_historico WHERE projeto_id = ? ORDER BY created_at DESC`,
       [projetoId]
     )
+    const ids = [...new Set(rows.map(r => r.usuario_id).filter((v): v is number => v != null))]
+    const nomes = await UsuariosRepository.findNomesPorIds(ids)
+    return rows.map(r => ({
+      ...r,
+      usuario_nome: r.usuario_id != null ? nomes.get(r.usuario_id)?.nome ?? null : null,
+    }))
   },
 
   insertStatusHistorico(projetoId: number, statusDe: string, statusPara: string, motivo: string | null, usuarioId: number) {
@@ -379,15 +399,17 @@ export const ProjetosRepository = {
 
   // ── Histórico de prioridade ───────────────────────────────────────────────
 
-  findHistoricoPrioridade(projetoId: number) {
-    return db.queryMany(
-      `SELECT h.*, u.nome as usuario_nome
-       FROM projeto_prioridade_historico h
-       LEFT JOIN usuarios u ON h.usuario_id = u.id
-       WHERE h.projeto_id = ?
-       ORDER BY h.created_at DESC`,
+  async findHistoricoPrioridade(projetoId: number) {
+    const rows = db.queryMany<{ usuario_id: number | null; [key: string]: unknown }>(
+      `SELECT * FROM projeto_prioridade_historico WHERE projeto_id = ? ORDER BY created_at DESC`,
       [projetoId]
     )
+    const ids = [...new Set(rows.map(r => r.usuario_id).filter((v): v is number => v != null))]
+    const nomes = await UsuariosRepository.findNomesPorIds(ids)
+    return rows.map(r => ({
+      ...r,
+      usuario_nome: r.usuario_id != null ? nomes.get(r.usuario_id)?.nome ?? null : null,
+    }))
   },
 
   insertPrioridadeHistorico(params: {
@@ -523,8 +545,9 @@ export const ProjetosRepository = {
 
   // ── Helpers para concluirProjeto ──────────────────────────────────────────
 
-  findNomeUsuario(id: number): string | undefined {
-    return db.queryOne<{ nome: string }>('SELECT nome FROM usuarios WHERE id = ?', [id])?.nome
+  async findNomeUsuario(id: number): Promise<string | undefined> {
+    const nomes = await UsuariosRepository.findNomesPorIds([id])
+    return nomes.get(id)?.nome
   },
 
   findCronogramaLatest(projeto_id: number): { id: number; status: string } | undefined {

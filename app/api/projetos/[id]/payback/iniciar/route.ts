@@ -13,7 +13,7 @@ export async function POST(
   }
   const { id } = await params
   try {
-    iniciarPayback(Number(id), session.id, session.nome)
+    await iniciarPayback(Number(id), session.id, session.nome)
     return NextResponse.json({ ok: true })
   } catch (e: unknown) {
     return NextResponse.json(

@@ -13,10 +13,10 @@ export async function GET(request: NextRequest, { params }: Params) {
   const comiteId = parseInt(id)
   if (isNaN(comiteId)) return NextResponse.json({ error: 'ID inválido.' }, { status: 400 })
 
-  const comite = ComitesRepository.findById(comiteId)
+  const comite = await ComitesRepository.findById(comiteId)
   if (!comite) return NextResponse.json({ error: 'Comitê não encontrado.' }, { status: 404 })
 
-  const participantes = ComitesRepository.findParticipantes(comiteId)
+  const participantes = await ComitesRepository.findParticipantes(comiteId)
   const comiteProjetos = ComitesRepository.findProjetosByComiteId(comiteId)
   const decisoes = ComitesRepository.findDecisoesByComiteId(comiteId)
   const pendencias = ComitesRepository.findPendenciasByComiteId(comiteId)

@@ -32,7 +32,7 @@ export async function POST(
     return NextResponse.json({ error: 'Todas as etapas devem ter usuário e tipo preenchidos.' }, { status: 400 })
   }
 
-  const cronograma = CronogramaRepository.findByIdAndProjetoId(Number(cronogramaId), Number(projetoId)) as Record<string, unknown> | undefined
+  const cronograma = await CronogramaRepository.findByIdAndProjetoId(Number(cronogramaId), Number(projetoId)) as Record<string, unknown> | undefined
 
   if (!cronograma) return NextResponse.json({ error: 'Cronograma não encontrado.' }, { status: 404 })
   if (cronograma.status !== 'RASCUNHO') {

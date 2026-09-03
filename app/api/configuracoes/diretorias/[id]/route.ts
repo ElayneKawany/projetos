@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
 import getDb from '@/lib/db'
+import { asyncDb } from '@/lib/database'
 import { registrarAuditoria } from '@/lib/db/auditoria'
 import { apiLogger } from '@/lib/logger'
+
+const T_USUARIOS = '"AI"."TI_PMO_USUARIOS"'
 
 export async function PATCH(
   request: NextRequest,
@@ -47,7 +50,16 @@ export async function PATCH(
   if (body.diretor_responsavel_id !== undefined) {
     const dirId2 = body.diretor_responsavel_id ? Number(body.diretor_responsavel_id) : null
     if (dirId2) {
-      const dir = db.prepare("SELECT id FROM usuarios WHERE id = ? AND ativo = 1 AND perfil_id = (SELECT id FROM perfis WHERE codigo = 'DIRETOR')").get(dirId2)
+      // `perfis` continua em SQLite; `usuarios` já está em Postgres — resolve o
+      // perfil DIRETOR primeiro e depois confere o usuário (duas consultas em
+      // vez da subquery única, mesmo padrão de lib/repositories/usuarios.ts).
+      const perfilDiretor = db.prepare("SELECT id FROM perfis WHERE codigo = 'DIRETOR'").get() as { id: number } | undefined
+      const dir = perfilDiretor
+        ? await asyncDb.queryOne<{ id: number }>(
+            `SELECT id FROM ${T_USUARIOS} WHERE id = ? AND ativo = true AND perfil_id = ?`,
+            [dirId2, perfilDiretor.id]
+          )
+        : undefined
       if (!dir) return NextResponse.json({ error: 'Diretor responsável inválido. O usuário deve estar ativo e ter perfil DIRETOR.' }, { status: 422 })
     }
     updates.push('diretor_responsavel_id = @diretor_responsavel_id')
@@ -104,7 +116,11 @@ export async function DELETE(
   const areas = (db.prepare('SELECT COUNT(*) as c FROM areas WHERE diretoria_id = ?').get(dirId) as { c: number }).c
   if (areas > 0) impedimentos.push(`${areas} área${areas > 1 ? 's' : ''} vinculada${areas > 1 ? 's' : ''}`)
 
-  const usuarios = (db.prepare('SELECT COUNT(*) as c FROM usuarios WHERE diretoria_id = ? AND ativo = 1').get(dirId) as { c: number }).c
+  const usuariosRow = await asyncDb.queryOne<{ c: number }>(
+    `SELECT COUNT(*) as c FROM ${T_USUARIOS} WHERE diretoria_id = ? AND ativo = true`,
+    [dirId]
+  )
+  const usuarios = Number(usuariosRow?.c ?? 0)
   if (usuarios > 0) impedimentos.push(`${usuarios} usuário${usuarios > 1 ? 's' : ''} vinculado${usuarios > 1 ? 's' : ''}`)
 
   if (impedimentos.length > 0) {

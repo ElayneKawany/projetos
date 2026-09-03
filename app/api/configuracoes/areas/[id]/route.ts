@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
 import getDb from '@/lib/db'
+import { asyncDb } from '@/lib/database'
 import { registrarAuditoria } from '@/lib/db/auditoria'
+
+const T_USUARIOS = '"AI"."TI_PMO_USUARIOS"'
 
 export async function PATCH(
   request: NextRequest,
@@ -101,8 +104,11 @@ export async function DELETE(
     }, { status: 422 })
   }
 
-  const usuariosVinculados = db.prepare('SELECT COUNT(*) as c FROM usuarios WHERE area_id = ? AND ativo = 1').get(areaId) as { c: number }
-  if (usuariosVinculados.c > 0) {
+  const usuariosVinculados = await asyncDb.queryOne<{ c: number }>(
+    `SELECT COUNT(*) as c FROM ${T_USUARIOS} WHERE area_id = ? AND ativo = true`,
+    [areaId]
+  )
+  if (Number(usuariosVinculados?.c ?? 0) > 0) {
     return NextResponse.json({
       error: 'Existem registros vinculados a esta área. A exclusão não é permitida.',
       pode_inativar: true,

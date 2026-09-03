@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
 import getDb from '@/lib/db'
 import { registrarAuditoria } from '@/lib/db/auditoria'
+import { UsuariosRepository } from '@/lib/repositories'
 
 export async function GET(
   request: NextRequest,
@@ -12,16 +13,20 @@ export async function GET(
   const { id } = await params
   const db = getDb()
   const aprovacao = db.prepare(`
-    SELECT a.*, p.codigo as projeto_codigo, p.nome as projeto_nome,
-           s.nome as solicitante_nome, ap.nome as aprovador_nome
+    SELECT a.*, p.codigo as projeto_codigo, p.nome as projeto_nome
     FROM aprovacoes a
     LEFT JOIN projetos p ON a.projeto_id = p.id
-    LEFT JOIN usuarios s ON a.solicitante_id = s.id
-    LEFT JOIN usuarios ap ON a.aprovador_id = ap.id
     WHERE a.id = ?
-  `).get(Number(id))
+  `).get(Number(id)) as (Record<string, unknown> & { solicitante_id: number | null; aprovador_id: number | null }) | undefined
   if (!aprovacao) return NextResponse.json({ error: 'Não encontrado.' }, { status: 404 })
-  return NextResponse.json({ aprovacao })
+  const ids = [aprovacao.solicitante_id, aprovacao.aprovador_id].filter((v): v is number => v != null)
+  const nomes = await UsuariosRepository.findNomesPorIds(ids)
+  const aprovacaoComNomes = {
+    ...aprovacao,
+    solicitante_nome: aprovacao.solicitante_id != null ? nomes.get(aprovacao.solicitante_id)?.nome ?? null : null,
+    aprovador_nome: aprovacao.aprovador_id != null ? nomes.get(aprovacao.aprovador_id)?.nome ?? null : null,
+  }
+  return NextResponse.json({ aprovacao: aprovacaoComNomes })
 }
 
 export async function PATCH(

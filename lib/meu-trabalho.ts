@@ -17,6 +17,7 @@ import getDb from './db'
 import { asyncDb } from './database'
 import type { SessionUser } from './auth'
 import { CronogramaRepository } from './repositories/cronograma'
+import { UsuariosRepository } from './repositories/usuarios'
 import { diasUteisEntre } from './utils/dias-uteis'
 
 // ─── Interfaces ───────────────────────────────────────────────────────────────
@@ -243,8 +244,11 @@ export async function buscarMeusDocumentos(
   const db = getDb()
   const docs: DocumentoResumo[] = []
 
-  // TAPs
-  const taps = db.prepare(`
+  // TAPs — bug pré-existente não corrigido aqui (fora de escopo): `FROM tap` referencia
+  // uma tabela que não existe (a real é `tap_versoes`), então este bloco nunca retorna
+  // linhas. O JOIN com usuarios abaixo também nunca executa de verdade — convertido só
+  // por consistência, sem rigor de teste.
+  const tapsRaw = db.prepare(`
     SELECT
       t.id,
       t.projeto_id,
@@ -252,11 +256,10 @@ export async function buscarMeusDocumentos(
       'TAP'  AS tipo,
       t.versao,
       t.status,
-      u.nome AS criado_por_nome,
+      t.criado_por,
       t.created_at
     FROM tap t
     JOIN projetos p ON p.id = t.projeto_id
-    LEFT JOIN usuarios u ON u.id = t.criado_por
     WHERE t.criado_por = @uid
        OR EXISTS (
          SELECT 1 FROM workflow_aprovacao wa
@@ -266,7 +269,13 @@ export async function buscarMeusDocumentos(
        )
     ORDER BY t.created_at DESC
     LIMIT @lim
-  `).all({ uid: usuarioId, lim: limit }) as DocumentoResumo[]
+  `).all({ uid: usuarioId, lim: limit }) as Array<Omit<DocumentoResumo, 'criado_por_nome'> & { criado_por: number | null }>
+  const tapNomeIds = [...new Set(tapsRaw.map(t => t.criado_por).filter((v): v is number => v != null))]
+  const tapNomes = await UsuariosRepository.findNomesPorIds(tapNomeIds)
+  const taps = tapsRaw.map(t => ({
+    ...t,
+    criado_por_nome: t.criado_por != null ? tapNomes.get(t.criado_por)?.nome ?? null : null,
+  })) as unknown as DocumentoResumo[]
   docs.push(...taps)
 
   // Estudos de Viabilidade — já em Postgres. Busca no SQLite os ids de viabilidade
@@ -299,11 +308,10 @@ export async function buscarMeusDocumentos(
         `SELECT id, nome FROM projetos WHERE id IN (${projetoIds.map(() => '?').join(',')})`
       ).all(...projetoIds) as { id: number; nome: string }[]).map(p => [p.id, p.nome] as const))
     : new Map<number, string>()
-  const nomesUsuario = usuarioIds.length
-    ? new Map((db.prepare(
-        `SELECT id, nome FROM usuarios WHERE id IN (${usuarioIds.map(() => '?').join(',')})`
-      ).all(...usuarioIds) as { id: number; nome: string }[]).map(u => [u.id, u.nome] as const))
-    : new Map<number, string>()
+  const nomesUsuarioMap = await UsuariosRepository.findNomesPorIds(usuarioIds)
+  const nomesUsuario = new Map(
+    [...nomesUsuarioMap.entries()].map(([id, v]) => [id, v.nome] as const)
+  )
 
   const viabs = viabsRaw.map(v => ({
     id: v.id,
@@ -318,7 +326,7 @@ export async function buscarMeusDocumentos(
   docs.push(...viabs)
 
   // Cronogramas
-  const crons = db.prepare(`
+  const cronsRaw = db.prepare(`
     SELECT
       cr.id,
       cr.projeto_id,
@@ -326,11 +334,10 @@ export async function buscarMeusDocumentos(
       'CRONOGRAMA'   AS tipo,
       cr.versao,
       cr.status,
-      u.nome         AS criado_por_nome,
+      cr.criado_por,
       cr.created_at
     FROM cronogramas cr
     JOIN projetos p ON p.id = cr.projeto_id
-    LEFT JOIN usuarios u ON u.id = cr.criado_por
     WHERE cr.criado_por = @uid
        OR EXISTS (
          SELECT 1 FROM workflow_aprovacao wa
@@ -340,7 +347,13 @@ export async function buscarMeusDocumentos(
        )
     ORDER BY cr.created_at DESC
     LIMIT @lim
-  `).all({ uid: usuarioId, lim: limit }) as DocumentoResumo[]
+  `).all({ uid: usuarioId, lim: limit }) as Array<Omit<DocumentoResumo, 'criado_por_nome'> & { criado_por: number | null }>
+  const cronNomeIds = [...new Set(cronsRaw.map(c => c.criado_por).filter((v): v is number => v != null))]
+  const cronNomes = await UsuariosRepository.findNomesPorIds(cronNomeIds)
+  const crons = cronsRaw.map(c => ({
+    ...c,
+    criado_por_nome: c.criado_por != null ? cronNomes.get(c.criado_por)?.nome ?? null : null,
+  })) as unknown as DocumentoResumo[]
   docs.push(...crons)
 
   // Ordena por data decrescente e limita ao total
@@ -369,9 +382,13 @@ export interface IndicadoresCronograma {
 /**
  * Computa indicadores de cronograma para o dashboard de um projeto.
  *
+ * Sem callers hoje (`grep -rn "indicadoresCronograma("` não encontrou uso) —
+ * convertida por consistência, com menos rigor de teste (mesmo critério das
+ * demais fatias desta migração).
+ *
  * @param projetoId - ID do projeto
  */
-export function indicadoresCronograma(projetoId: number): IndicadoresCronograma {
+export async function indicadoresCronograma(projetoId: number): Promise<IndicadoresCronograma> {
   const db = getDb()
 
   const cron = CronogramaRepository.findCronogramaVigente(projetoId)
@@ -383,20 +400,23 @@ export function indicadoresCronograma(projetoId: number): IndicadoresCronograma 
     }
   }
 
-  const tarefas = db.prepare(`
-    SELECT ct.*, u.nome AS responsavel_nome
-    FROM cronograma_tarefas ct
-    LEFT JOIN usuarios u ON u.id = ct.responsavel_id
-    WHERE ct.cronograma_id = ? AND ct.nivel = 'TAREFA' AND (ct.ativo IS NULL OR ct.ativo = 1)
+  const tarefasRaw = db.prepare(`
+    SELECT * FROM cronograma_tarefas
+    WHERE cronograma_id = ? AND nivel = 'TAREFA' AND (ativo IS NULL OR ativo = 1)
   `).all(cron.id) as Array<{
     id: number
     responsavel_id: number | null
-    responsavel_nome: string | null
     status: string | null
     criticidade: string | null
     data_fim: string | null
     percentual: number | null
   }>
+  const respIds = [...new Set(tarefasRaw.map(t => t.responsavel_id).filter((v): v is number => v != null))]
+  const respNomes = await UsuariosRepository.findNomesPorIds(respIds)
+  const tarefas = tarefasRaw.map(t => ({
+    ...t,
+    responsavel_nome: t.responsavel_id != null ? respNomes.get(t.responsavel_id)?.nome ?? null : null,
+  }))
 
   const hoje = new Date().toISOString().slice(0, 10)
 
@@ -482,10 +502,10 @@ const CRONOGRAMA_STATUS_APROVADO = ['APROVADO', 'EM_EXECUCAO', 'PRONTO_PARA_ENCE
  * têm limite inferior — sempre entram). Cada chamador aplica o corte fino
  * (dias corridos ou dias úteis) em JS sobre o resultado.
  */
-function buscarTarefasCronogramaJanela(
+async function buscarTarefasCronogramaJanela(
   session: SessionUser,
   janelaDiasCorridos: number
-): ProximaTarefaItem[] {
+): Promise<ProximaTarefaItem[]> {
   const db = getDb()
 
   const wheres: string[] = [
@@ -545,13 +565,12 @@ function buscarTarefasCronogramaJanela(
       d.nome           AS diretoria_nome,
       ct.nivel,
       ct.nome,
-      COALESCE(ur.nome, ct.responsavel_nome_ext, (
-        SELECT COALESCE(u2.nome, cr2.usuario_nome_ext)
-        FROM cronograma_responsaveis cr2
-        LEFT JOIN usuarios u2 ON u2.id = cr2.usuario_id
-        WHERE cr2.cronograma_tarefa_id = ct.id
-        ORDER BY cr2.id ASC LIMIT 1
-      ))              AS responsavel_nome,
+      ct.responsavel_id,
+      ct.responsavel_nome_ext,
+      (SELECT cr2.usuario_id FROM cronograma_responsaveis cr2
+        WHERE cr2.cronograma_tarefa_id = ct.id ORDER BY cr2.id ASC LIMIT 1) AS fallback_usuario_id,
+      (SELECT cr2.usuario_nome_ext FROM cronograma_responsaveis cr2
+        WHERE cr2.cronograma_tarefa_id = ct.id ORDER BY cr2.id ASC LIMIT 1) AS fallback_usuario_nome_ext,
       ct.data_inicio,
       ct.data_fim,
       ct.status,
@@ -560,7 +579,6 @@ function buscarTarefasCronogramaJanela(
     JOIN cronograma_atual ca ON ca.cronograma_id = ct.cronograma_id
     JOIN projetos p          ON p.id = ca.projeto_id
     LEFT JOIN diretorias d   ON d.id = p.diretoria_id
-    LEFT JOIN usuarios ur    ON ur.id = ct.responsavel_id
     WHERE ${wheres.join(' AND ')}
     ORDER BY ct.data_fim ASC
   `).all(params) as Array<{
@@ -571,16 +589,34 @@ function buscarTarefasCronogramaJanela(
     diretoria_nome: string | null
     nivel: string
     nome: string
-    responsavel_nome: string | null
+    responsavel_id: number | null
+    responsavel_nome_ext: string | null
+    fallback_usuario_id: number | null
+    fallback_usuario_nome_ext: string | null
     data_inicio: string | null
     data_fim: string
     status: string | null
     observacoes: string | null
   }>
 
+  // usuarios já está em Postgres — resolve os nomes (responsável direto da tarefa
+  // e o fallback via cronograma_responsaveis) em lote, na mesma ordem de prioridade
+  // do COALESCE original: nome do responsável direto > nome_ext da tarefa > nome do
+  // primeiro cronograma_responsaveis > nome_ext desse responsável.
+  const nomeIds = [...new Set(
+    rows.flatMap(r => [r.responsavel_id, r.fallback_usuario_id]).filter((v): v is number => v != null)
+  )]
+  const nomes = await UsuariosRepository.findNomesPorIds(nomeIds)
+
   const hoje = new Date().toISOString().slice(0, 10)
 
   return rows.map(r => {
+    const responsavel_nome =
+      (r.responsavel_id != null ? nomes.get(r.responsavel_id)?.nome : undefined)
+      ?? r.responsavel_nome_ext
+      ?? (r.fallback_usuario_id != null ? nomes.get(r.fallback_usuario_id)?.nome : undefined)
+      ?? r.fallback_usuario_nome_ext
+      ?? null
     const situacao: ProximaTarefaItem['situacao'] =
       r.data_fim < hoje ? 'ATRASADA' : r.data_fim === hoje ? 'VENCE_HOJE' : 'PROXIMA'
     const dias = Math.round(
@@ -594,7 +630,7 @@ function buscarTarefasCronogramaJanela(
       diretoria_nome: r.diretoria_nome,
       nivel: r.nivel as ProximaTarefaItem['nivel'],
       nome: r.nome,
-      responsavel_nome: r.responsavel_nome,
+      responsavel_nome,
       data_inicio: r.data_inicio,
       data_fim: r.data_fim,
       dias,
@@ -611,11 +647,11 @@ function buscarTarefasCronogramaJanela(
  * inalterado (dias corridos, não úteis) — ver `buscarTarefasCronogramaJanela`
  * para a regra de permissão/fonte compartilhada com os painéis do Dashboard.
  */
-export function buscarProximasTarefasDashboard(
+export async function buscarProximasTarefasDashboard(
   session: SessionUser,
   opts?: { limit?: number }
-): { total: number; itens: ProximaTarefaItem[] } {
-  const itensCompletos = buscarTarefasCronogramaJanela(session, 7)
+): Promise<{ total: number; itens: ProximaTarefaItem[] }> {
+  const itensCompletos = await buscarTarefasCronogramaJanela(session, 7)
   const total = itensCompletos.length
   const itens = opts?.limit ? itensCompletos.slice(0, opts.limit) : itensCompletos
   return { total, itens }
@@ -626,15 +662,15 @@ export function buscarProximasTarefasDashboard(
  * hoje (sempre incluídas — ordenação por data_fim já as coloca primeiro) ou
  * faltam de 1 a 7 dias ÚTEIS para vencer. Atrasadas nunca entram aqui.
  */
-export function buscarTarefasProximasVencimento(
+export async function buscarTarefasProximasVencimento(
   session: SessionUser,
   opts?: { limit?: number }
-): { total: number; itens: ProximaTarefaItem[] } {
+): Promise<{ total: number; itens: ProximaTarefaItem[] }> {
   // Janela generosa em dias corridos (7 dias úteis cabem em até 9 dias
   // corridos considerando um fim de semana no meio) — o corte exato é feito
   // abaixo, em dias úteis.
   const hoje = new Date(); hoje.setHours(0, 0, 0, 0)
-  const todas = buscarTarefasCronogramaJanela(session, 9)
+  const todas = await buscarTarefasCronogramaJanela(session, 9)
 
   const itensCompletos = todas.filter(t => {
     if (t.situacao === 'VENCE_HOJE') return true
@@ -671,10 +707,10 @@ export interface ResponsavelAtrasos {
  * atrasada de vencimento mais antigo — o "primeiro impedimento" do projeto),
  * agrupado por responsável. Não repete várias tarefas do mesmo projeto.
  */
-export function buscarTarefasAtrasadas(
+export async function buscarTarefasAtrasadas(
   session: SessionUser
-): { total_projetos: number; porResponsavel: ResponsavelAtrasos[] } {
-  const atrasadas = buscarTarefasCronogramaJanela(session, 0)
+): Promise<{ total_projetos: number; porResponsavel: ResponsavelAtrasos[] }> {
+  const atrasadas = (await buscarTarefasCronogramaJanela(session, 0))
     .filter(t => t.situacao === 'ATRASADA')
 
   // Uma por projeto: a de menor data_fim (mais antiga = primeiro impedimento).

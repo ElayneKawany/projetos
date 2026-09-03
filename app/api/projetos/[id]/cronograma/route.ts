@@ -84,18 +84,18 @@ export async function GET(
     let cronograma
 
     if (cronogramaIdParam) {
-      cronograma = CronogramaRepository.findByIdAndProjetoId(Number(cronogramaIdParam), projetoId)
+      cronograma = await CronogramaRepository.findByIdAndProjetoId(Number(cronogramaIdParam), projetoId)
     } else {
-      cronograma = CronogramaRepository.findLatestByProjectId(projetoId)
+      cronograma = await CronogramaRepository.findLatestByProjectId(projetoId)
     }
 
     if (!cronograma) return NextResponse.json({ cronograma: null, tarefas: [], versoes })
 
     const cronogramaId = cronograma.id
 
-    const tarefas = CronogramaRepository.findTasks(cronogramaId) as unknown as Record<string, unknown>[]
+    const tarefas = await CronogramaRepository.findTasks(cronogramaId) as unknown as Record<string, unknown>[]
 
-    const respRows = CronogramaRepository.findResponsaveisForCronograma(cronogramaId)
+    const respRows = await CronogramaRepository.findResponsaveisForCronograma(cronogramaId)
 
     const respMap = new Map<number, { id?: number; nome: string }[]>()
     for (const r of respRows) {
@@ -115,7 +115,7 @@ export async function GET(
       .map(t => t.id)
     if (tarefasPagamentoIds.length > 0) {
       const headers  = CronogramaRepository.findPagamentoHeaderByTarefaIds(tarefasPagamentoIds)
-      const parcelas = CronogramaRepository.findParcelasByTarefaIds(tarefasPagamentoIds)
+      const parcelas = await CronogramaRepository.findParcelasByTarefaIds(tarefasPagamentoIds)
       for (const t of tarefasComResp) {
         const header = headers.find(h => h.cronograma_tarefa_id === t.id)
         if (!header) continue
@@ -184,7 +184,7 @@ export async function POST(
       let resultado
       try {
         const buffer = await file.arrayBuffer()
-        const usuarios = CronogramaRepository.findUsuariosAtivos()
+        const usuarios = await CronogramaRepository.findUsuariosAtivos()
         resultado = parsearExcelCronograma(buffer, usuarios, { defaultResponsavelId })
       } catch (e: unknown) {
         return NextResponse.json(
@@ -264,7 +264,7 @@ export async function POST(
     const wbsCodes = calcularWBS(tarefas)
 
     // Lookup map: nome → id (case-insensitive, partial match)
-    const usuariosMap = CronogramaRepository.findUsuariosAtivos()
+    const usuariosMap = await CronogramaRepository.findUsuariosAtivos()
     function resolveUserId(nome: string): number | null {
       const q = nome.trim().toLowerCase()
       const exato = usuariosMap.find(u => u.nome.toLowerCase() === q)

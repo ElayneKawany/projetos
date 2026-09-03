@@ -70,7 +70,7 @@ export async function POST(
       acao: 'APPROVE',
     })
 
-    const projeto = buscarProjetoPorId(Number(projetoId))
+    const projeto = await buscarProjetoPorId(Number(projetoId))
     if (projeto && !statusJaAvancou(projeto.status, 'VIABILIDADE')) {
       await atualizarStatusProjeto(
         Number(projetoId),

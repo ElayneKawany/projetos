@@ -1,6 +1,8 @@
 import { notFound } from 'next/navigation'
 import { getSession } from '@/lib/auth'
 import getDb from '@/lib/db'
+import { asyncDb } from '@/lib/database'
+import { UsuariosRepository } from '@/lib/repositories'
 import ComiteDetalheClient from './ComiteDetalheClient'
 import { DEV2026_ATIVIDADES } from '@/lib/ti/dev2026-data'
 import { DATA_FIM_EFETIVA_SQL } from '@/lib/repositories/projetos'
@@ -14,15 +16,24 @@ export default async function ComiteDetalhePage({ params }: { params: Promise<{ 
   if (!session) notFound()
 
   const db = getDb()
-  const comite = db.prepare('SELECT c.*, u.nome AS criador_nome FROM comites c LEFT JOIN usuarios u ON u.id = c.created_by WHERE c.id = ?').get(comiteId)
-  if (!comite) notFound()
+  const comiteRaw = db.prepare('SELECT * FROM comites WHERE id = ?').get(comiteId) as (Record<string, unknown> & { created_by: number | null }) | undefined
+  if (!comiteRaw) notFound()
+  const criadorNomes = await UsuariosRepository.findNomesPorIds(comiteRaw.created_by != null ? [comiteRaw.created_by] : [])
+  const comite = {
+    ...comiteRaw,
+    criador_nome: comiteRaw.created_by != null ? criadorNomes.get(comiteRaw.created_by)?.nome ?? null : null,
+  }
 
-  const participantes = db.prepare(`
-    SELECT cp.*, COALESCE(u.nome, cp.nome_externo) AS nome_exibicao, u.cargo AS usuario_cargo
-    FROM comite_participantes cp
-    LEFT JOIN usuarios u ON u.id = cp.usuario_id
-    WHERE cp.comite_id = ? ORDER BY cp.id
-  `).all(comiteId)
+  const participantesRaw = db.prepare(`
+    SELECT * FROM comite_participantes WHERE comite_id = ? ORDER BY id
+  `).all(comiteId) as (Record<string, unknown> & { usuario_id: number | null; nome_externo: string | null })[]
+  const partIds = [...new Set(participantesRaw.map(p => p.usuario_id).filter((v): v is number => v != null))]
+  const partNomes = await UsuariosRepository.findNomesPorIds(partIds)
+  const participantes = participantesRaw.map(p => ({
+    ...p,
+    nome_exibicao: (p.usuario_id != null ? partNomes.get(p.usuario_id)?.nome : undefined) ?? p.nome_externo,
+    usuario_cargo: p.usuario_id != null ? partNomes.get(p.usuario_id)?.cargo ?? null : null,
+  }))
 
   const comiteProjetos = db.prepare(`
     SELECT cp.*, p.codigo AS projeto_codigo, p.nome AS projeto_nome,
@@ -54,30 +65,35 @@ export default async function ComiteDetalhePage({ params }: { params: Promise<{ 
   // Entrega imutável quando o projeto já tem Cronograma aprovado, senão a "Data limite" da
   // macro fase atual (projeto_fase_prazo). Mesma expressão usada pelo Dashboard e pela
   // listagem/detalhe de Projetos — nunca duplicar esse cálculo aqui.
-  const todosProjetos = db.prepare(`
+  const todosProjetosRaw = db.prepare(`
     SELECT p.id, p.codigo, p.nome, p.status, p.prioridade, p.complexidade,
            p.capex_aprovado AS investimento,
            p.data_inicio_prev AS data_inicio_prevista,
            p.data_fim_prev AS data_fim_prevista,
            ${DATA_FIM_EFETIVA_SQL},
            d.nome AS diretoria, a.nome AS area,
-           u.nome AS gerente_nome,
+           p.gerente_id,
            (SELECT tv.roi_previsto FROM tap_versoes tv WHERE tv.projeto_id = p.id ORDER BY tv.versao DESC LIMIT 1) AS roi_previsto
     FROM projetos p
     LEFT JOIN diretorias d ON d.id = p.diretoria_id
     LEFT JOIN areas a ON a.id = p.area_id
-    LEFT JOIN usuarios u ON u.id = p.gerente_id
     WHERE p.ativo = 1
     ORDER BY p.status, p.nome
-  `).all()
+  `).all() as (Record<string, unknown> & { gerente_id: number | null })[]
+  const gerenteIds1 = [...new Set(todosProjetosRaw.map(p => p.gerente_id).filter((v): v is number => v != null))]
+  const gerenteNomes1 = await UsuariosRepository.findNomesPorIds(gerenteIds1)
+  const todosProjetos = todosProjetosRaw.map(p => ({
+    ...p,
+    gerente_nome: p.gerente_id != null ? gerenteNomes1.get(p.gerente_id)?.nome ?? null : null,
+  }))
 
   // Detail data for the Viabilidade slide
-  const projetosViabilidadeDetalhe = db.prepare(`
+  const projetosViabilidadeDetalheRaw = db.prepare(`
     SELECT
       p.id,
       p.objetivo,
       p.descricao,
-      sol.nome AS solicitante_nome,
+      p.solicitante_id,
       tv.situacao_atual,
       v.impacto_operacional AS cenario_atual,
       v.beneficios_esperados,
@@ -87,7 +103,6 @@ export default async function ComiteDetalhePage({ params }: { params: Promise<{ 
       v.opex,
       v.investimento_total
     FROM projetos p
-    LEFT JOIN usuarios sol ON sol.id = p.solicitante_id
     LEFT JOIN (
       SELECT tv2.projeto_id, tv2.situacao_atual
       FROM tap_versoes tv2
@@ -99,13 +114,19 @@ export default async function ComiteDetalhePage({ params }: { params: Promise<{ 
       WHERE v2.versao = (SELECT MAX(v3.versao) FROM viabilidade v3 WHERE v3.projeto_id = v2.projeto_id)
     ) v ON v.projeto_id = p.id
     WHERE p.ativo = 1 AND p.status IN ('VIABILIDADE','COMPLEMENTACAO_TAP','APROVACAO')
-  `).all()
+  `).all() as (Record<string, unknown> & { solicitante_id: number | null })[]
+  const solIds1 = [...new Set(projetosViabilidadeDetalheRaw.map(p => p.solicitante_id).filter((v): v is number => v != null))]
+  const solNomes1 = await UsuariosRepository.findNomesPorIds(solIds1)
+  const projetosViabilidadeDetalhe = projetosViabilidadeDetalheRaw.map(p => ({
+    ...p,
+    solicitante_nome: p.solicitante_id != null ? solNomes1.get(p.solicitante_id)?.nome ?? null : null,
+  }))
 
   // Detail data for the Propostas slide
-  const projetosPropostaDetalhe = db.prepare(`
+  const projetosPropostaDetalheRaw = db.prepare(`
     SELECT
       p.id, p.objetivo, p.beneficios, p.descricao,
-      sol.nome AS solicitante_nome,
+      p.solicitante_id,
       t.beneficios AS triagem_beneficios,
       t.observacoes AS triagem_observacoes,
       t.areas_impactadas AS triagem_areas_json,
@@ -117,17 +138,22 @@ export default async function ComiteDetalhePage({ params }: { params: Promise<{ 
        FROM projeto_areas pa JOIN areas a ON a.id = pa.area_id
        WHERE pa.projeto_id = p.id AND pa.ativo = 1) AS areas_envolvidas
     FROM projetos p
-    LEFT JOIN usuarios sol ON sol.id = p.solicitante_id
     LEFT JOIN triagens t ON t.projeto_id = p.id
     WHERE p.ativo = 1 AND p.status IN ('PROPOSTA','TRIAGEM','COMITE_IDEIAS')
-  `).all()
+  `).all() as (Record<string, unknown> & { solicitante_id: number | null })[]
+  const solIds2 = [...new Set(projetosPropostaDetalheRaw.map(p => p.solicitante_id).filter((v): v is number => v != null))]
+  const solNomes2 = await UsuariosRepository.findNomesPorIds(solIds2)
+  const projetosPropostaDetalhe = projetosPropostaDetalheRaw.map(p => ({
+    ...p,
+    solicitante_nome: p.solicitante_id != null ? solNomes2.get(p.solicitante_id)?.nome ?? null : null,
+  }))
 
   // Detail data for the Em Execução slide
-  const projetosExecucaoDetalhe = db.prepare(`
+  const projetosExecucaoDetalheRaw = db.prepare(`
     SELECT
       p.id, p.codigo, p.nome,
       d.nome AS diretoria, a.nome AS area,
-      u.nome AS gerente_nome,
+      p.gerente_id,
       p.data_inicio_prev, p.data_fim_prev,
       COALESCE(
         (SELECT v.capex FROM viabilidade v WHERE v.projeto_id = p.id ORDER BY v.versao DESC LIMIT 1),
@@ -178,24 +204,28 @@ export default async function ComiteDetalhePage({ params }: { params: Promise<{ 
     FROM projetos p
     LEFT JOIN diretorias d ON d.id = p.diretoria_id
     LEFT JOIN areas a ON a.id = p.area_id
-    LEFT JOIN usuarios u ON u.id = p.gerente_id
     WHERE p.ativo = 1 AND p.status IN ('EXECUCAO', 'GOLIVE')
-  `).all()
+  `).all() as (Record<string, unknown> & { gerente_id: number | null })[]
+  const gerenteIds2 = [...new Set(projetosExecucaoDetalheRaw.map(p => p.gerente_id).filter((v): v is number => v != null))]
+  const gerenteNomes2 = await UsuariosRepository.findNomesPorIds(gerenteIds2)
+  const projetosExecucaoDetalhe = projetosExecucaoDetalheRaw.map(p => ({
+    ...p,
+    gerente_nome: p.gerente_id != null ? gerenteNomes2.get(p.gerente_id)?.nome ?? null : null,
+  }))
 
   // Macro tarefas (FASE + TAREFA direta) from latest active cronograma for each EXECUCAO project
   // TAREFA rows are included so SlideExecucaoDetalhe can expand FASEs that have child tasks
   // Mesmo critério de "cronograma vigente" de CronogramaRepository.findCronogramaVigente:
   // ativo, não arquivado, status aprovado/em execução — nunca um RASCUNHO/PENDENTE_APROVACAO.
-  const macroTarefasExecucao = db.prepare(`
+  const macroTarefasExecucaoRaw = db.prepare(`
     SELECT
       t.id, c.id AS cronograma_id, c.projeto_id, t.nome, t.nivel, t.codigo, t.percentual,
       t.data_inicio, t.data_inicio_baseline, t.data_fim, t.data_fim_baseline, t.data_conclusao,
       t.bloqueio, t.motivo_bloqueio, t.motivo_atraso, t.criticidade,
       t.observacoes, t.prazo_status, t.ordem, t.status,
-      COALESCE(u.nome, t.responsavel_nome_ext) AS responsavel_nome
+      t.responsavel_id, t.responsavel_nome_ext
     FROM cronograma_tarefas t
     JOIN cronogramas c ON c.id = t.cronograma_id
-    LEFT JOIN usuarios u ON u.id = t.responsavel_id
     WHERE (c.ativo IS NULL OR c.ativo = 1)
       AND (c.arquivado IS NULL OR c.arquivado = 0)
       AND c.status IN ('APROVADO', 'EM_EXECUCAO', 'PRONTO_PARA_ENCERRAMENTO', 'ENCERRADO')
@@ -212,9 +242,15 @@ export default async function ComiteDetalhePage({ params }: { params: Promise<{ 
         SELECT id FROM projetos WHERE ativo = 1 AND status IN ('EXECUCAO', 'GOLIVE')
       )
     ORDER BY t.ordem, t.id
-  `).all()
+  `).all() as (Record<string, unknown> & { responsavel_id: number | null; responsavel_nome_ext: string | null })[]
+  const macroNomeIds = [...new Set(macroTarefasExecucaoRaw.map(t => t.responsavel_id).filter((v): v is number => v != null))]
+  const macroNomes = await UsuariosRepository.findNomesPorIds(macroNomeIds)
+  const macroTarefasExecucao = macroTarefasExecucaoRaw.map(t => ({
+    ...t,
+    responsavel_nome: (t.responsavel_id != null ? macroNomes.get(t.responsavel_id)?.nome : undefined) ?? t.responsavel_nome_ext,
+  }))
 
-  const usuarios = db.prepare("SELECT id, nome, cargo FROM usuarios WHERE ativo = 1 ORDER BY nome").all()
+  const usuarios = await asyncDb.queryMany(`SELECT id, nome, cargo FROM "AI"."TI_PMO_USUARIOS" WHERE ativo = true ORDER BY nome`)
   const diretorias = db.prepare("SELECT id, nome FROM diretorias WHERE ativo = 1 ORDER BY ordem, nome").all()
   const projetosLista = db.prepare("SELECT id, codigo, nome FROM projetos WHERE ativo = 1 ORDER BY nome").all()
 
@@ -248,18 +284,28 @@ export default async function ComiteDetalhePage({ params }: { params: Promise<{ 
     a.progresso === 'Não iniciado' && a.prioridade === ''
   )
 
-  // Tarefas de TI dos cronogramas (para slide TI em Desenvolvimento)
-  const tiTarefasCronograma = db.prepare(`
+  // Tarefas de TI dos cronogramas (para slide TI em Desenvolvimento). usuarios já está em
+  // Postgres — resolve primeiro quem bate com esses nomes lá, depois filtra
+  // cronograma_tarefas (SQLite) por id ou pelo nome externo (fallback).
+  const tiUsuariosFiltro = await asyncDb.queryMany<{ id: number; nome: string }>(
+    `SELECT id, nome FROM "AI"."TI_PMO_USUARIOS" WHERE ativo = true AND (
+       LOWER(nome) LIKE '%michel%' OR LOWER(nome) LIKE '%divonzi%'
+       OR LOWER(nome) LIKE '%plinio%' OR LOWER(nome) LIKE '%plínio%'
+     )`
+  )
+  const tiNomesPorId = new Map(tiUsuariosFiltro.map(u => [u.id, u.nome]))
+  const tiIdsFiltro = tiUsuariosFiltro.map(u => u.id)
+  const tiIdsPlaceholder = tiIdsFiltro.length ? tiIdsFiltro.map(() => '?').join(',') : '-1'
+
+  const tiTarefasCronogramaRaw = db.prepare(`
     SELECT
       t.id, t.nome, t.percentual, t.data_inicio, t.data_fim, t.data_conclusao,
-      t.observacoes, t.prazo_status,
-      COALESCE(u.nome, t.responsavel_nome_ext) AS analista,
+      t.observacoes, t.prazo_status, t.responsavel_id, t.responsavel_nome_ext,
       p.codigo AS projeto_codigo, p.nome AS projeto_nome,
       c.id AS cronograma_id, c.projeto_id
     FROM cronograma_tarefas t
     JOIN cronogramas c ON c.id = t.cronograma_id
     JOIN projetos p ON p.id = c.projeto_id
-    LEFT JOIN usuarios u ON u.id = t.responsavel_id
     WHERE (t.ativo IS NULL OR t.ativo = 1)
       AND (c.ativo IS NULL OR c.ativo = 1)
       AND p.ativo = 1
@@ -269,17 +315,19 @@ export default async function ComiteDetalhePage({ params }: { params: Promise<{ 
         WHERE c2.projeto_id = c.projeto_id AND (c2.ativo IS NULL OR c2.ativo = 1)
       )
       AND (
-        LOWER(COALESCE(u.nome, ''))                    LIKE '%michel%'
-        OR LOWER(COALESCE(u.nome, ''))                 LIKE '%divonzi%'
-        OR LOWER(COALESCE(u.nome, ''))                 LIKE '%plinio%'
-        OR LOWER(COALESCE(u.nome, ''))                 LIKE '%plínio%'
+        t.responsavel_id IN (${tiIdsPlaceholder})
         OR LOWER(COALESCE(t.responsavel_nome_ext, '')) LIKE '%michel%'
         OR LOWER(COALESCE(t.responsavel_nome_ext, '')) LIKE '%divonzi%'
         OR LOWER(COALESCE(t.responsavel_nome_ext, '')) LIKE '%plinio%'
         OR LOWER(COALESCE(t.responsavel_nome_ext, '')) LIKE '%plínio%'
       )
     ORDER BY p.nome, t.data_inicio
-  `).all()
+  `).all(...tiIdsFiltro) as (Record<string, unknown> & { responsavel_id: number | null; responsavel_nome_ext: string | null })[]
+
+  const tiTarefasCronograma = tiTarefasCronogramaRaw.map(t => ({
+    ...t,
+    analista: (t.responsavel_id != null ? tiNomesPorId.get(t.responsavel_id) : undefined) ?? t.responsavel_nome_ext,
+  }))
 
   // Previous comitês for history
   const historico = db.prepare(`

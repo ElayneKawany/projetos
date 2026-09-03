@@ -1,6 +1,7 @@
 import { getSession } from '@/lib/auth'
 import { buscarProjetos } from '@/lib/projetos'
 import getDb from '@/lib/db'
+import { asyncDb } from '@/lib/database'
 import ProjetosClient from './ProjetosClient'
 
 export default async function ProjetosPage({
@@ -18,7 +19,9 @@ export default async function ProjetosPage({
   const db = getDb()
   const diretorias = db.prepare('SELECT * FROM diretorias WHERE ativo=1 ORDER BY nome').all()
   const areas = db.prepare('SELECT a.*, d.nome as diretoria_nome FROM areas a JOIN diretorias d ON a.diretoria_id=d.id WHERE a.ativo=1 ORDER BY a.nome').all()
-  const usuarios = db.prepare('SELECT id, nome, email, cargo FROM usuarios WHERE ativo=1 ORDER BY nome').all()
+  const usuarios = await asyncDb.queryMany(
+    `SELECT id, nome, email, cargo FROM "AI"."TI_PMO_USUARIOS" WHERE ativo = true ORDER BY nome`
+  )
 
   return (
     <ProjetosClient

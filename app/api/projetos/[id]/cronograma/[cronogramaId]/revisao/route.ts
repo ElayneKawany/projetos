@@ -21,7 +21,7 @@ export async function POST(
     return NextResponse.json({ error: 'Observação é obrigatória para solicitar revisão.' }, { status: 400 })
   }
 
-  const cronograma = CronogramaRepository.findByIdAndProjetoId(Number(cronogramaId), Number(projetoId)) as Record<string, unknown> | undefined
+  const cronograma = await CronogramaRepository.findByIdAndProjetoId(Number(cronogramaId), Number(projetoId)) as Record<string, unknown> | undefined
 
   if (!cronograma) return NextResponse.json({ error: 'Cronograma não encontrado.' }, { status: 404 })
   if (cronograma.status !== 'PENDENTE_APROVACAO') {
@@ -76,8 +76,8 @@ export async function POST(
   })
 
   // Notificar PMOs
-  const projeto = ProjetosRepository.findById(Number(projetoId))
-  notificarPMOs({
+  const projeto = await ProjetosRepository.findById(Number(projetoId))
+  await notificarPMOs({
     originador_id: session.id,
     projeto_id: Number(projetoId),
     tipo: 'REVISAO_CRONOGRAMA',

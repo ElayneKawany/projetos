@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
 import getDb from '@/lib/db'
+import { asyncDb } from '@/lib/database'
 import { registrarAuditoria } from '@/lib/db/auditoria'
 import { registrarHistoricoAlteracao } from '@/lib/projetos'
 import { registrarEvento } from '@/lib/timeline'
 import type Database from 'better-sqlite3'
+
+const T_USUARIOS = '"AI"."TI_PMO_USUARIOS"'
 
 const CAMPO_LABELS: Record<string, string> = {
   nome: 'Nome',
@@ -41,13 +44,13 @@ const CAMPOS_OBRIGATORIOS: Record<string, string> = {
   data_fim_prev: 'Data Prevista de Término',
 }
 
-function resolverLabel(db: Database.Database, campo: string, valor: unknown): string {
+async function resolverLabel(db: Database.Database, campo: string, valor: unknown): Promise<string> {
   if (valor == null || valor === '') return '(vazio)'
   switch (campo) {
     case 'solicitante_id':
     case 'gerente_id':
     case 'pmo_responsavel_id': {
-      const u = db.prepare('SELECT nome FROM usuarios WHERE id = ?').get(Number(valor)) as { nome: string } | undefined
+      const u = await asyncDb.queryOne<{ nome: string }>(`SELECT nome FROM ${T_USUARIOS} WHERE id = ?`, [Number(valor)])
       return u?.nome ?? String(valor)
     }
     case 'diretoria_id': {
@@ -110,7 +113,7 @@ export async function PATCH(
 
   // Validate FK references exist
   if (body.solicitante_id != null) {
-    const sol = db.prepare('SELECT id FROM usuarios WHERE id = ? AND ativo = 1').get(Number(body.solicitante_id))
+    const sol = await asyncDb.queryOne(`SELECT id FROM ${T_USUARIOS} WHERE id = ? AND ativo = true`, [Number(body.solicitante_id)])
     if (!sol) return NextResponse.json({ error: 'Solicitante não encontrado.' }, { status: 422 })
   }
   if (body.diretoria_id != null) {
@@ -122,11 +125,11 @@ export async function PATCH(
     if (!area) return NextResponse.json({ error: 'Área não encontrada.' }, { status: 422 })
   }
   if (body.gerente_id != null) {
-    const ger = db.prepare('SELECT id FROM usuarios WHERE id = ? AND ativo = 1').get(Number(body.gerente_id))
+    const ger = await asyncDb.queryOne(`SELECT id FROM ${T_USUARIOS} WHERE id = ? AND ativo = true`, [Number(body.gerente_id)])
     if (!ger) return NextResponse.json({ error: 'Gerente não encontrado.' }, { status: 422 })
   }
   if (body.pmo_responsavel_id != null) {
-    const pmo = db.prepare('SELECT id FROM usuarios WHERE id = ? AND ativo = 1').get(Number(body.pmo_responsavel_id))
+    const pmo = await asyncDb.queryOne(`SELECT id FROM ${T_USUARIOS} WHERE id = ? AND ativo = true`, [Number(body.pmo_responsavel_id)])
     if (!pmo) return NextResponse.json({ error: 'PMO Responsável não encontrado.' }, { status: 422 })
   }
 
@@ -194,12 +197,12 @@ export async function PATCH(
   }
 
   try {
-    const linhasTimeline = camposAlterados.map(alt => {
+    const linhasTimeline = await Promise.all(camposAlterados.map(async alt => {
       const label = CAMPO_LABELS[alt.campo] ?? alt.campo
-      const antesStr = resolverLabel(db, alt.campo, alt.anterior)
-      const depoisStr = resolverLabel(db, alt.campo, alt.novo)
+      const antesStr = await resolverLabel(db, alt.campo, alt.anterior)
+      const depoisStr = await resolverLabel(db, alt.campo, alt.novo)
       return `${label} alterado de: "${antesStr}" para: "${depoisStr}"`
-    })
+    }))
 
     registrarEvento({
       projeto_id: projetoId,

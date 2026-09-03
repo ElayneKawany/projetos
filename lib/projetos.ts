@@ -67,7 +67,7 @@ export async function buscarProjetos(filtros: {
   return await ProjetosRepository.findAllComplexo(conditions, params, limit, offset)
 }
 
-export function buscarProjetoPorId(id: number): Projeto | null {
+export async function buscarProjetoPorId(id: number): Promise<Projeto | null> {
   return ProjetosRepository.findByIdComplexo(id)
 }
 
@@ -131,7 +131,7 @@ export async function criarProjeto(dados: {
     created_by: dados.created_by,
   })
 
-  const projeto = buscarProjetoPorId(Number(projetoId))!
+  const projeto = (await buscarProjetoPorId(Number(projetoId)))!
 
   registrarAuditoria({
     usuario_id: dados.created_by,
@@ -168,13 +168,13 @@ export async function atualizarStatusProjeto(
   usuario_id: number,
   motivo?: string
 ): Promise<void> {
-  const projeto = buscarProjetoPorId(projeto_id)
+  const projeto = await buscarProjetoPorId(projeto_id)
   if (!projeto) throw new Error('Projeto não encontrado.')
 
   ProjetosRepository.updateStatus(projeto_id, status_para)
   ProjetosRepository.insertStatusHistorico(projeto_id, projeto.status, status_para, motivo ?? null, usuario_id)
 
-  const usuario_nome = ProjetosRepository.findNomeUsuario(usuario_id) ?? 'Sistema'
+  const usuario_nome = (await ProjetosRepository.findNomeUsuario(usuario_id)) ?? 'Sistema'
 
   registrarAuditoria({
     usuario_id,
@@ -256,13 +256,13 @@ export async function atualizarStatusProjeto(
   }
 }
 
-export function atualizarPrioridadeProjeto(
+export async function atualizarPrioridadeProjeto(
   projeto_id: number,
   prioridade_para: Prioridade,
   usuario_id: number,
   motivo?: string
-): void {
-  const projeto = buscarProjetoPorId(projeto_id)
+): Promise<void> {
+  const projeto = await buscarProjetoPorId(projeto_id)
   if (!projeto) throw new Error('Projeto não encontrado.')
 
   ProjetosRepository.updatePrioridade(projeto_id, prioridade_para)
@@ -286,11 +286,11 @@ export function atualizarPrioridadeProjeto(
   })
 }
 
-export function buscarHistoricoStatus(projeto_id: number) {
+export async function buscarHistoricoStatus(projeto_id: number) {
   return ProjetosRepository.findStatusHistoricoComplexo(projeto_id)
 }
 
-export function buscarHistoricoPrioridade(projeto_id: number) {
+export async function buscarHistoricoPrioridade(projeto_id: number) {
   return ProjetosRepository.findHistoricoPrioridade(projeto_id)
 }
 
@@ -313,7 +313,7 @@ export async function concluirProjeto(
   usuario_id: number,
   usuario_nome: string,
 ): Promise<void> {
-  const projeto = buscarProjetoPorId(projeto_id)
+  const projeto = await buscarProjetoPorId(projeto_id)
   if (!projeto) throw new Error('Projeto não encontrado.')
   if (projeto.status !== 'EXECUCAO') throw new Error('Projeto deve estar em Execução para ser concluído.')
 
@@ -447,12 +447,12 @@ export async function concluirProjeto(
   }
 }
 
-export function iniciarPayback(
+export async function iniciarPayback(
   projeto_id: number,
   usuario_id: number,
   usuario_nome: string,
-): void {
-  const projeto = buscarProjetoPorId(projeto_id)
+): Promise<void> {
+  const projeto = await buscarProjetoPorId(projeto_id)
   if (!projeto) throw new Error('Projeto não encontrado.')
   if (projeto.status !== 'PROJETO_CONCLUIDO') {
     throw new Error('O projeto deve estar em "Projeto Concluído" para iniciar o Payback.')
@@ -490,13 +490,13 @@ export function iniciarPayback(
   })
 }
 
-export function encerrarPayback(
+export async function encerrarPayback(
   projeto_id: number,
   motivo: string,
   usuario_id: number,
   usuario_nome: string,
-): void {
-  const projeto = buscarProjetoPorId(projeto_id)
+): Promise<void> {
+  const projeto = await buscarProjetoPorId(projeto_id)
   if (!projeto) throw new Error('Projeto não encontrado.')
   if (projeto.status !== 'PAYBACK_ACOMPANHAMENTO') {
     throw new Error('O projeto deve estar em "Payback em Acompanhamento" para encerrar o Payback.')
@@ -532,13 +532,13 @@ export function encerrarPayback(
   })
 }
 
-export function encerrarProjeto(
+export async function encerrarProjeto(
   projeto_id: number,
   motivo: string,
   usuario_id: number,
   usuario_nome: string,
-): void {
-  const projeto = buscarProjetoPorId(projeto_id)
+): Promise<void> {
+  const projeto = await buscarProjetoPorId(projeto_id)
   if (!projeto) throw new Error('Projeto não encontrado.')
   if (projeto.status !== 'PAYBACK_ENCERRADO') {
     throw new Error('O projeto deve estar em "Payback Encerrado" para ser encerrado oficialmente.')

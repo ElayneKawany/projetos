@@ -22,7 +22,7 @@ export async function POST(request: NextRequest, { params }: Params) {
   const horaFim: string = body.hora_fim || ''
   const duracaoMin: number = body.duracao_min || 0
 
-  const participantes = ComitesRepository.findParticipantesNomeados(comiteId)
+  const participantes = await ComitesRepository.findParticipantesNomeados(comiteId)
   const projetos = ComitesRepository.findProjetosParaAta(comiteId)
   const decisoesExistentes = ComitesRepository.findDecisoesSimplesComiteId(comiteId)
   const pendenciasExistentes = ComitesRepository.findPendenciasAbertas(comiteId)

@@ -60,7 +60,7 @@ export async function login(cpf: string, senha: string): Promise<{
 }> {
   const cpfLimpo = cpf.replace(/\D/g, '')
 
-  const usuario = UsuariosRepository.findByCpfForLogin(cpfLimpo)
+  const usuario = await UsuariosRepository.findByCpfForLogin(cpfLimpo)
 
   if (!usuario) {
     return { success: false, error: 'CPF ou senha inválidos.' }
@@ -72,7 +72,7 @@ export async function login(cpf: string, senha: string): Promise<{
   }
 
   // Atualizar último login
-  UsuariosRepository.updateUltimoLogin(usuario.id as number)
+  await UsuariosRepository.updateUltimoLogin(usuario.id as number)
 
   const user: SessionUser = {
     id: usuario.id as number,

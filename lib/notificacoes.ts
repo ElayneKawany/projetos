@@ -1,4 +1,8 @@
 import getDb from './db'
+import { asyncDb } from './database'
+
+// Tabela Postgres real (schema AI, prefixo TI_PMO_, ver lib/db/drizzle/schema.postgres.ts).
+const T_USUARIOS = '"AI"."TI_PMO_USUARIOS"'
 
 export type TipoNotificacao =
   | 'REVISAO_TAP'
@@ -44,19 +48,28 @@ export function criarNotificacao(dados: {
 }
 
 /** Notifica todos os usuários PMO e ADMIN ativos, exceto o originador. */
-export function notificarPMOs(dados: {
+export async function notificarPMOs(dados: {
   originador_id: number
   projeto_id: number
   tipo: TipoNotificacao
   titulo: string
   mensagem: string
-}): void {
+}): Promise<void> {
   const db = getDb()
-  const pmos = db.prepare(`
-    SELECT u.id FROM usuarios u
-    JOIN perfis p ON u.perfil_id = p.id
-    WHERE p.codigo IN ('PMO', 'ADMIN') AND u.ativo = 1
+
+  // perfis continua em SQLite; usuarios já está em Postgres — resolve os
+  // perfil_id de PMO/ADMIN aqui e depois consulta usuarios (Postgres) com eles.
+  const perfisPmoAdmin = db.prepare(`
+    SELECT id FROM perfis WHERE codigo IN ('PMO', 'ADMIN')
   `).all() as { id: number }[]
+  const perfilIds = perfisPmoAdmin.map(p => p.id)
+
+  const pmos = perfilIds.length
+    ? await asyncDb.queryMany<{ id: number }>(
+        `SELECT id FROM ${T_USUARIOS} WHERE ativo = true AND perfil_id = ANY(?)`,
+        [perfilIds]
+      )
+    : []
 
   for (const pmo of pmos) {
     if (pmo.id !== dados.originador_id) {

@@ -22,7 +22,7 @@ export async function POST(
   const projeto_id    = Number(id)
   const cronograma_id = Number(cronogramaId)
 
-  const cronograma = CronogramaRepository.findByIdAndProjetoId(cronograma_id, projeto_id) as Record<string, unknown> | undefined
+  const cronograma = await CronogramaRepository.findByIdAndProjetoId(cronograma_id, projeto_id) as Record<string, unknown> | undefined
   if (!cronograma) {
     return NextResponse.json({ error: 'Cronograma não encontrado.' }, { status: 404 })
   }

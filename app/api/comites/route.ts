@@ -6,7 +6,7 @@ import { registrarAuditoria } from '@/lib/db/auditoria'
 export async function GET(request: NextRequest) {
   const session = await getSession(request)
   if (!session) return NextResponse.json({ error: 'Não autenticado.' }, { status: 401 })
-  const comites = ComitesRepository.findAll({})
+  const comites = await ComitesRepository.findAll({})
   return NextResponse.json({ comites })
 }
 

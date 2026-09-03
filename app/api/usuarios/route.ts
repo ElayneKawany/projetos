@@ -7,7 +7,7 @@ export async function GET(request: NextRequest) {
   const session = await getSession(request)
   if (!session) return NextResponse.json({ error: 'Não autenticado.' }, { status: 401 })
   const all = session.perfil === 'ADMIN' && request.nextUrl.searchParams.get('all') === '1'
-  const usuarios = UsuariosRepository.findAllWithPerfil(all)
+  const usuarios = await UsuariosRepository.findAllWithPerfil(all)
   return NextResponse.json({ usuarios })
 }
 
@@ -26,11 +26,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Senha deve ter no mínimo 8 caracteres.' }, { status: 400 })
   }
 
-  const existente = UsuariosRepository.findByEmailOrCpf(cpf, email)
+  const existente = await UsuariosRepository.findByEmailOrCpf(cpf, email)
   if (existente) return NextResponse.json({ error: 'CPF ou e-mail já cadastrado.' }, { status: 409 })
 
   const senhaHash = await hashSenha(senha)
-  const novoId = UsuariosRepository.createWithPerfilId({
+  const novoId = await UsuariosRepository.createWithPerfilId({
     cpf, nome, email, senhaHash,
     cargo: cargo || null, perfil_id,
     diretoria_id: diretoria_id || null, area_id: area_id || null,

@@ -25,7 +25,7 @@ export async function POST(
   const { id: projetoId, cronogramaId } = await params
   const ip = getIp(request)
 
-  const cronograma = CronogramaRepository.findByIdAndProjetoId(Number(cronogramaId), Number(projetoId)) as Record<string, unknown> | undefined
+  const cronograma = await CronogramaRepository.findByIdAndProjetoId(Number(cronogramaId), Number(projetoId)) as Record<string, unknown> | undefined
 
   if (!cronograma) return NextResponse.json({ error: 'Cronograma não encontrado.' }, { status: 404 })
   if (cronograma.status !== 'PENDENTE_APROVACAO') {
@@ -93,7 +93,7 @@ export async function POST(
     })
 
     // 5. Avançar projeto para EXECUCAO se estiver em CRONOGRAMA ou ESTRUTURACAO
-    const projeto = ProjetosRepository.findById(Number(projetoId))
+    const projeto = await ProjetosRepository.findById(Number(projetoId))
 
     if (projeto && !statusJaAvancou(projeto.status, 'EXECUCAO')) {
       const erroExecucao = validarCronogramaParaExecucao(Number(cronogramaId))

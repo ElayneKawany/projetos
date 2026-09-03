@@ -1,4 +1,5 @@
 import getDb from './index'
+import { UsuariosRepository } from '@/lib/repositories/usuarios'
 
 interface AuditoriaParams {
   usuario_id?: number | null
@@ -42,7 +43,7 @@ export function registrarAuditoria(params: AuditoriaParams): void {
   })
 }
 
-export function buscarAuditoria(filtros: {
+export async function buscarAuditoria(filtros: {
   projeto_id?: number
   entidade?: string
   usuario_id?: number
@@ -70,12 +71,19 @@ export function buscarAuditoria(filtros: {
   const limit = filtros.limit ?? 50
   const offset = filtros.offset ?? 0
 
-  return db.prepare(`
-    SELECT a.*, u.nome as usuario_nome_atual
+  const rows = db.prepare(`
+    SELECT a.*
     FROM auditoria a
-    LEFT JOIN usuarios u ON a.usuario_id = u.id
     ${where}
     ORDER BY a.created_at DESC
     LIMIT ${limit} OFFSET ${offset}
-  `).all(params)
+  `).all(params) as (Record<string, unknown> & { usuario_id: number | null })[]
+
+  const nomes = await UsuariosRepository.findNomesPorIds(
+    rows.map(r => r.usuario_id).filter((v): v is number => v != null)
+  )
+  return rows.map(r => ({
+    ...r,
+    usuario_nome_atual: r.usuario_id != null ? nomes.get(r.usuario_id)?.nome ?? null : null,
+  }))
 }
