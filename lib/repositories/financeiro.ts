@@ -1,4 +1,7 @@
-import { db } from '@/lib/database'
+import { db, asyncDb } from '@/lib/database'
+
+// Tabela Postgres real (schema AI, prefixo TI_PMO_, ver lib/db/drizzle/schema.postgres.ts).
+const T_VIABILIDADE = '"AI"."TI_PMO_VIABILIDADE"'
 
 export interface FinanceiroContrato {
   id: number
@@ -416,24 +419,24 @@ export const FinanceiroRepository = {
 
   // ── Viabilidade (usada por lib/financeiro.ts) ──────────────────────────────
 
-  findViabilidadeRascunho(projetoId: number): { id: number; versao: number } | undefined {
-    return db.queryOne<{ id: number; versao: number }>(
-      `SELECT id, versao FROM viabilidade WHERE projeto_id = ? AND status = 'RASCUNHO' ORDER BY versao DESC LIMIT 1`,
+  async findViabilidadeRascunho(projetoId: number): Promise<{ id: number; versao: number } | undefined> {
+    return asyncDb.queryOne<{ id: number; versao: number }>(
+      `SELECT id, versao FROM ${T_VIABILIDADE} WHERE projeto_id = ? AND status = 'RASCUNHO' ORDER BY versao DESC LIMIT 1`,
       [projetoId]
     )
   },
 
-  maxVersaoViabilidade(projetoId: number): number {
-    const row = db.queryOne<{ v: number | null }>(
-      'SELECT MAX(versao) AS v FROM viabilidade WHERE projeto_id = ?',
+  async maxVersaoViabilidade(projetoId: number): Promise<number> {
+    const row = await asyncDb.queryOne<{ v: number | null }>(
+      `SELECT MAX(versao) AS v FROM ${T_VIABILIDADE} WHERE projeto_id = ?`,
       [projetoId]
     )
     return row?.v ?? 0
   },
 
-  updateViabilidade(id: number, dados: Record<string, unknown>): void {
-    db.execute(
-      `UPDATE viabilidade SET
+  async updateViabilidade(id: number, dados: Record<string, unknown>): Promise<void> {
+    await asyncDb.execute(
+      `UPDATE ${T_VIABILIDADE} SET
          selic=?, taxa_desconto=?, inflacao=?, investimento_total=?,
          receitas_previstas=?, custos_previstos=?, economia_prevista=?,
          roi=?, tir=?, payback_meses=?,
@@ -456,16 +459,17 @@ export const FinanceiroRepository = {
     )
   },
 
-  insertViabilidade(dados: Record<string, unknown>): number | bigint {
-    const result = db.execute(
-      `INSERT INTO viabilidade
+  async insertViabilidade(dados: Record<string, unknown>): Promise<number | null> {
+    const result = await asyncDb.execute(
+      `INSERT INTO ${T_VIABILIDADE}
          (projeto_id, versao, selic, taxa_desconto, inflacao, investimento_total,
           receitas_previstas, custos_previstos, economia_prevista,
           roi, tir, payback_meses,
           impacto_operacional, recursos_necessarios, mudanca_processo,
           tecnologias, integracoes, infraestrutura,
           riscos, impactos, data_inicio_prev, data_fim_prev, marcos, criado_por)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       RETURNING id`,
       [
         dados.projeto_id ?? null, dados.versao ?? null,
         dados.selic ?? null, dados.taxa_desconto ?? null, dados.inflacao ?? null,
@@ -479,14 +483,14 @@ export const FinanceiroRepository = {
         dados.marcos ?? null, dados.criado_por ?? null,
       ]
     )
-    return result.lastInsertRowid
+    return result.insertedId
   },
 
   // ── Resumo executivo ───────────────────────────────────────────────────────
 
-  resumoExecutivo(projetoId: number): ResumoFinanceiro {
-    const via = db.queryOne<{ capex: number; opex: number }>(
-      'SELECT capex, opex FROM viabilidade WHERE projeto_id = ? ORDER BY versao DESC LIMIT 1',
+  async resumoExecutivo(projetoId: number): Promise<ResumoFinanceiro> {
+    const via = await asyncDb.queryOne<{ capex: number; opex: number }>(
+      `SELECT capex, opex FROM ${T_VIABILIDADE} WHERE projeto_id = ? ORDER BY versao DESC LIMIT 1`,
       [projetoId]
     )
     const contratos = db.queryOne<{ total_aprovado: number; qtd: number }>(
@@ -613,10 +617,10 @@ export const FinanceiroRepository = {
 
   // ── Dashboard (para lib/financeiro/dashboard.ts) ──────────────────────────
 
-  findViabilidadeCapexOpex(projetoId: number): { capex: number; opex: number } {
-    const row = db.queryOne<{ capex: number; opex: number }>(
+  async findViabilidadeCapexOpex(projetoId: number): Promise<{ capex: number; opex: number }> {
+    const row = await asyncDb.queryOne<{ capex: number; opex: number }>(
       `SELECT COALESCE(capex, 0) AS capex, COALESCE(opex, 0) AS opex
-       FROM viabilidade WHERE projeto_id = ? ORDER BY versao DESC LIMIT 1`,
+       FROM ${T_VIABILIDADE} WHERE projeto_id = ? ORDER BY versao DESC LIMIT 1`,
       [projetoId]
     )
     return row ?? { capex: 0, opex: 0 }

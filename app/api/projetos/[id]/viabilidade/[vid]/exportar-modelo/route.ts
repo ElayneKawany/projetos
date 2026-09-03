@@ -22,7 +22,7 @@ export async function GET(
     const projeto = ProjetosRepository.findById(projeto_id)
     if (!projeto) return NextResponse.json({ error: 'Projeto não encontrado.' }, { status: 404 })
 
-    const v = ViabilidadeRepository.findByIdAndProjetoId(vid_id, projeto_id)
+    const v = await ViabilidadeRepository.findByIdAndProjetoId(vid_id, projeto_id)
     if (!v) return NextResponse.json({ error: 'Estudo de Viabilidade não encontrado.' }, { status: 404 })
 
     const isQualitativo = String(projeto.tipo_beneficio ?? '').toUpperCase() === 'QUALITATIVO'

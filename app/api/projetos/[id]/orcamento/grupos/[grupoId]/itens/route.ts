@@ -2,13 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
 import { criarItem, atualizarItem, desativarItem, desativarGrupo } from '@/lib/orcamento'
 import { registrarEvento } from '@/lib/timeline'
-import getDb from '@/lib/db'
+import { asyncDb } from '@/lib/database'
 
-function verificarBloqueioWorkflow(projeto_id: number): boolean {
-  const db = getDb()
-  const v = db.prepare(
-    'SELECT status FROM viabilidade WHERE projeto_id = ? ORDER BY versao DESC LIMIT 1'
-  ).get(projeto_id) as { status: string } | undefined
+async function verificarBloqueioWorkflow(projeto_id: number): Promise<boolean> {
+  const v = await asyncDb.queryOne<{ status: string }>(
+    `SELECT status FROM "AI"."TI_PMO_VIABILIDADE" WHERE projeto_id = ? ORDER BY versao DESC LIMIT 1`,
+    [projeto_id]
+  )
   return v?.status === 'APROVADO'
 }
 
@@ -29,7 +29,7 @@ export async function POST(request: NextRequest, { params }: Params) {
   const projeto_id = Number(id)
   const grupo_id   = Number(grupoId)
 
-  if (verificarBloqueioWorkflow(projeto_id)) {
+  if (await verificarBloqueioWorkflow(projeto_id)) {
     return NextResponse.json({ error: MSG_BLOQUEIO }, { status: 403 })
   }
 
@@ -91,7 +91,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   }
 
   const { id } = await params
-  if (verificarBloqueioWorkflow(Number(id))) {
+  if (await verificarBloqueioWorkflow(Number(id))) {
     return NextResponse.json({ error: MSG_BLOQUEIO }, { status: 403 })
   }
 
@@ -132,7 +132,7 @@ export async function DELETE(request: NextRequest, { params }: Params) {
   }
 
   const { id, grupoId } = await params
-  if (verificarBloqueioWorkflow(Number(id))) {
+  if (await verificarBloqueioWorkflow(Number(id))) {
     return NextResponse.json({ error: MSG_BLOQUEIO }, { status: 403 })
   }
 

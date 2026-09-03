@@ -27,7 +27,7 @@ export async function POST(
       return NextResponse.json({ error: 'Projeto já foi encerrado oficialmente e não pode ser cancelado.' }, { status: 400 })
     }
 
-    atualizarStatusProjeto(projeto_id, 'CANCELADO', session.id, motivo || 'Projeto cancelado')
+    await atualizarStatusProjeto(projeto_id, 'CANCELADO', session.id, motivo || 'Projeto cancelado')
     return NextResponse.json({ ok: true })
   } catch (e: unknown) {
     return NextResponse.json(

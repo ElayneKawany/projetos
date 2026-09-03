@@ -15,12 +15,12 @@ export async function GET(
   const { id } = await params
   const projeto_id = Number(id)
 
-  const [contratos, resumo, viabilidade, pendentes] = [
+  const [contratos, resumo, viabilidade, pendentes] = await Promise.all([
     buscarContratosCompletos(projeto_id),
     buscarResumoFinanceiro(projeto_id),
     buscarViabilidadeFinanceira(projeto_id),
     buscarPagamentosSemContrato(projeto_id),
-  ]
+  ])
 
   return NextResponse.json({ contratos, resumo, viabilidade, pendentes })
 }

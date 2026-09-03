@@ -1,4 +1,4 @@
-import { db } from '@/lib/database'
+import { db, asyncDb } from '@/lib/database'
 
 export interface DistribuicaoMacroFase {
   tipo_macro: string
@@ -583,10 +583,10 @@ export const CronogramaRepository = {
     )
   },
 
-  findViabilidadeRecente(projetoId: number): Record<string, unknown> | undefined {
-    return db.queryOne<Record<string, unknown>>(
+  async findViabilidadeRecente(projetoId: number): Promise<Record<string, unknown> | undefined> {
+    return asyncDb.queryOne<Record<string, unknown>>(
       `SELECT resumo_executivo, sistemas_envolvidos
-       FROM viabilidade
+       FROM "AI"."TI_PMO_VIABILIDADE"
        WHERE projeto_id = ?
        ORDER BY CASE status WHEN 'APROVADO' THEN 0 ELSE 1 END, versao DESC
        LIMIT 1`,

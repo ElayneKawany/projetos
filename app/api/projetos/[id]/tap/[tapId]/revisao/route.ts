@@ -43,13 +43,15 @@ export async function POST(
     return NextResponse.json({ error: 'Apenas etapas do tipo Aprovação podem solicitar revisão.' }, { status: 400 })
   }
 
-  let viabilidadesAtivas: { id: number }[] = []
+  // TapRepository e ViabilidadeRepository já estão em Postgres (asyncDb); os demais
+  // repositórios usados aqui ainda estão em SQLite (db, síncrono). Enquanto a migração
+  // for gradual, os dois bancos não podem participar da mesma transação — os updateStatus
+  // do TAP e das Viabilidades canceladas rodam à parte, depois que a transação SQLite
+  // abaixo já confirmou, para que uma falha no Postgres não deixe a aprovação SQLite
+  // com efeitos colaterais não registrados. findNaoFinalizadas roda antes, pois a
+  // transação (SQLite) precisa da lista pra gravar histórico/aprovação por viabilidade.
+  const viabilidadesAtivas = await ViabilidadeRepository.findNaoFinalizadas(Number(projetoId))
 
-  // TapRepository já está em Postgres (asyncDb); os demais repositórios usados aqui
-  // ainda estão em SQLite (db, síncrono). Enquanto a migração for gradual, os dois
-  // bancos não podem participar da mesma transação — o updateStatus do TAP roda à
-  // parte, depois que a transação SQLite abaixo já confirmou, para que uma falha no
-  // Postgres não deixe a aprovação SQLite com efeitos colaterais não registrados.
   db.transaction(() => {
     processarResposta({ workflow, acao: 'REJEITAR', observacao: body.observacao })
 
@@ -61,11 +63,7 @@ export async function POST(
       observacao: body.observacao,
     })
 
-    viabilidadesAtivas = ViabilidadeRepository.findNaoFinalizadas(Number(projetoId))
-
     for (const v of viabilidadesAtivas) {
-      ViabilidadeRepository.updateStatus(v.id, 'CANCELADO')
-
       ProjetosRepository.updateAprovacao({
         referencia_id: v.id,
         tipo: 'VIABILIDADE',
@@ -107,6 +105,9 @@ export async function POST(
   })
 
   await TapRepository.updateStatus(Number(tapId), 'RASCUNHO')
+  for (const v of viabilidadesAtivas) {
+    await ViabilidadeRepository.updateStatus(v.id, 'CANCELADO')
+  }
 
   const projeto = ProjetosRepository.findById(Number(projetoId))
   notificarPMOs({

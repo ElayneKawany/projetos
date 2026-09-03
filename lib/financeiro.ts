@@ -47,7 +47,7 @@ export function calcularPayback(investimento: number, fluxoAnual: number[]): num
 // VIABILIDADE
 // ============================================================
 
-export function salvarViabilidade(dados: {
+export async function salvarViabilidade(dados: {
   projeto_id: number
   selic?: number
   taxa_desconto?: number
@@ -68,7 +68,7 @@ export function salvarViabilidade(dados: {
   data_fim_prev?: string
   marcos?: unknown
   criado_por: number
-}): number {
+}): Promise<number> {
   // Calcular indicadores com os dados informados pelo usuário
   let roi: number | null = null
   let tir: number | null = null
@@ -90,7 +90,7 @@ export function salvarViabilidade(dados: {
   }
 
   // Verificar se já existe versão rascunho
-  const existente = FinanceiroRepository.findViabilidadeRascunho(dados.projeto_id)
+  const existente = await FinanceiroRepository.findViabilidadeRascunho(dados.projeto_id)
 
   const jsonFields = {
     receitas_previstas: JSON.stringify(dados.receitas_previstas),
@@ -102,15 +102,15 @@ export function salvarViabilidade(dados: {
   }
 
   if (existente) {
-    FinanceiroRepository.updateViabilidade(existente.id, {
+    await FinanceiroRepository.updateViabilidade(existente.id, {
       ...dados,
       ...jsonFields,
       roi, tir, payback_meses: payback,
     })
     return existente.id
   } else {
-    const versao = FinanceiroRepository.maxVersaoViabilidade(dados.projeto_id) + 1
-    return Number(FinanceiroRepository.insertViabilidade({
+    const versao = await FinanceiroRepository.maxVersaoViabilidade(dados.projeto_id) + 1
+    return Number(await FinanceiroRepository.insertViabilidade({
       ...dados,
       ...jsonFields,
       versao,

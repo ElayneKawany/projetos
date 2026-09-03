@@ -30,7 +30,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
   try {
     if (body.status && body.status !== projeto.status) {
-      atualizarStatusProjeto(projeto.id, body.status as StatusProjeto, session.id, body.motivo)
+      await atualizarStatusProjeto(projeto.id, body.status as StatusProjeto, session.id, body.motivo)
     }
 
     if (body.prioridade && body.prioridade !== projeto.prioridade) {

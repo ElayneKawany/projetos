@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
 import getDb from '@/lib/db'
+import { asyncDb } from '@/lib/database'
 
 export interface CapexProjecao {
   id: number
@@ -43,7 +44,10 @@ export async function POST(
   const db = getDb()
 
   // Verify viabilidade exists for this project
-  const via = db.prepare('SELECT id FROM viabilidade WHERE id = ? AND projeto_id = ?').get(viabilidadeId, projetoId)
+  const via = await asyncDb.queryOne(
+    `SELECT id FROM "AI"."TI_PMO_VIABILIDADE" WHERE id = ? AND projeto_id = ?`,
+    [viabilidadeId, projetoId]
+  )
   if (!via) return NextResponse.json({ error: 'Viabilidade não encontrada.' }, { status: 404 })
 
   const body = await req.json() as { periodo_ref?: string; valor?: number; descricao?: string }

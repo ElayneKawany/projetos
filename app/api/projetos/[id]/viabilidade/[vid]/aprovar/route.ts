@@ -14,7 +14,7 @@ export async function POST(
 
   const { id: projetoId, vid } = await params
 
-  const viabilidade = ViabilidadeRepository.findByIdAndProjetoId(Number(vid), Number(projetoId))
+  const viabilidade = await ViabilidadeRepository.findByIdAndProjetoId(Number(vid), Number(projetoId))
   if (!viabilidade) return NextResponse.json({ error: 'Estudo de Viabilidade não encontrado.' }, { status: 404 })
   if (viabilidade.status !== 'PENDENTE_APROVACAO') {
     return NextResponse.json({ error: 'Apenas estudos pendentes de aprovação podem ser processados.' }, { status: 400 })
@@ -51,7 +51,7 @@ export async function POST(
   }
 
   if (resultado === 'COMPLETED') {
-    ViabilidadeRepository.updateStatus(Number(vid), 'APROVADO', session.id)
+    await ViabilidadeRepository.updateStatus(Number(vid), 'APROVADO', session.id)
 
     ProjetosRepository.updateAprovacao({
       referencia_id: Number(vid),
@@ -72,7 +72,7 @@ export async function POST(
 
     const projeto = buscarProjetoPorId(Number(projetoId))
     if (projeto && !statusJaAvancou(projeto.status, 'ESTRUTURACAO')) {
-      atualizarStatusProjeto(
+      await atualizarStatusProjeto(
         Number(projetoId),
         'ESTRUTURACAO',
         session.id,

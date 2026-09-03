@@ -1,4 +1,9 @@
-import { db } from '@/lib/database'
+import { db, asyncDb } from '@/lib/database'
+
+// Tabela Postgres real (schema AI, prefixo TI_PMO_, ver lib/db/drizzle/schema.postgres.ts) —
+// precisa de aspas duplas por causa do case: sem isso o Postgres dobra pra minúsculo.
+const T_VIABILIDADE = '"AI"."TI_PMO_VIABILIDADE"'
+const T_USUARIOS = '"AI"."TI_PMO_USUARIOS"'
 
 export interface Viabilidade {
   id: number
@@ -52,45 +57,46 @@ export interface Viabilidade {
 }
 
 export const ViabilidadeRepository = {
-  findLatestByProjectId(projetoId: number): Viabilidade | undefined {
-    return db.queryOne<Viabilidade>(
+  async findLatestByProjectId(projetoId: number): Promise<Viabilidade | undefined> {
+    return asyncDb.queryOne<Viabilidade>(
       `SELECT v.*, u.nome AS aprovador_nome
-       FROM viabilidade v
-       LEFT JOIN usuarios u ON u.id = v.aprovado_por
+       FROM ${T_VIABILIDADE} v
+       LEFT JOIN ${T_USUARIOS} u ON u.id = v.aprovado_por
        WHERE v.projeto_id = ?
        ORDER BY v.versao DESC LIMIT 1`,
       [projetoId]
     )
   },
 
-  findById(id: number): Viabilidade | undefined {
-    return db.queryOne<Viabilidade>(
+  async findById(id: number): Promise<Viabilidade | undefined> {
+    return asyncDb.queryOne<Viabilidade>(
       `SELECT v.*, u.nome AS aprovador_nome
-       FROM viabilidade v
-       LEFT JOIN usuarios u ON u.id = v.aprovado_por
+       FROM ${T_VIABILIDADE} v
+       LEFT JOIN ${T_USUARIOS} u ON u.id = v.aprovado_por
        WHERE v.id = ?`,
       [id]
     )
   },
 
-  findAllByProjectId(projetoId: number): Viabilidade[] {
-    return db.queryMany<Viabilidade>(
+  async findAllByProjectId(projetoId: number): Promise<Viabilidade[]> {
+    return asyncDb.queryMany<Viabilidade>(
       `SELECT v.*, u.nome AS aprovador_nome
-       FROM viabilidade v
-       LEFT JOIN usuarios u ON u.id = v.aprovado_por
+       FROM ${T_VIABILIDADE} v
+       LEFT JOIN ${T_USUARIOS} u ON u.id = v.aprovado_por
        WHERE v.projeto_id = ?
        ORDER BY v.versao DESC`,
       [projetoId]
     )
   },
 
-  create(dados: Partial<Viabilidade>): number | bigint {
-    const result = db.execute(
-      `INSERT INTO viabilidade
+  async create(dados: Partial<Viabilidade>): Promise<number | null> {
+    const result = await asyncDb.execute(
+      `INSERT INTO ${T_VIABILIDADE}
          (projeto_id, versao, status, situacao_atual, descricao_solucao, impacto_operacional,
           beneficios_esperados, riscos, payback_meses, capex, opex, investimento_total,
           roi_previsto, data_inicio_prev, data_fim_prev)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       RETURNING id`,
       [
         dados.projeto_id, dados.versao ?? 1, dados.status ?? 'RASCUNHO',
         dados.situacao_atual ?? null, dados.descricao_solucao ?? null,
@@ -100,17 +106,17 @@ export const ViabilidadeRepository = {
         dados.roi_previsto ?? null, dados.data_inicio_prev ?? null, dados.data_fim_prev ?? null,
       ]
     )
-    return result.lastInsertRowid
+    return result.insertedId
   },
 
-  findByIdAndProjetoId(id: number, projetoId: number): Viabilidade | undefined {
-    return db.queryOne<Viabilidade>(
-      'SELECT * FROM viabilidade WHERE id = ? AND projeto_id = ?',
+  async findByIdAndProjetoId(id: number, projetoId: number): Promise<Viabilidade | undefined> {
+    return asyncDb.queryOne<Viabilidade>(
+      `SELECT * FROM ${T_VIABILIDADE} WHERE id = ? AND projeto_id = ?`,
       [id, projetoId]
     )
   },
 
-  update(id: number, dados: Record<string, unknown>): void {
+  async update(id: number, dados: Record<string, unknown>): Promise<void> {
     const campos = [
       'situacao_atual', 'descricao_solucao', 'impacto_operacional', 'beneficios_esperados',
       'riscos', 'payback_meses', 'capex', 'opex', 'investimento_total', 'economia_estimada',
@@ -132,18 +138,21 @@ export const ViabilidadeRepository = {
     if (!sets.length) return
     sets.push('updated_at = CURRENT_TIMESTAMP')
     params.push(id)
-    db.execute(`UPDATE viabilidade SET ${sets.join(', ')} WHERE id = ?`, params)
+    await asyncDb.execute(`UPDATE ${T_VIABILIDADE} SET ${sets.join(', ')} WHERE id = ?`, params)
   },
 
-  insertCopia(vals: Record<string, unknown>): number | bigint {
+  async insertCopia(vals: Record<string, unknown>): Promise<number | null> {
     const cols = Object.keys(vals)
     const placeholders = cols.map(c => `@${c}`).join(', ')
-    const result = db.execute(
-      `INSERT INTO viabilidade (${cols.join(', ')}) VALUES (${placeholders})`,
+    const result = await asyncDb.execute(
+      `INSERT INTO ${T_VIABILIDADE} (${cols.join(', ')}) VALUES (${placeholders}) RETURNING id`,
       vals
     )
-    return result.lastInsertRowid
+    return result.insertedId
   },
+
+  // ── Orçamento (orcamento_grupos / orcamento_itens) — tabelas ainda em SQLite,
+  // fora do escopo desta fatia (só `viabilidade` migra aqui).
 
   findGruposAtivos(projetoId: number): Record<string, unknown>[] {
     return db.queryMany('SELECT * FROM orcamento_grupos WHERE projeto_id = ? AND ativo = 1', [projetoId])
@@ -192,39 +201,64 @@ export const ViabilidadeRepository = {
     )
   },
 
-  updateStatus(id: number, status: string, aprovadoPor?: number): void {
+  async updateStatus(id: number, status: string, aprovadoPor?: number): Promise<void> {
     if (aprovadoPor) {
-      db.execute(
-        'UPDATE viabilidade SET status = ?, aprovado_por = ?, aprovado_em = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      await asyncDb.execute(
+        `UPDATE ${T_VIABILIDADE} SET status = ?, aprovado_por = ?, aprovado_em = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
         [status, aprovadoPor, id]
       )
     } else {
-      db.execute(
-        'UPDATE viabilidade SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      await asyncDb.execute(
+        `UPDATE ${T_VIABILIDADE} SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
         [status, id]
       )
     }
   },
 
-  nextVersao(projetoId: number): number {
-    const row = db.queryOne<{ versao: number }>(
-      'SELECT MAX(versao) AS versao FROM viabilidade WHERE projeto_id = ?',
+  async nextVersao(projetoId: number): Promise<number> {
+    const row = await asyncDb.queryOne<{ versao: number }>(
+      `SELECT MAX(versao) AS versao FROM ${T_VIABILIDADE} WHERE projeto_id = ?`,
       [projetoId]
     )
     return (row?.versao ?? 0) + 1
   },
 
-  findV1ByProjetoId(projetoId: number): { id: number } | undefined {
-    return db.queryOne<{ id: number }>(
-      'SELECT id FROM viabilidade WHERE projeto_id = ? AND versao = 1',
+  async findV1ByProjetoId(projetoId: number): Promise<{ id: number } | undefined> {
+    return asyncDb.queryOne<{ id: number }>(
+      `SELECT id FROM ${T_VIABILIDADE} WHERE projeto_id = ? AND versao = 1`,
       [projetoId]
     )
   },
 
-  findNaoFinalizadas(projetoId: number): { id: number }[] {
-    return db.queryMany<{ id: number }>(
-      `SELECT id FROM viabilidade WHERE projeto_id = ? AND status NOT IN ('CANCELADO', 'APROVADO')`,
+  async findNaoFinalizadas(projetoId: number): Promise<{ id: number }[]> {
+    return asyncDb.queryMany<{ id: number }>(
+      `SELECT id FROM ${T_VIABILIDADE} WHERE projeto_id = ? AND status NOT IN ('CANCELADO', 'APROVADO')`,
       [projetoId]
+    )
+  },
+
+  // ── Suporte a merge em JS para queries que cruzam viabilidade com tabelas
+  // ainda em SQLite (ver lib/repositories/projetos.ts: findAllComplexo, fetchDashboard).
+
+  /** Dado uma lista de ids de viabilidade, retorna os que estão com status='RASCUNHO'. */
+  async findRascunhoIds(ids: number[]): Promise<number[]> {
+    if (ids.length === 0) return []
+    const rows = await asyncDb.queryMany<{ id: number }>(
+      `SELECT id FROM ${T_VIABILIDADE} WHERE id = ANY(?) AND status = 'RASCUNHO'`,
+      [ids]
+    )
+    return rows.map(r => r.id)
+  },
+
+  /** capex/opex da versão aprovada mais recente por projeto, entre os ids informados. */
+  async findLatestAprovadoCapexOpexPorProjetos(ids: number[]): Promise<{ projeto_id: number; capex: number | null; opex: number | null }[]> {
+    if (ids.length === 0) return []
+    return asyncDb.queryMany(
+      `SELECT DISTINCT ON (projeto_id) projeto_id, capex, opex
+       FROM ${T_VIABILIDADE}
+       WHERE projeto_id = ANY(?) AND status = 'APROVADO'
+       ORDER BY projeto_id, versao DESC`,
+      [ids]
     )
   },
 }

@@ -3,7 +3,7 @@ import { getSession } from '@/lib/auth'
 import { buscarOrcamento, calcularTotaisOrcamento, criarGrupo } from '@/lib/orcamento'
 import type { TipoInvestimento } from '@/lib/orcamento'
 import { registrarEvento } from '@/lib/timeline'
-import getDb from '@/lib/db'
+import { asyncDb } from '@/lib/database'
 
 /** GET /api/projetos/[id]/orcamento — retorna grupos + itens + totais */
 export async function GET(
@@ -38,10 +38,10 @@ export async function POST(
   const projeto_id = Number(id)
 
   // Bloquear criação se a viabilidade mais recente estiver APROVADA e não houver revisão
-  const db = getDb()
-  const viabilidade = db.prepare(
-    'SELECT status FROM viabilidade WHERE projeto_id = ? ORDER BY versao DESC LIMIT 1'
-  ).get(projeto_id) as { status: string } | undefined
+  const viabilidade = await asyncDb.queryOne<{ status: string }>(
+    `SELECT status FROM "AI"."TI_PMO_VIABILIDADE" WHERE projeto_id = ? ORDER BY versao DESC LIMIT 1`,
+    [projeto_id]
+  )
   if (viabilidade?.status === 'APROVADO') {
     return NextResponse.json({ error: 'O orçamento está bloqueado. O Estudo de Viabilidade foi aprovado. Solicite uma revisão para editar.' }, { status: 403 })
   }

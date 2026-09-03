@@ -162,12 +162,12 @@ export async function criarProjeto(dados: {
   return projeto
 }
 
-export function atualizarStatusProjeto(
+export async function atualizarStatusProjeto(
   projeto_id: number,
   status_para: StatusProjeto,
   usuario_id: number,
   motivo?: string
-): void {
+): Promise<void> {
   const projeto = buscarProjetoPorId(projeto_id)
   if (!projeto) throw new Error('Projeto não encontrado.')
 
@@ -227,10 +227,11 @@ export function atualizarStatusProjeto(
   }
 
   if (status_para === 'VIABILIDADE') {
-    const existingVib = ViabilidadeRepository.findV1ByProjetoId(projeto_id)
+    const existingVib = await ViabilidadeRepository.findV1ByProjetoId(projeto_id)
 
     if (!existingVib) {
-      const vibId = ProjetosRepository.insertViabilidadeRascunho(projeto_id, usuario_id)
+      const vibId = await ProjetosRepository.insertViabilidadeRascunho(projeto_id, usuario_id)
+      if (vibId == null) throw new Error('Falha ao criar Estudo de Viabilidade automático — RETURNING id vazio.')
 
       ProjetosRepository.insertAprovacao({
         projeto_id,
@@ -370,7 +371,7 @@ export async function concluirProjeto(
   })
 
   const tap = await ProjetosRepository.findTapAprovado(projeto_id)
-  const viab = ViabilidadeRepository.findLatestByProjectId(projeto_id)
+  const viab = await ViabilidadeRepository.findLatestByProjectId(projeto_id)
 
   const capexExec = ProjetosRepository.calcCapexExecutado(projeto_id)
   const opexExec = ProjetosRepository.calcOpexExecutado(projeto_id)

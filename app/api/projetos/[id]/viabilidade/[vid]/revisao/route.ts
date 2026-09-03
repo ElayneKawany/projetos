@@ -20,7 +20,7 @@ export async function POST(
     return NextResponse.json({ error: 'Observação obrigatória para solicitar revisão.' }, { status: 400 })
   }
 
-  const viabilidade = ViabilidadeRepository.findByIdAndProjetoId(Number(vid), Number(projetoId))
+  const viabilidade = await ViabilidadeRepository.findByIdAndProjetoId(Number(vid), Number(projetoId))
   if (!viabilidade) return NextResponse.json({ error: 'Estudo de Viabilidade não encontrado.' }, { status: 404 })
   if (viabilidade.status !== 'PENDENTE_APROVACAO') {
     return NextResponse.json({ error: 'Apenas estudos pendentes podem ser enviados para revisão.' }, { status: 400 })
@@ -44,7 +44,7 @@ export async function POST(
 
   processarResposta({ workflow, acao: 'REJEITAR', observacao: body.observacao })
 
-  ViabilidadeRepository.updateStatus(Number(vid), 'RASCUNHO')
+  await ViabilidadeRepository.updateStatus(Number(vid), 'RASCUNHO')
 
   ProjetosRepository.updateAprovacao({
     referencia_id: Number(vid),

@@ -35,7 +35,7 @@ export async function POST(
   const projeto_id = Number(id)
   const via_id = Number(vid)
 
-  const viabilidade = ViabilidadeRepository.findByIdAndProjetoId(via_id, projeto_id)
+  const viabilidade = await ViabilidadeRepository.findByIdAndProjetoId(via_id, projeto_id)
   if (!viabilidade) {
     return NextResponse.json({ error: 'Viabilidade não encontrada.' }, { status: 404 })
   }
@@ -48,20 +48,25 @@ export async function POST(
 
   const novaVersao = (viabilidade.versao) + 1
 
-  const novaViaId = db.transaction(() => {
-    const vals: Record<string, unknown> = {
-      projeto_id,
-      versao: novaVersao,
-      status: 'RASCUNHO',
-      criado_por: session.id,
-    }
-    for (const campo of CAMPOS_COPIA) {
-      const key = campo.replace(/[^a-zA-Z0-9_]/g, '_')
-      vals[key] = (viabilidade as unknown as Record<string, unknown>)[campo] ?? null
-    }
+  // viabilidade já está em Postgres — o INSERT roda fora da transação SQLite abaixo,
+  // que só cuida de orcamento_grupos/orcamento_itens (ainda em SQLite). Ordem: Postgres
+  // primeiro, porque o registro de viabilidade em si é o artefato principal — se a cópia
+  // do orçamento falhar depois, sobra uma versão nova válida (só sem o detalhamento),
+  // em vez do inverso (grupos/itens órfãos referenciando uma viabilidade inexistente).
+  const vals: Record<string, unknown> = {
+    projeto_id,
+    versao: novaVersao,
+    status: 'RASCUNHO',
+    criado_por: session.id,
+  }
+  for (const campo of CAMPOS_COPIA) {
+    const key = campo.replace(/[^a-zA-Z0-9_]/g, '_')
+    vals[key] = (viabilidade as unknown as Record<string, unknown>)[campo] ?? null
+  }
+  const novoId = await ViabilidadeRepository.insertCopia(vals)
+  if (novoId == null) throw new Error('Falha ao criar nova versão de Viabilidade — RETURNING id vazio.')
 
-    const novoId = ViabilidadeRepository.insertCopia(vals)
-
+  db.transaction(() => {
     const grupos = ViabilidadeRepository.findGruposAtivos(projeto_id)
     for (const grupo of grupos) {
       const itens = ViabilidadeRepository.findItensGrupoAtivos(grupo.id as number)
@@ -97,8 +102,6 @@ export async function POST(
         })
       }
     }
-
-    return novoId
   })
 
   registrarEvento({
@@ -110,7 +113,7 @@ export async function POST(
     descricao: `Baseada na versão aprovada V${viabilidade.versao}`,
     usuario_id: session.id,
     usuario_nome: session.nome,
-    referencia_id: Number(novaViaId),
+    referencia_id: Number(novoId),
     referencia_tipo: 'viabilidade',
   })
 
@@ -119,11 +122,11 @@ export async function POST(
     usuario_nome: session.nome,
     acao: 'CREATE',
     entidade: 'viabilidade',
-    entidade_id: Number(novaViaId),
+    entidade_id: Number(novoId),
     projeto_id,
     descricao: `Nova versão V${novaVersao} criada a partir da versão aprovada V${viabilidade.versao}`,
     dados_depois: { versao: novaVersao, status: 'RASCUNHO', baseada_em: via_id },
   })
 
-  return NextResponse.json({ ok: true, id: novaViaId, versao: novaVersao }, { status: 201 })
+  return NextResponse.json({ ok: true, id: novoId, versao: novaVersao }, { status: 201 })
 }

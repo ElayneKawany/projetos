@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
 import getDb from '@/lib/db'
+import { asyncDb } from '@/lib/database'
 import { CronogramaRepository } from '@/lib/repositories/cronograma'
 
 export async function GET(
@@ -32,10 +33,11 @@ export async function GET(
   const cronPct = cronTotal > 0 ? Math.round((cronConcluidas / cronTotal) * 100) : 0
 
   // 2. Financeiro — planejado from viabilidade, realizado from financeiro_contratos
-  const vib = db.prepare(`
-    SELECT capex, opex FROM viabilidade
-    WHERE projeto_id = ? ORDER BY versao DESC LIMIT 1
-  `).get(projeto_id) as { capex: number | null; opex: number | null } | undefined
+  const vib = await asyncDb.queryOne<{ capex: number | null; opex: number | null }>(
+    `SELECT capex, opex FROM "AI"."TI_PMO_VIABILIDADE"
+     WHERE projeto_id = ? ORDER BY versao DESC LIMIT 1`,
+    [projeto_id]
+  )
 
   const projeto = db.prepare(`SELECT capex_aprovado, opex_aprovado, status FROM projetos WHERE id = ?`).get(projeto_id) as { capex_aprovado: number; opex_aprovado: number; status: string }
 

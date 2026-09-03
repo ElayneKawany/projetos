@@ -186,14 +186,9 @@ export async function buscarResumoPayback(projeto_id: number): Promise<PaybackRe
     `SELECT * FROM payback_competencias WHERE projeto_id = ? ORDER BY ano, mes`
   ).all(projeto_id) as PaybackCompetencia[]
 
-  const viab = db.prepare(
-    `SELECT capex, opex, economia_estimada, payback_informado, tir FROM viabilidade
-     WHERE projeto_id = ? ORDER BY versao DESC LIMIT 1`
-  ).get(projeto_id) as ViabilidadeRow | undefined
-
-  // Consulta a tap_versoes que existia aqui foi removida: o resultado nunca era
-  // usado (só `void tap` pra suprimir aviso de variável não lida) — os dados de
-  // TAP realmente usados neste resumo vêm de buscarIndicadoresFinanceiros abaixo.
+  // Consultas a viabilidade e tap_versoes que existiam aqui foram removidas: o
+  // resultado nunca era usado (só `void viab`/`void tap` pra suprimir aviso de
+  // variável não lida) — os dados reais deste resumo vêm de buscarIndicadoresFinanceiros abaixo.
   const indicadores = await buscarIndicadoresFinanceiros(projeto_id)
 
   const ultimaComp = competencias.length > 0
@@ -211,7 +206,6 @@ export async function buscarResumoPayback(projeto_id: number): Promise<PaybackRe
   }
 
   void snapshot
-  void viab
 
   return {
     projeto_id,
@@ -269,10 +263,11 @@ export function buscarFluxoCaixa(projeto_id: number): PaybackFluxo[] {
 export async function buscarIndicadoresFinanceiros(projeto_id: number): Promise<PaybackIndicadores> {
   const db = getDb()
 
-  const viab = db.prepare(
-    `SELECT capex, opex, economia_estimada, tir FROM viabilidade
-     WHERE projeto_id = ? ORDER BY versao DESC LIMIT 1`
-  ).get(projeto_id) as Omit<ViabilidadeRow, 'payback_informado'> | undefined
+  const viab = await asyncDb.queryOne<Omit<ViabilidadeRow, 'payback_informado'>>(
+    `SELECT capex, opex, economia_estimada, tir FROM "AI"."TI_PMO_VIABILIDADE"
+     WHERE projeto_id = ? ORDER BY versao DESC LIMIT 1`,
+    [projeto_id]
+  )
 
   const tap = await asyncDb.queryOne<Pick<TapRow, 'roi_previsto'>>(
     `SELECT roi_previsto FROM "AI"."TI_PMO_TAP_VERSOES"

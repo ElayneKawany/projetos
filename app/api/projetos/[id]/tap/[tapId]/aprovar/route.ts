@@ -72,7 +72,7 @@ export async function POST(
 
     const projeto = buscarProjetoPorId(Number(projetoId))
     if (projeto && !statusJaAvancou(projeto.status, 'VIABILIDADE')) {
-      atualizarStatusProjeto(
+      await atualizarStatusProjeto(
         Number(projetoId),
         'VIABILIDADE',
         session.id,
@@ -88,9 +88,10 @@ export async function POST(
         acao: 'STATUS_CHANGE',
       })
     } else if (projeto) {
-      const existeVib = ViabilidadeRepository.findV1ByProjetoId(Number(projetoId))
+      const existeVib = await ViabilidadeRepository.findV1ByProjetoId(Number(projetoId))
       if (!existeVib) {
-        const vibId = ProjetosRepository.insertViabilidadeRascunho(Number(projetoId), session.id)
+        const vibId = await ProjetosRepository.insertViabilidadeRascunho(Number(projetoId), session.id)
+        if (vibId == null) throw new Error('Falha ao criar Estudo de Viabilidade automático — RETURNING id vazio.')
         ProjetosRepository.insertAprovacao({
           projeto_id: Number(projetoId),
           tipo: 'VIABILIDADE',

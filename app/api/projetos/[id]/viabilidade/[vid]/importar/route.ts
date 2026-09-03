@@ -15,7 +15,7 @@ export async function POST(
   const projeto_id = Number(id)
   const vid_id     = Number(vid)
 
-  const viabilidade = ViabilidadeRepository.findByIdAndProjetoId(vid_id, projeto_id)
+  const viabilidade = await ViabilidadeRepository.findByIdAndProjetoId(vid_id, projeto_id)
   if (!viabilidade) return NextResponse.json({ error: 'Estudo de Viabilidade não encontrado.' }, { status: 404 })
   if (viabilidade.status !== 'RASCUNHO') {
     return NextResponse.json({ error: 'Somente estudos em rascunho podem ser importados.' }, { status: 400 })

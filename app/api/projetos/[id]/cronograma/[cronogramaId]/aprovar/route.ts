@@ -101,7 +101,7 @@ export async function POST(
         return NextResponse.json({ error: erroExecucao }, { status: 422 })
       }
 
-      atualizarStatusProjeto(Number(projetoId), 'EXECUCAO', session.id,
+      await atualizarStatusProjeto(Number(projetoId), 'EXECUCAO', session.id,
         `Cronograma V${versao} aprovado — projeto avança automaticamente para Execução.`)
 
       registrarEvento({

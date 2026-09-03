@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession, temPermissao } from '@/lib/auth'
 import getDb from '@/lib/db'
+import { asyncDb } from '@/lib/database'
 import { registrarAuditoria } from '@/lib/db/auditoria'
 import { calcularResumoPayback } from '@/lib/payback/calcularLancamentos'
 import type { PaybackLancamento } from '@/types'
@@ -23,12 +24,13 @@ export async function GET(
   if (!projeto) return NextResponse.json({ error: 'Projeto não encontrado.' }, { status: 404 })
 
   // Viabilidade aprovada mais recente
-  const viabilidade = db.prepare(`
-    SELECT capex, opex, economia_estimada, payback_meses
-    FROM viabilidade
-    WHERE projeto_id = ? AND status = 'APROVADO'
-    ORDER BY versao DESC LIMIT 1
-  `).get(projeto_id) as { capex: number | null; opex: number | null; economia_estimada: number | null; payback_meses: number | null } | undefined
+  const viabilidade = await asyncDb.queryOne<{ capex: number | null; opex: number | null; economia_estimada: number | null; payback_meses: number | null }>(
+    `SELECT capex, opex, economia_estimada, payback_meses
+     FROM "AI"."TI_PMO_VIABILIDADE"
+     WHERE projeto_id = ? AND status = 'APROVADO'
+     ORDER BY versao DESC LIMIT 1`,
+    [projeto_id]
+  )
 
   const lancamentos = db.prepare(
     'SELECT * FROM payback_lancamentos WHERE projeto_id = ? ORDER BY competencia ASC'

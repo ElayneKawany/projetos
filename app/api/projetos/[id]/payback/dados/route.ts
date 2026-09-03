@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
 import { getDb } from '@/lib/db'
+import { asyncDb } from '@/lib/database'
 import { calcularPayback, type DadosBasePayback, type RegistroPayback } from '@/lib/payback/calcularPayback'
 
 export async function GET(
@@ -15,25 +16,27 @@ export async function GET(
   const db = getDb()
 
   // Busca dados base da viabilidade aprovada mais recente
-  const viab = db.prepare(`
-    SELECT v.capex, v.opex, v.economia_estimada, v.economia_periodicidade,
-           v.payback_informado, v.payback_unidade,
-           v.baseline_valor, v.meta_valor, v.tipo_indicador, v.economia_mensal_esperada,
-           v.tipo_payback_quantitativo, v.tipo_payback_qualitativo
-    FROM viabilidade v
-    WHERE v.projeto_id = ? AND v.status = 'APROVADO'
-    ORDER BY v.versao DESC LIMIT 1
-  `).get(projetoId) as Record<string, unknown> | undefined
+  const viab = await asyncDb.queryOne<Record<string, unknown>>(
+    `SELECT v.capex, v.opex, v.economia_estimada, v.economia_periodicidade,
+            v.payback_informado, v.payback_unidade,
+            v.baseline_valor, v.meta_valor, v.tipo_indicador, v.economia_mensal_esperada,
+            v.tipo_payback_quantitativo, v.tipo_payback_qualitativo
+     FROM "AI"."TI_PMO_VIABILIDADE" v
+     WHERE v.projeto_id = ? AND v.status = 'APROVADO'
+     ORDER BY v.versao DESC LIMIT 1`,
+    [projetoId]
+  )
 
   // Se não há aprovada, pega a mais recente (qualquer status)
-  const viabFallback = !viab ? db.prepare(`
-    SELECT v.capex, v.opex, v.economia_estimada, v.economia_periodicidade,
-           v.payback_informado, v.payback_unidade,
-           v.baseline_valor, v.meta_valor, v.tipo_indicador, v.economia_mensal_esperada,
-           v.tipo_payback_quantitativo, v.tipo_payback_qualitativo
-    FROM viabilidade v
-    WHERE v.projeto_id = ? ORDER BY v.versao DESC LIMIT 1
-  `).get(projetoId) as Record<string, unknown> | undefined : undefined
+  const viabFallback = !viab ? await asyncDb.queryOne<Record<string, unknown>>(
+    `SELECT v.capex, v.opex, v.economia_estimada, v.economia_periodicidade,
+            v.payback_informado, v.payback_unidade,
+            v.baseline_valor, v.meta_valor, v.tipo_indicador, v.economia_mensal_esperada,
+            v.tipo_payback_quantitativo, v.tipo_payback_qualitativo
+     FROM "AI"."TI_PMO_VIABILIDADE" v
+     WHERE v.projeto_id = ? ORDER BY v.versao DESC LIMIT 1`,
+    [projetoId]
+  ) : undefined
 
   const v = viab ?? viabFallback
 

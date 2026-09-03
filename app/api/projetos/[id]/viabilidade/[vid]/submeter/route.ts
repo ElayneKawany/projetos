@@ -32,7 +32,7 @@ export async function POST(
     return NextResponse.json({ error: 'Todas as etapas devem ter usuário e tipo preenchidos.' }, { status: 400 })
   }
 
-  const viabilidade = ViabilidadeRepository.findByIdAndProjetoId(Number(vid), Number(projetoId))
+  const viabilidade = await ViabilidadeRepository.findByIdAndProjetoId(Number(vid), Number(projetoId))
   if (!viabilidade) return NextResponse.json({ error: 'Estudo de Viabilidade não encontrado.' }, { status: 404 })
   if (viabilidade.status !== 'RASCUNHO') {
     return NextResponse.json({ error: 'Apenas estudos em rascunho podem ser enviados para aprovação.' }, { status: 400 })

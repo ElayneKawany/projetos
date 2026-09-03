@@ -24,7 +24,7 @@ export async function PATCH(
   if (!session) return NextResponse.json({ error: 'Não autenticado.' }, { status: 401 })
   const { id, vid } = await params
 
-  const viabilidade = ViabilidadeRepository.findByIdAndProjetoId(Number(vid), Number(id))
+  const viabilidade = await ViabilidadeRepository.findByIdAndProjetoId(Number(vid), Number(id))
   if (!viabilidade) return NextResponse.json({ error: 'Viabilidade não encontrada.' }, { status: 404 })
 
   const isV1Aprovada = viabilidade.status === 'APROVADO' && viabilidade.versao === 1
@@ -58,7 +58,7 @@ export async function PATCH(
   }
   if (!Object.keys(dados).length) return NextResponse.json({ error: 'Nada para atualizar.' }, { status: 400 })
 
-  ViabilidadeRepository.update(Number(vid), dados)
+  await ViabilidadeRepository.update(Number(vid), dados)
 
   for (const campo of Object.keys(dados)) {
     if (CAMPOS_FINANCEIROS.includes(campo)) {

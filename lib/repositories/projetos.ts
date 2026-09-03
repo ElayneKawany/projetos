@@ -1,9 +1,11 @@
 import { db, asyncDb } from '@/lib/database'
 import { TapRepository } from './tap'
+import { ViabilidadeRepository } from './viabilidade'
 import type { Projeto, StatusProjeto, Prioridade } from '@/types'
 
 // tap_versoes já está em Postgres — nome real da tabela (ver lib/db/drizzle/schema.postgres.ts).
 const T_TAP_VERSOES = '"AI"."TI_PMO_TAP_VERSOES"'
+const T_VIABILIDADE = '"AI"."TI_PMO_VIABILIDADE"'
 
 export interface ProjetoFiltros {
   status?: string
@@ -135,8 +137,7 @@ export const ProjetosRepository = {
                 SELECT 1 FROM aprovacoes apr
                 WHERE apr.projeto_id = p.id AND apr.status = 'REJEITADO'
                 AND (
-                  (apr.tipo = 'VIABILIDADE' AND EXISTS (SELECT 1 FROM viabilidade v  WHERE v.id  = apr.referencia_id AND v.status  = 'RASCUNHO'))
-                  OR (apr.tipo = 'CRONOGRAMA'  AND EXISTS (SELECT 1 FROM cronogramas cr WHERE cr.id = apr.referencia_id AND cr.status = 'RASCUNHO'))
+                  apr.tipo = 'CRONOGRAMA' AND EXISTS (SELECT 1 FROM cronogramas cr WHERE cr.id = apr.referencia_id AND cr.status = 'RASCUNHO')
                 )
               ) THEN 1 ELSE 0 END AS tem_revisao_pendente,
               (SELECT COUNT(*) FROM cronograma_tarefas ct
@@ -159,29 +160,36 @@ export const ProjetosRepository = {
       namedParams
     )
 
-    // Ramo TAP do tem_revisao_pendente: tap_versoes já está em Postgres, não dá
-    // pra fazer EXISTS cruzando bancos em uma query só. Busca as aprovações
-    // REJEITADO de tipo TAP destes projetos no SQLite (barato, mesma tabela da
-    // query acima), depois confere no Postgres quais dessas tap_versoes ainda
-    // estão em RASCUNHO, e faz o OR em JS — nunca reduz um true já calculado
-    // pelos ramos de Viabilidade/Cronograma acima.
+    // Ramos TAP e VIABILIDADE do tem_revisao_pendente: as duas tabelas já estão em
+    // Postgres, não dá pra fazer EXISTS cruzando bancos em uma query só. Busca as
+    // aprovações REJEITADO desses 2 tipos destes projetos no SQLite (barato, mesma
+    // tabela da query acima), depois confere no Postgres quais dessas linhas ainda
+    // estão em RASCUNHO, e faz o OR em JS — nunca reduz um true já calculado pelo
+    // ramo de Cronograma acima.
     if (projetos.length > 0) {
       const idsProjetos = projetos.map(p => p.id)
       const placeholders = idsProjetos.map(() => '?').join(',')
-      const aprovacoesTap = db.queryMany<{ projeto_id: number; referencia_id: number }>(
-        `SELECT projeto_id, referencia_id FROM aprovacoes
-         WHERE status = 'REJEITADO' AND tipo = 'TAP' AND projeto_id IN (${placeholders})`,
+      const aprovacoesRejeitadas = db.queryMany<{ projeto_id: number; tipo: string; referencia_id: number }>(
+        `SELECT projeto_id, tipo, referencia_id FROM aprovacoes
+         WHERE status = 'REJEITADO' AND tipo IN ('TAP', 'VIABILIDADE') AND projeto_id IN (${placeholders})`,
         idsProjetos
       )
-      if (aprovacoesTap.length > 0) {
-        const tapIds = aprovacoesTap.map(a => a.referencia_id)
-        const rascunhoIds = new Set(await TapRepository.findRascunhoIds(tapIds))
-        const projetosComRevisaoTap = new Set(
-          aprovacoesTap.filter(a => rascunhoIds.has(a.referencia_id)).map(a => a.projeto_id)
-        )
-        for (const p of projetos) {
-          if (projetosComRevisaoTap.has(p.id)) p.tem_revisao_pendente = 1
-        }
+      const aprovacoesTap = aprovacoesRejeitadas.filter(a => a.tipo === 'TAP')
+      const aprovacoesVib = aprovacoesRejeitadas.filter(a => a.tipo === 'VIABILIDADE')
+
+      const [rascunhoTapIds, rascunhoVibIds] = await Promise.all([
+        TapRepository.findRascunhoIds(aprovacoesTap.map(a => a.referencia_id)),
+        ViabilidadeRepository.findRascunhoIds(aprovacoesVib.map(a => a.referencia_id)),
+      ])
+      const rascunhoTap = new Set(rascunhoTapIds)
+      const rascunhoVib = new Set(rascunhoVibIds)
+
+      const projetosComRevisao = new Set([
+        ...aprovacoesTap.filter(a => rascunhoTap.has(a.referencia_id)).map(a => a.projeto_id),
+        ...aprovacoesVib.filter(a => rascunhoVib.has(a.referencia_id)).map(a => a.projeto_id),
+      ])
+      for (const p of projetos) {
+        if (projetosComRevisao.has(p.id)) p.tem_revisao_pendente = 1
       }
     }
 
@@ -480,14 +488,15 @@ export const ProjetosRepository = {
     )
   },
 
-  insertViabilidadeRascunho(projeto_id: number, usuario_id: number): number | bigint {
-    const result = db.execute(
-      `INSERT INTO viabilidade
+  async insertViabilidadeRascunho(projeto_id: number, usuario_id: number): Promise<number | null> {
+    const result = await asyncDb.execute(
+      `INSERT INTO ${T_VIABILIDADE}
         (projeto_id, versao, status, criado_por, resumo_executivo, recomendacao)
-       VALUES (?,1,'RASCUNHO',?,?,NULL)`,
+       VALUES (?,1,'RASCUNHO',?,?,NULL)
+       RETURNING id`,
       [projeto_id, usuario_id, 'A preencher: Descreva o objetivo e benefícios esperados do projeto.']
     )
-    return result.lastInsertRowid
+    return result.insertedId
   },
 
   updateAprovacao(params: {
@@ -656,20 +665,19 @@ export const ProjetosRepository = {
     const aprovacoesPendentes = (db.queryOne<{ total: number }>(`SELECT COUNT(*) as total FROM aprovacoes WHERE status='PENDENTE'`) as { total: number }).total
     const porStatus = db.queryMany(`SELECT status, COUNT(*) as total FROM projetos WHERE ativo=1 GROUP BY status`)
     const porPrioridade = db.queryMany(`SELECT prioridade, COUNT(*) as total FROM projetos WHERE ativo=1 GROUP BY prioridade`)
-    const investimentoTotal = (db.queryOne<{ total: number }>(`
-      SELECT COALESCE(SUM(COALESCE(v.capex, 0) + COALESCE(v.opex, 0)), 0) AS total
-      FROM projetos p
-      LEFT JOIN (
-        SELECT projeto_id, capex, opex
-        FROM viabilidade vi
-        WHERE vi.status = 'APROVADO'
-          AND vi.versao = (
-            SELECT MAX(versao) FROM viabilidade
-            WHERE projeto_id = vi.projeto_id AND status = 'APROVADO'
-          )
-      ) v ON v.projeto_id = p.id
-      WHERE p.ativo = 1 AND p.status NOT IN ('CANCELADO')
-    `) as { total: number }).total
+    // viabilidade já está em Postgres — não dá pra fazer esse JOIN em SQL puro.
+    // Pega os ids de projeto elegíveis (SQLite, igual ao WHERE original), busca o
+    // capex/opex da versão aprovada mais recente por projeto no Postgres, soma em JS.
+    const projetosElegiveisInvest = db.queryMany<{ id: number }>(
+      `SELECT id FROM projetos WHERE ativo = 1 AND status NOT IN ('CANCELADO')`
+    )
+    const capexOpexPorProjeto = await ViabilidadeRepository.findLatestAprovadoCapexOpexPorProjetos(
+      projetosElegiveisInvest.map(p => p.id)
+    )
+    const investimentoTotal = capexOpexPorProjeto.reduce(
+      (acc, v) => acc + (v.capex ?? 0) + (v.opex ?? 0),
+      0
+    )
     const projetosAtrasados = (db.queryOne<{ total: number }>(`SELECT COUNT(*) as total FROM projetos p WHERE p.ativo=1
 AND ${DATA_FIM_EFETIVA_EXPR} IS NOT NULL AND ${DATA_FIM_EFETIVA_EXPR} < date('now')
 AND p.status NOT IN ('ENCERRAMENTO','CANCELADO','SUSPENSO','GOLIVE','ROI','PROJETO_ENCERRADO','PAYBACK_ENCERRADO')`) as { total: number }).total

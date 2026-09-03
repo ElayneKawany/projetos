@@ -14,6 +14,7 @@
  */
 
 import getDb from './db'
+import { asyncDb } from './database'
 import type { SessionUser } from './auth'
 import { CronogramaRepository } from './repositories/cronograma'
 import { diasUteisEntre } from './utils/dias-uteis'
@@ -231,10 +232,14 @@ export function buscarMinhasPendencias(usuarioId: number): PendenciaResumo[] {
  * @param usuarioId - ID do usuário logado
  * @param limit     - máximo de documentos (default 50)
  */
-export function buscarMeusDocumentos(
+// NOTA: função sem nenhum caller hoje (fonte prevista pra futura página /meu-trabalho).
+// O bloco de TAP abaixo tem um bug pré-existente não relacionado a esta migração —
+// `FROM tap t` referencia uma tabela que não existe (a real é `tap_versoes`) — não
+// corrigido aqui, fora de escopo.
+export async function buscarMeusDocumentos(
   usuarioId: number,
   limit = 50
-): DocumentoResumo[] {
+): Promise<DocumentoResumo[]> {
   const db = getDb()
   const docs: DocumentoResumo[] = []
 
@@ -264,30 +269,52 @@ export function buscarMeusDocumentos(
   `).all({ uid: usuarioId, lim: limit }) as DocumentoResumo[]
   docs.push(...taps)
 
-  // Estudos de Viabilidade
-  const viabs = db.prepare(`
-    SELECT
-      v.id,
-      v.projeto_id,
-      p.nome             AS projeto_nome,
-      'VIABILIDADE'      AS tipo,
-      v.versao,
-      v.status,
-      u.nome             AS criado_por_nome,
-      v.created_at
-    FROM viabilidade v
-    JOIN projetos p ON p.id = v.projeto_id
-    LEFT JOIN usuarios u ON u.id = v.criado_por
-    WHERE v.criado_por = @uid
-       OR EXISTS (
-         SELECT 1 FROM workflow_aprovacao wa
-         JOIN workflow_etapas we ON we.workflow_id = wa.id
-         WHERE wa.artefato_tipo = 'VIABILIDADE' AND wa.artefato_id = v.id
-           AND we.usuario_id = @uid
-       )
-    ORDER BY v.created_at DESC
-    LIMIT @lim
-  `).all({ uid: usuarioId, lim: limit }) as DocumentoResumo[]
+  // Estudos de Viabilidade — já em Postgres. Busca no SQLite os ids de viabilidade
+  // onde o usuário participa do workflow (barato, mesma tabela usada acima pro TAP),
+  // depois busca no Postgres por criado_por OU esses ids, e junta projeto_nome/
+  // criado_por_nome (SQLite) em JS.
+  const workflowVibIds = db.prepare(`
+    SELECT DISTINCT wa.artefato_id AS id
+    FROM workflow_aprovacao wa
+    JOIN workflow_etapas we ON we.workflow_id = wa.id
+    WHERE wa.artefato_tipo = 'VIABILIDADE' AND we.usuario_id = ?
+  `).all(usuarioId) as { id: number }[]
+
+  const viabsRaw = await asyncDb.queryMany<{
+    id: number; projeto_id: number; versao: number; status: string
+    criado_por: number | null; created_at: string
+  }>(
+    `SELECT id, projeto_id, versao, status, criado_por, created_at
+     FROM "AI"."TI_PMO_VIABILIDADE"
+     WHERE criado_por = ? OR id = ANY(?)
+     ORDER BY created_at DESC
+     LIMIT ?`,
+    [usuarioId, workflowVibIds.map(v => v.id), limit]
+  )
+
+  const projetoIds = [...new Set(viabsRaw.map(v => v.projeto_id))]
+  const usuarioIds = [...new Set(viabsRaw.map(v => v.criado_por).filter((id): id is number => id != null))]
+  const nomesProjeto = projetoIds.length
+    ? new Map((db.prepare(
+        `SELECT id, nome FROM projetos WHERE id IN (${projetoIds.map(() => '?').join(',')})`
+      ).all(...projetoIds) as { id: number; nome: string }[]).map(p => [p.id, p.nome] as const))
+    : new Map<number, string>()
+  const nomesUsuario = usuarioIds.length
+    ? new Map((db.prepare(
+        `SELECT id, nome FROM usuarios WHERE id IN (${usuarioIds.map(() => '?').join(',')})`
+      ).all(...usuarioIds) as { id: number; nome: string }[]).map(u => [u.id, u.nome] as const))
+    : new Map<number, string>()
+
+  const viabs = viabsRaw.map(v => ({
+    id: v.id,
+    projeto_id: v.projeto_id,
+    projeto_nome: nomesProjeto.get(v.projeto_id) ?? null,
+    tipo: 'VIABILIDADE',
+    versao: v.versao,
+    status: v.status,
+    criado_por_nome: v.criado_por != null ? nomesUsuario.get(v.criado_por) ?? null : null,
+    created_at: v.created_at,
+  })) as unknown as DocumentoResumo[]
   docs.push(...viabs)
 
   // Cronogramas

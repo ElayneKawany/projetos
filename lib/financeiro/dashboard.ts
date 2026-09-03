@@ -18,7 +18,7 @@ import { FinanceiroRepository } from '@/lib/repositories'
 
 // ─── Viabilidade ──────────────────────────────────────────────────────────────
 
-export function buscarViabilidadeFinanceira(projeto_id: number): { capex: number; opex: number } {
+export async function buscarViabilidadeFinanceira(projeto_id: number): Promise<{ capex: number; opex: number }> {
   return FinanceiroRepository.findViabilidadeCapexOpex(projeto_id)
 }
 
@@ -63,8 +63,8 @@ export function buscarContratosCompletos(projeto_id: number): FinanceiroContrato
 
 // ─── Resumo executivo (header cards) ─────────────────────────────────────────
 
-export function buscarResumoFinanceiro(projeto_id: number): FinanceiroResumoExecutivo {
-  const { capex, opex } = buscarViabilidadeFinanceira(projeto_id)
+export async function buscarResumoFinanceiro(projeto_id: number): Promise<FinanceiroResumoExecutivo> {
+  const { capex, opex } = await buscarViabilidadeFinanceira(projeto_id)
   const contratos = buscarContratosCompletos(projeto_id)
 
   const capex_executado = contratos
@@ -104,8 +104,8 @@ export function buscarResumoFinanceiro(projeto_id: number): FinanceiroResumoExec
  * Calculado sob demanda — qualquer pagamento criado/atualizado/excluído reflete
  * automaticamente aqui sem necessidade de invalidação de cache.
  */
-export function buscarCardsFinanceiros(projeto_id: number): FinanceiroCardsPayback {
-  const resumo = buscarResumoFinanceiro(projeto_id)
+export async function buscarCardsFinanceiros(projeto_id: number): Promise<FinanceiroCardsPayback> {
+  const resumo = await buscarResumoFinanceiro(projeto_id)
 
   const linhasMensais = FinanceiroRepository.findDistribuicaoMensalPagamentos(projeto_id)
 
