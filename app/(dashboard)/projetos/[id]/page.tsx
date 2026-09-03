@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation'
 import { getSession } from '@/lib/auth'
 import { buscarProjetoPorId, buscarHistoricoStatus, buscarHistoricoPrioridade, buscarHistoricoAlteracoes, buscarConfigStatus } from '@/lib/projetos'
-import { UsuariosRepository } from '@/lib/repositories'
+import { UsuariosRepository, TapRepository, ViabilidadeRepository } from '@/lib/repositories'
 import { asyncDb } from '@/lib/database'
 import getDb from '@/lib/db'
 import { buscarWorkflow } from '@/lib/workflow'
@@ -31,30 +31,23 @@ export default async function ProjetoDetalhePage({
   const historicoAlteracoes     = buscarHistoricoAlteracoes(projeto.id)
   const configStatus            = await buscarConfigStatus()
 
-  // NOTA: tap_versoes já foi migrada para Postgres (fatia 2) — esta tabela local
-  // (`tap_versoes` em SQLite) está congelada desde então e não reflete TAPs criadas/
-  // atualizadas depois da migração. Bug pré-existente, fora do escopo desta fatia
-  // (usuarios) — reportado separadamente, não corrigido aqui.
-  const tapVersoesRaw = db.prepare(`
-    SELECT * FROM tap_versoes tv
-    WHERE tv.projeto_id = ?
-    ORDER BY tv.versao DESC
-  `).all(projeto.id) as { id: number; criado_por: number | null; aprovado_por: number | null; [k: string]: unknown }[]
+  // tap_versoes e viabilidade já estão em Postgres (fatias 2 e 3) — busca via
+  // repositório, não mais via SQLite (que ficou congelado desde a migração dessas
+  // tabelas). aprovador_nome já vem resolvido pelo repositório; criador_nome
+  // ainda precisa do merge em JS de sempre (usuarios também é Postgres).
+  const tapVersoesRaw = await TapRepository.findAllByProjectId(projeto.id)
   const tapNomeIds = [...new Set(
-    tapVersoesRaw.flatMap(t => [t.criado_por, t.aprovado_por]).filter((v): v is number => v != null)
+    tapVersoesRaw.map(t => t.criado_por).filter((v): v is number => v != null)
   )]
   const tapNomes = await UsuariosRepository.findNomesPorIds(tapNomeIds)
   const tapVersoes = tapVersoesRaw.map(t => ({
     ...t,
     criador_nome: t.criado_por != null ? tapNomes.get(t.criado_por)?.nome ?? null : null,
-    aprovador_nome: t.aprovado_por != null ? tapNomes.get(t.aprovado_por)?.nome ?? null : null,
   }))
 
   const triagem = db.prepare('SELECT * FROM triagens WHERE projeto_id = ?').get(projeto.id)
 
-  const viabilidadeData = db.prepare(
-    'SELECT * FROM viabilidade WHERE projeto_id = ? ORDER BY versao DESC LIMIT 1'
-  ).get(projeto.id)
+  const viabilidadeData = await ViabilidadeRepository.findLatestByProjectId(projeto.id)
 
   const capexProjecoes = viabilidadeData
     ? db.prepare(`

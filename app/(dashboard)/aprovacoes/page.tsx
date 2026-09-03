@@ -1,5 +1,6 @@
 import { getSession } from '@/lib/auth'
 import getDb from '@/lib/db'
+import { TapRepository, ViabilidadeRepository } from '@/lib/repositories'
 import AprovacoesClient from './AprovacoesClient'
 
 export default async function AprovacoesPage() {
@@ -28,6 +29,17 @@ export default async function AprovacoesPage() {
     ORDER BY wa.id DESC
   `).all() as WorkflowRow[]
 
+  // tap_versoes e viabilidade já estão em Postgres — busca em lote pelos ids de
+  // referência exatos (não por projeto), uma vez, antes do loop por linha.
+  const tapIds = rows.filter(r => r.tipo === 'TAP').map(r => r.referencia_id)
+  const viabIds = rows.filter(r => r.tipo === 'VIABILIDADE').map(r => r.referencia_id)
+  const [taps, viabs] = await Promise.all([
+    TapRepository.findByIds(tapIds),
+    ViabilidadeRepository.findByIds(viabIds),
+  ])
+  const tapPorId = new Map(taps.map(t => [t.id, t]))
+  const viabPorId = new Map(viabs.map(v => [v.id, v]))
+
   const workflows = rows.map(row => {
     const etapas = db.prepare(
       'SELECT * FROM workflow_etapas WHERE workflow_id = ? ORDER BY ordem'
@@ -37,11 +49,11 @@ export default async function AprovacoesPage() {
     let documentoLabel = row.tipo
 
     if (row.tipo === 'TAP') {
-      const doc = db.prepare('SELECT versao, label FROM tap_versoes WHERE id = ?').get(row.referencia_id) as { versao: number; label: string } | undefined
+      const doc = tapPorId.get(row.referencia_id)
       versao = doc?.versao ?? '—'
       documentoLabel = doc?.label ?? 'TAP'
     } else if (row.tipo === 'VIABILIDADE') {
-      const doc = db.prepare('SELECT versao FROM viabilidade WHERE id = ?').get(row.referencia_id) as { versao: number } | undefined
+      const doc = viabPorId.get(row.referencia_id)
       versao = doc?.versao ?? '—'
       documentoLabel = `Estudo de Viabilidade V${versao}`
     } else if (row.tipo === 'CRONOGRAMA') {

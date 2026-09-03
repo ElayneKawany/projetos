@@ -32,6 +32,8 @@ export interface TapVersao {
   premissas?: string | null
   riscos_iniciais?: string | null
   payback_meses?: number | null
+  roi_previsto?: number | null
+  data_limite_tap?: string | null
   fase_origem?: string | null
   criado_por?: number | null
   aprovado_por?: number | null
@@ -179,6 +181,27 @@ export const TapRepository = {
        FROM ${T_TAP_VERSOES}
        WHERE projeto_id = ANY(?)
        ORDER BY projeto_id, versao DESC`,
+      [ids]
+    )
+  },
+
+  /** Linha completa da versão mais recente (qualquer status) de cada projeto informado. */
+  async findLatestPorProjetos(ids: number[]): Promise<TapVersao[]> {
+    if (ids.length === 0) return []
+    return asyncDb.queryMany<TapVersao>(
+      `SELECT DISTINCT ON (projeto_id) *
+       FROM ${T_TAP_VERSOES}
+       WHERE projeto_id = ANY(?)
+       ORDER BY projeto_id, versao DESC`,
+      [ids]
+    )
+  },
+
+  /** Busca por lote de ids (não por projeto) — usado onde já se tem a referencia_id exata (ex.: workflow de aprovação). */
+  async findByIds(ids: number[]): Promise<TapVersao[]> {
+    if (ids.length === 0) return []
+    return asyncDb.queryMany<TapVersao>(
+      `SELECT * FROM ${T_TAP_VERSOES} WHERE id = ANY(?)`,
       [ids]
     )
   },

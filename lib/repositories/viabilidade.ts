@@ -261,4 +261,25 @@ export const ViabilidadeRepository = {
       [ids]
     )
   },
+
+  /** Linha completa da versão mais recente (qualquer status) de cada projeto informado. */
+  async findLatestPorProjetos(ids: number[]): Promise<Viabilidade[]> {
+    if (ids.length === 0) return []
+    return asyncDb.queryMany<Viabilidade>(
+      `SELECT DISTINCT ON (projeto_id) *
+       FROM ${T_VIABILIDADE}
+       WHERE projeto_id = ANY(?)
+       ORDER BY projeto_id, versao DESC`,
+      [ids]
+    )
+  },
+
+  /** Busca por lote de ids (não por projeto) — usado onde já se tem a referencia_id exata (ex.: workflow de aprovação). */
+  async findByIds(ids: number[]): Promise<Viabilidade[]> {
+    if (ids.length === 0) return []
+    return asyncDb.queryMany<Viabilidade>(
+      `SELECT * FROM ${T_VIABILIDADE} WHERE id = ANY(?)`,
+      [ids]
+    )
+  },
 }

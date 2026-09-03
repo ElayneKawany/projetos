@@ -2,7 +2,7 @@ import { notFound } from 'next/navigation'
 import { getSession } from '@/lib/auth'
 import getDb from '@/lib/db'
 import { asyncDb } from '@/lib/database'
-import { UsuariosRepository } from '@/lib/repositories'
+import { UsuariosRepository, TapRepository, ViabilidadeRepository } from '@/lib/repositories'
 import ComiteDetalheClient from './ComiteDetalheClient'
 import { DEV2026_ATIVIDADES } from '@/lib/ti/dev2026-data'
 import { DATA_FIM_EFETIVA_SQL } from '@/lib/repositories/projetos'
@@ -72,55 +72,56 @@ export default async function ComiteDetalhePage({ params }: { params: Promise<{ 
            p.data_fim_prev AS data_fim_prevista,
            ${DATA_FIM_EFETIVA_SQL},
            d.nome AS diretoria, a.nome AS area,
-           p.gerente_id,
-           (SELECT tv.roi_previsto FROM tap_versoes tv WHERE tv.projeto_id = p.id ORDER BY tv.versao DESC LIMIT 1) AS roi_previsto
+           p.gerente_id
     FROM projetos p
     LEFT JOIN diretorias d ON d.id = p.diretoria_id
     LEFT JOIN areas a ON a.id = p.area_id
     WHERE p.ativo = 1
     ORDER BY p.status, p.nome
-  `).all() as (Record<string, unknown> & { gerente_id: number | null })[]
-  const gerenteIds1 = [...new Set(todosProjetosRaw.map(p => p.gerente_id).filter((v): v is number => v != null))]
-  const gerenteNomes1 = await UsuariosRepository.findNomesPorIds(gerenteIds1)
+  `).all() as (Record<string, unknown> & { id: number; gerente_id: number | null })[]
+
+  // tap_versoes e viabilidade já estão em Postgres — busca a versão mais recente
+  // (qualquer status) de cada projeto ativo de uma vez só, reaproveitada pelos 4
+  // conjuntos de dados abaixo (todosProjetos + os 3 "Detalhe" por status).
+  const todosProjetoIds = todosProjetosRaw.map(p => p.id)
+  const [gerenteNomes1, tapsLatest, viabsLatest] = await Promise.all([
+    UsuariosRepository.findNomesPorIds(todosProjetosRaw.map(p => p.gerente_id).filter((v): v is number => v != null)),
+    TapRepository.findLatestPorProjetos(todosProjetoIds),
+    ViabilidadeRepository.findLatestPorProjetos(todosProjetoIds),
+  ])
+  const tapPorProjeto = new Map(tapsLatest.map(t => [t.projeto_id, t]))
+  const viabPorProjeto = new Map(viabsLatest.map(v => [v.projeto_id, v]))
+
   const todosProjetos = todosProjetosRaw.map(p => ({
     ...p,
     gerente_nome: p.gerente_id != null ? gerenteNomes1.get(p.gerente_id)?.nome ?? null : null,
+    roi_previsto: tapPorProjeto.get(p.id)?.roi_previsto ?? null,
   }))
 
   // Detail data for the Viabilidade slide
   const projetosViabilidadeDetalheRaw = db.prepare(`
-    SELECT
-      p.id,
-      p.objetivo,
-      p.descricao,
-      p.solicitante_id,
-      tv.situacao_atual,
-      v.impacto_operacional AS cenario_atual,
-      v.beneficios_esperados,
-      v.riscos AS riscos_json,
-      v.payback_meses,
-      v.capex,
-      v.opex,
-      v.investimento_total
+    SELECT p.id, p.objetivo, p.descricao, p.solicitante_id
     FROM projetos p
-    LEFT JOIN (
-      SELECT tv2.projeto_id, tv2.situacao_atual
-      FROM tap_versoes tv2
-      WHERE tv2.versao = (SELECT MAX(tv3.versao) FROM tap_versoes tv3 WHERE tv3.projeto_id = tv2.projeto_id)
-    ) tv ON tv.projeto_id = p.id
-    LEFT JOIN (
-      SELECT v2.projeto_id, v2.impacto_operacional, v2.beneficios_esperados, v2.riscos, v2.payback_meses, v2.capex, v2.opex, v2.investimento_total
-      FROM viabilidade v2
-      WHERE v2.versao = (SELECT MAX(v3.versao) FROM viabilidade v3 WHERE v3.projeto_id = v2.projeto_id)
-    ) v ON v.projeto_id = p.id
     WHERE p.ativo = 1 AND p.status IN ('VIABILIDADE','COMPLEMENTACAO_TAP','APROVACAO')
-  `).all() as (Record<string, unknown> & { solicitante_id: number | null })[]
+  `).all() as (Record<string, unknown> & { id: number; solicitante_id: number | null })[]
   const solIds1 = [...new Set(projetosViabilidadeDetalheRaw.map(p => p.solicitante_id).filter((v): v is number => v != null))]
   const solNomes1 = await UsuariosRepository.findNomesPorIds(solIds1)
-  const projetosViabilidadeDetalhe = projetosViabilidadeDetalheRaw.map(p => ({
-    ...p,
-    solicitante_nome: p.solicitante_id != null ? solNomes1.get(p.solicitante_id)?.nome ?? null : null,
-  }))
+  const projetosViabilidadeDetalhe = projetosViabilidadeDetalheRaw.map(p => {
+    const tap = tapPorProjeto.get(p.id)
+    const viab = viabPorProjeto.get(p.id)
+    return {
+      ...p,
+      solicitante_nome: p.solicitante_id != null ? solNomes1.get(p.solicitante_id)?.nome ?? null : null,
+      situacao_atual: tap?.situacao_atual ?? null,
+      cenario_atual: viab?.impacto_operacional ?? null,
+      beneficios_esperados: viab?.beneficios_esperados ?? null,
+      riscos_json: viab?.riscos ?? null,
+      payback_meses: viab?.payback_meses ?? null,
+      capex: viab?.capex ?? null,
+      opex: viab?.opex ?? null,
+      investimento_total: viab?.investimento_total ?? null,
+    }
+  })
 
   // Detail data for the Propostas slide
   const projetosPropostaDetalheRaw = db.prepare(`
@@ -130,23 +131,26 @@ export default async function ComiteDetalhePage({ params }: { params: Promise<{ 
       t.beneficios AS triagem_beneficios,
       t.observacoes AS triagem_observacoes,
       t.areas_impactadas AS triagem_areas_json,
-      (SELECT tv.riscos_iniciais FROM tap_versoes tv WHERE tv.projeto_id = p.id ORDER BY tv.versao DESC LIMIT 1) AS riscos_iniciais,
-      (SELECT tv.payback_meses FROM tap_versoes tv WHERE tv.projeto_id = p.id ORDER BY tv.versao DESC LIMIT 1) AS payback_meses,
-      (SELECT tv.beneficios_tap FROM tap_versoes tv WHERE tv.projeto_id = p.id ORDER BY tv.versao DESC LIMIT 1) AS beneficios_tap,
-      (SELECT tv.data_limite_tap FROM tap_versoes tv WHERE tv.projeto_id = p.id ORDER BY tv.versao DESC LIMIT 1) AS data_limite_tap,
       (SELECT GROUP_CONCAT(a.nome, ', ')
        FROM projeto_areas pa JOIN areas a ON a.id = pa.area_id
        WHERE pa.projeto_id = p.id AND pa.ativo = 1) AS areas_envolvidas
     FROM projetos p
     LEFT JOIN triagens t ON t.projeto_id = p.id
     WHERE p.ativo = 1 AND p.status IN ('PROPOSTA','TRIAGEM','COMITE_IDEIAS')
-  `).all() as (Record<string, unknown> & { solicitante_id: number | null })[]
+  `).all() as (Record<string, unknown> & { id: number; solicitante_id: number | null })[]
   const solIds2 = [...new Set(projetosPropostaDetalheRaw.map(p => p.solicitante_id).filter((v): v is number => v != null))]
   const solNomes2 = await UsuariosRepository.findNomesPorIds(solIds2)
-  const projetosPropostaDetalhe = projetosPropostaDetalheRaw.map(p => ({
-    ...p,
-    solicitante_nome: p.solicitante_id != null ? solNomes2.get(p.solicitante_id)?.nome ?? null : null,
-  }))
+  const projetosPropostaDetalhe = projetosPropostaDetalheRaw.map(p => {
+    const tap = tapPorProjeto.get(p.id)
+    return {
+      ...p,
+      solicitante_nome: p.solicitante_id != null ? solNomes2.get(p.solicitante_id)?.nome ?? null : null,
+      riscos_iniciais: tap?.riscos_iniciais ?? null,
+      payback_meses: tap?.payback_meses ?? null,
+      beneficios_tap: tap?.beneficios_tap ?? null,
+      data_limite_tap: tap?.data_limite_tap ?? null,
+    }
+  })
 
   // Detail data for the Em Execução slide
   const projetosExecucaoDetalheRaw = db.prepare(`
@@ -155,16 +159,8 @@ export default async function ComiteDetalhePage({ params }: { params: Promise<{ 
       d.nome AS diretoria, a.nome AS area,
       p.gerente_id,
       p.data_inicio_prev, p.data_fim_prev,
-      COALESCE(
-        (SELECT v.capex FROM viabilidade v WHERE v.projeto_id = p.id ORDER BY v.versao DESC LIMIT 1),
-        p.capex_aprovado,
-        0
-      ) AS capex_aprovado,
-      COALESCE(
-        (SELECT v.opex FROM viabilidade v WHERE v.projeto_id = p.id ORDER BY v.versao DESC LIMIT 1),
-        p.opex_aprovado,
-        0
-      ) AS opex_aprovado,
+      p.capex_aprovado AS capex_aprovado_base,
+      p.opex_aprovado AS opex_aprovado_base,
       COALESCE(
         (SELECT SUM(fc2.valor_aprovado) FROM financeiro_contratos fc2
          WHERE fc2.projeto_id = p.id AND fc2.ativo = 1), 0
@@ -196,22 +192,30 @@ export default async function ComiteDetalhePage({ params }: { params: Promise<{ 
            AND fc5.ativo = 1
            AND fp4.contrato_id IS NOT NULL
            AND (fp4.ativo IS NULL OR fp4.ativo = 1)), 0
-      ) AS opex_executado,
-      (SELECT v.economia_mensal_esperada FROM viabilidade v WHERE v.projeto_id = p.id ORDER BY v.versao DESC LIMIT 1) AS economia_mensal_esperada,
-      (SELECT v.payback_informado FROM viabilidade v WHERE v.projeto_id = p.id ORDER BY v.versao DESC LIMIT 1) AS payback_informado,
-      (SELECT v.payback_meses FROM viabilidade v WHERE v.projeto_id = p.id ORDER BY v.versao DESC LIMIT 1) AS payback_meses,
-      (SELECT v.payback_unidade FROM viabilidade v WHERE v.projeto_id = p.id ORDER BY v.versao DESC LIMIT 1) AS payback_unidade
+      ) AS opex_executado
     FROM projetos p
     LEFT JOIN diretorias d ON d.id = p.diretoria_id
     LEFT JOIN areas a ON a.id = p.area_id
     WHERE p.ativo = 1 AND p.status IN ('EXECUCAO', 'GOLIVE')
-  `).all() as (Record<string, unknown> & { gerente_id: number | null })[]
+  `).all() as (Record<string, unknown> & {
+    id: number; gerente_id: number | null
+    capex_aprovado_base: number | null; opex_aprovado_base: number | null
+  })[]
   const gerenteIds2 = [...new Set(projetosExecucaoDetalheRaw.map(p => p.gerente_id).filter((v): v is number => v != null))]
   const gerenteNomes2 = await UsuariosRepository.findNomesPorIds(gerenteIds2)
-  const projetosExecucaoDetalhe = projetosExecucaoDetalheRaw.map(p => ({
-    ...p,
-    gerente_nome: p.gerente_id != null ? gerenteNomes2.get(p.gerente_id)?.nome ?? null : null,
-  }))
+  const projetosExecucaoDetalhe = projetosExecucaoDetalheRaw.map(p => {
+    const viab = viabPorProjeto.get(p.id)
+    return {
+      ...p,
+      gerente_nome: p.gerente_id != null ? gerenteNomes2.get(p.gerente_id)?.nome ?? null : null,
+      capex_aprovado: viab?.capex ?? p.capex_aprovado_base ?? 0,
+      opex_aprovado: viab?.opex ?? p.opex_aprovado_base ?? 0,
+      economia_mensal_esperada: viab?.economia_mensal_esperada ?? null,
+      payback_informado: viab?.payback_informado ?? null,
+      payback_meses: viab?.payback_meses ?? null,
+      payback_unidade: viab?.payback_unidade ?? null,
+    }
+  })
 
   // Macro tarefas (FASE + TAREFA direta) from latest active cronograma for each EXECUCAO project
   // TAREFA rows are included so SlideExecucaoDetalhe can expand FASEs that have child tasks
