@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
-import { db } from '@/lib/database'
 import { CronogramaRepository } from '@/lib/repositories'
 import { registrarAuditoria } from '@/lib/db/auditoria'
 import { registrarEvento } from '@/lib/timeline'
@@ -28,12 +27,12 @@ function calcDiasAtraso(dataFim: unknown, hoje: Date): number {
   return Math.max(0, diff)
 }
 
-function concluirItem(id: number, prazoStatus: string, userId: number) {
-  CronogramaRepository.concluirTarefa(id, prazoStatus, userId)
+async function concluirItem(id: number, prazoStatus: string, userId: number) {
+  await CronogramaRepository.concluirTarefa(id, prazoStatus, userId)
 }
 
-function atualizarPercentualItem(id: number, percentual: number, userId: number) {
-  CronogramaRepository.atualizarPercentualTarefa(id, percentual, userId)
+async function atualizarPercentualItem(id: number, percentual: number, userId: number) {
+  await CronogramaRepository.atualizarPercentualTarefa(id, percentual, userId)
 }
 
 // ── Handler ────────────────────────────────────────────────────────────────────
@@ -54,13 +53,13 @@ export async function POST(
 
   if (!cronograma) return NextResponse.json({ error: 'Cronograma não encontrado.' }, { status: 404 })
 
-  const item = CronogramaRepository.findTarefaByIdAndCronograma(tarefa_id, cronograma_id)
+  const item = await CronogramaRepository.findTarefaByIdAndCronograma(tarefa_id, cronograma_id)
 
   if (!item)               return NextResponse.json({ error: 'Tarefa não encontrada.' }, { status: 404 })
   if (item.data_conclusao) return NextResponse.json({ error: 'Atividade já foi concluída.' }, { status: 400 })
 
   if (item.nivel === 'FASE') {
-    const totalFilhos = CronogramaRepository.countTarefasFase(cronograma_id, tarefa_id, false)
+    const totalFilhos = await CronogramaRepository.countTarefasFase(cronograma_id, tarefa_id, false)
     if (totalFilhos > 0)
       return NextResponse.json({ error: 'Fases com tarefas devem ser concluídas via suas tarefas filhas.' }, { status: 400 })
   }
@@ -81,9 +80,17 @@ export async function POST(
   let fasePaiId:  number | null = null
   let faseNome:  string | null = null
 
-  db.transaction(() => {
+  // cronograma_tarefas já está em Postgres — não dá mais pra envolver essas
+  // escritas numa transação SQLite única com os registros de evento/auditoria
+  // (que continuam em SQLite). Vira uma sequência simples com await em cada
+  // passo, na mesma ordem de antes — cada nível (tarefa → tarefa pai → fase)
+  // já é lido antes de decidir o que escrever, então uma falha a meio do
+  // caminho deixa só os níveis já processados persistidos, sem inconsistência
+  // dentro de cada nível (mesmo padrão de "ler de um banco, decidir, escrever
+  // no outro" já usado em outras fatias desta migração).
+  await (async () => {
     // ── 1. Concluir o item (TAREFA ou SUBTAREFA) ──────────────────────────────
-    concluirItem(tarefa_id, prazoStatus, session.id)
+    await concluirItem(tarefa_id, prazoStatus, session.id)
 
     registrarEvento({
       projeto_id,
@@ -122,21 +129,21 @@ export async function POST(
     if (isSubtarefa) {
       const tarefaPaiId = item.parent_id as number
 
-      const tarefaPai = CronogramaRepository.findTarefaComNivel(tarefaPaiId, 'TAREFA', cronograma_id)
+      const tarefaPai = await CronogramaRepository.findTarefaComNivel(tarefaPaiId, 'TAREFA', cronograma_id)
 
       if (!tarefaPai) return
 
       tarefaPaiNome = String(tarefaPai.nome)
 
-      const totalSubs     = CronogramaRepository.countSubtarefas(cronograma_id, tarefaPaiId, false)
-      const concluidasSubs = CronogramaRepository.countSubtarefas(cronograma_id, tarefaPaiId, true)
+      const totalSubs     = await CronogramaRepository.countSubtarefas(cronograma_id, tarefaPaiId, false)
+      const concluidasSubs = await CronogramaRepository.countSubtarefas(cronograma_id, tarefaPaiId, true)
 
       const tarefaPercentual = totalSubs > 0 ? Math.round((concluidasSubs / totalSubs) * 100) : 0
       const tarefaConclusa   = totalSubs > 0 && concluidasSubs >= totalSubs
 
       if (tarefaConclusa && !tarefaPai.data_conclusao) {
         const tarefaPrazo = calcPrazoStatus(tarefaPai.data_fim, hoje)
-        concluirItem(tarefaPaiId, tarefaPrazo, session.id)
+        await concluirItem(tarefaPaiId, tarefaPrazo, session.id)
         tarefaPaiAutoCompletada = true
 
         registrarEvento({
@@ -155,7 +162,7 @@ export async function POST(
           dados_depois: { status: 'CONCLUIDA', percentual: 100, prazo_status: tarefaPrazo },
         })
       } else {
-        atualizarPercentualItem(tarefaPaiId, tarefaPercentual, session.id)
+        await atualizarPercentualItem(tarefaPaiId, tarefaPercentual, session.id)
       }
 
       // Avançar parent_id para ser o da fase (tarefa pai → fase avó)
@@ -167,14 +174,14 @@ export async function POST(
     // ── 3. Propagar para a FASE (vale para TAREFA direta e para SUBTAREFA após passo 2) ──
     fasePaiId = item.parent_id as number
 
-    const fase = CronogramaRepository.findTarefaComNivel(fasePaiId, 'FASE', cronograma_id)
+    const fase = await CronogramaRepository.findTarefaComNivel(fasePaiId, 'FASE', cronograma_id)
 
     if (!fase || fase.data_conclusao) return
 
     faseNome = String(fase.nome)
 
-    const totalTarefasFase    = CronogramaRepository.countTarefasFase(cronograma_id, fasePaiId, false)
-    const concluidasTarefasFase = CronogramaRepository.countTarefasFase(cronograma_id, fasePaiId, true)
+    const totalTarefasFase    = await CronogramaRepository.countTarefasFase(cronograma_id, fasePaiId, false)
+    const concluidasTarefasFase = await CronogramaRepository.countTarefasFase(cronograma_id, fasePaiId, true)
 
     const fasePercentual = totalTarefasFase > 0
       ? Math.round((concluidasTarefasFase / totalTarefasFase) * 100)
@@ -183,7 +190,7 @@ export async function POST(
 
     if (faseConclusa) {
       const fasePrazoStatus = calcPrazoStatus(fase.data_fim, hoje)
-      CronogramaRepository.concluirTarefa(fasePaiId, fasePrazoStatus, session.id)
+      await CronogramaRepository.concluirTarefa(fasePaiId, fasePrazoStatus, session.id)
 
       faseAutoCompletada = true
 
@@ -203,7 +210,7 @@ export async function POST(
         dados_depois: { status: 'CONCLUIDA', percentual: 100, prazo_status: fasePrazoStatus, concluido_por: session.id },
       })
     } else {
-      atualizarPercentualItem(fasePaiId, fasePercentual, session.id)
+      await atualizarPercentualItem(fasePaiId, fasePercentual, session.id)
 
       registrarAuditoria({
         usuario_id: session.id, usuario_nome: session.nome, acao: 'UPDATE',
@@ -213,16 +220,16 @@ export async function POST(
         dados_depois: { percentual: fasePercentual },
       })
     }
-  })
+  })()
 
   // ── 4. Verificar auto-avanço do cronograma para PRONTO_PARA_ENCERRAMENTO ────
   let cronogramaConcluidoAuto = false
   if (cronograma.status === 'EM_EXECUCAO') {
-    const totalTarefas    = CronogramaRepository.countTarefasTotais(cronograma_id, false)
-    const concluidasTarefas = CronogramaRepository.countTarefasTotais(cronograma_id, true)
+    const totalTarefas    = await CronogramaRepository.countTarefasTotais(cronograma_id, false)
+    const concluidasTarefas = await CronogramaRepository.countTarefasTotais(cronograma_id, true)
 
     if (totalTarefas > 0 && concluidasTarefas >= totalTarefas) {
-      CronogramaRepository.updateStatus(cronograma_id, 'PRONTO_PARA_ENCERRAMENTO')
+      await CronogramaRepository.updateStatus(cronograma_id, 'PRONTO_PARA_ENCERRAMENTO')
 
       cronogramaConcluidoAuto = true
 

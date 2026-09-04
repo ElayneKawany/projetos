@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
-import { db } from '@/lib/database'
+import { asyncDb } from '@/lib/database'
 import { CronogramaRepository } from '@/lib/repositories'
 import { registrarAuditoria } from '@/lib/db/auditoria'
 import { registrarEvento } from '@/lib/timeline'
@@ -65,7 +65,7 @@ export async function PUT(
   if (invalida)
     return NextResponse.json({ error: 'Todas as linhas precisam ter um nome.' }, { status: 400 })
 
-  const existingIds = CronogramaRepository.findIdsAtivos(cronograma_id)
+  const existingIds = await CronogramaRepository.findIdsAtivos(cronograma_id)
   const incomingIds = tarefas.filter(t => t.id).map(t => t.id as number)
   const toDelete    = existingIds.filter(eid => !incomingIds.includes(eid))
 
@@ -84,9 +84,9 @@ export async function PUT(
   let salvos = 0
 
   try {
-    db.transaction(() => {
+    await asyncDb.transaction(async () => {
       // 1. Soft-delete dos itens removidos
-      for (const del of toDelete) CronogramaRepository.softDeleteTarefa(del, session.id)
+      for (const del of toDelete) await CronogramaRepository.softDeleteTarefa(del, session.id)
 
       // 2. Processar itens em ordem, calculando WBS e parent_id
       let faseCount   = 0
@@ -126,7 +126,7 @@ export async function PUT(
         let itemId: number
 
         if (t.id) {
-          CronogramaRepository.updateTarefaCompleta(t.id, cronograma_id, {
+          await CronogramaRepository.updateTarefaCompleta(t.id, cronograma_id, {
             nome, nivel: t.nivel, codigo, ordem, parent_id,
             responsavel_id: primaryRespId, responsavel_nome_ext: primaryRespNomeExt,
             executor_id: exec_id, executor_nome_ext: t.executor_nome_ext ?? null,
@@ -141,7 +141,7 @@ export async function PUT(
           if (t.nivel === 'TAREFA') lastTarefaId = t.id
           itemId = t.id
         } else {
-          itemId = Number(CronogramaRepository.insertTarefa({
+          itemId = Number(await CronogramaRepository.insertTarefa({
             cronograma_id, codigo, nome,
             descricao:         t.descricao ?? null,
             nivel:             t.nivel,
@@ -174,39 +174,15 @@ export async function PUT(
 
         // Sync cronograma_responsaveis (full replace)
         if (t.responsaveis !== undefined) {
-          CronogramaRepository.deleteResponsaveis(itemId)
+          await CronogramaRepository.deleteResponsaveis(itemId)
           for (const r of t.responsaveis) {
             const uid = r.id ?? resolveUserId(r.nome)
-            CronogramaRepository.insertResponsavel(itemId, uid, uid ? null : r.nome.trim())
+            await CronogramaRepository.insertResponsavel(itemId, uid, uid ? null : r.nome.trim())
           }
         }
 
         salvos++
       }
-
-      registrarEvento({
-        projeto_id,
-        modulo:          'CRONOGRAMA',
-        artefato:        'CRONOGRAMA',
-        evento:          'ALTERADO',
-        titulo:          'Cronograma editado',
-        descricao:       `${salvos} item(ns) salvos, ${toDelete.length} removido(s) por ${session.nome}`,
-        usuario_id:      session.id,
-        usuario_nome:    session.nome,
-        referencia_id:   cronograma_id,
-        referencia_tipo: 'cronograma',
-      })
-
-      registrarAuditoria({
-        usuario_id:   session.id,
-        usuario_nome: session.nome,
-        acao:         'UPDATE',
-        entidade:     'cronogramas',
-        entidade_id:  cronograma_id,
-        projeto_id,
-        descricao:    `Cronograma editado inline: ${salvos} item(ns), ${toDelete.length} removido(s)`,
-        dados_depois: { salvos, removidos: toDelete.length },
-      })
     })
   } catch (e: unknown) {
     return NextResponse.json(
@@ -214,6 +190,31 @@ export async function PUT(
       { status: 500 }
     )
   }
+
+  // ── Efeitos colaterais em SQLite — só depois que o Postgres confirmou ──────
+  registrarEvento({
+    projeto_id,
+    modulo:          'CRONOGRAMA',
+    artefato:        'CRONOGRAMA',
+    evento:          'ALTERADO',
+    titulo:          'Cronograma editado',
+    descricao:       `${salvos} item(ns) salvos, ${toDelete.length} removido(s) por ${session.nome}`,
+    usuario_id:      session.id,
+    usuario_nome:    session.nome,
+    referencia_id:   cronograma_id,
+    referencia_tipo: 'cronograma',
+  })
+
+  registrarAuditoria({
+    usuario_id:   session.id,
+    usuario_nome: session.nome,
+    acao:         'UPDATE',
+    entidade:     'cronogramas',
+    entidade_id:  cronograma_id,
+    projeto_id,
+    descricao:    `Cronograma editado inline: ${salvos} item(ns), ${toDelete.length} removido(s)`,
+    dados_depois: { salvos, removidos: toDelete.length },
+  })
 
   return NextResponse.json({ ok: true, salvos })
 }

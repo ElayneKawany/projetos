@@ -58,7 +58,7 @@ export async function GET(
   const { id } = await params
   const projetoId = Number(id)
 
-  const cronograma = CronogramaRepository.findAtivoSimples(projetoId) as { id: number; versao: number; label: string } | undefined
+  const cronograma = await CronogramaRepository.findAtivoSimples(projetoId) as { id: number; versao: number; label: string } | undefined
 
   if (!cronograma) {
     return NextResponse.json({ error: 'Nenhum cronograma encontrado para este projeto.' }, { status: 404 })

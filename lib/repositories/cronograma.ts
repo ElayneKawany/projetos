@@ -1,6 +1,22 @@
 import { db, asyncDb } from '@/lib/database'
 import { UsuariosRepository } from './usuarios'
 
+// Tabelas Postgres reais (schema AI, prefixo TI_PMO_, ver lib/db/drizzle/schema.postgres.ts) —
+// precisam de aspas duplas por causa do case: sem isso o Postgres dobra pra minúsculo e não acha a tabela.
+const T_CRONOGRAMAS = '"AI"."TI_PMO_CRONOGRAMAS"'
+const T_CRONOGRAMA_TAREFAS = '"AI"."TI_PMO_CRONOGRAMA_TAREFAS"'
+const T_CRONOGRAMA_RESPONSAVEIS = '"AI"."TI_PMO_CRONOGRAMA_RESPONSAVEIS"'
+const T_CRONOGRAMA_TAREFA_PAGAMENTO = '"AI"."TI_PMO_CRONOGRAMA_TAREFA_PAGAMENTO"'
+const T_CRONOGRAMA_TAREFA_PARCELAS = '"AI"."TI_PMO_CRONOGRAMA_TAREFA_PARCELAS"'
+const T_CRONOGRAMA_TAREFA_PARCELAS_HISTORICO = '"AI"."TI_PMO_CRONOGRAMA_TAREFA_PARCELAS_HISTORICO"'
+const T_USUARIOS = '"AI"."TI_PMO_USUARIOS"'
+
+// `ativo`/`is_baseline`/`arquivado`/`bloqueio` são INTEGER 0/1 em SQLite mas boolean nativo em
+// Postgres — normaliza de volta pra 0/1 no retorno pra preservar o contrato existente com o
+// frontend (ex.: CronogramaEditor.tsx faz `cronograma.is_baseline === 1`, não truthy check).
+const toInt01 = (v: unknown): number | null | undefined =>
+  v == null ? (v as null | undefined) : (v ? 1 : 0)
+
 export interface DistribuicaoMacroFase {
   tipo_macro: string
   total_tarefas: number
@@ -15,10 +31,18 @@ export interface Cronograma {
   versao: number
   label?: string | null
   status: string
-  is_baseline?: number
+  is_baseline?: number | null
   aprovado_por?: number | null
   aprovado_em?: string | null
-  ativo?: number
+  ativo?: number | null
+  arquivado?: number | null
+  arquivado_por?: number | null
+  arquivado_em?: string | null
+  criado_por?: number | null
+  modo?: string | null
+  fonte_importacao?: string | null
+  arquivo_origem?: string | null
+  motivo_replano?: string | null
   created_at?: string
 }
 
@@ -35,23 +59,44 @@ export interface CronogramaTarefa {
   prazo_status?: string | null
   data_inicio?: string | null
   data_fim?: string | null
+  data_inicio_baseline?: string | null
+  data_fim_baseline?: string | null
   data_conclusao?: string | null
-  bloqueio?: number
+  bloqueio?: number | null
   motivo_bloqueio?: string | null
+  motivo_atraso?: string | null
   responsavel_id?: number | null
   responsavel_nome_ext?: string | null
   executor_id?: number | null
   executor_nome_ext?: string | null
-  ativo?: number
+  criado_por?: number | null
+  concluido_por?: number | null
+  alterado_por?: number | null
+  alterado_em?: string | null
+  ativo?: number | null
+  tipo_macro?: string | null
+  natureza_tarefa?: string | null
+}
+
+function normCronograma<T extends { is_baseline?: unknown; ativo?: unknown; arquivado?: unknown }>(row: T): T {
+  return {
+    ...row,
+    is_baseline: toInt01(row.is_baseline),
+    ativo: toInt01(row.ativo),
+    arquivado: toInt01(row.arquivado),
+  }
+}
+
+function normTarefa<T extends { ativo?: unknown; bloqueio?: unknown }>(row: T): T {
+  return { ...row, ativo: toInt01(row.ativo), bloqueio: toInt01(row.bloqueio) }
 }
 
 export const CronogramaRepository = {
   async findLatestByProjectId(projetoId: number): Promise<(Cronograma & { aprovado_nome: string | null }) | undefined> {
-    const row = db.queryOne<Cronograma>(
-      `SELECT c.*
-       FROM cronogramas c
-       WHERE c.projeto_id = ? AND (c.ativo IS NULL OR c.ativo = 1)
-       ORDER BY c.versao DESC LIMIT 1`,
+    const row = await asyncDb.queryOne<Cronograma>(
+      `SELECT * FROM ${T_CRONOGRAMAS}
+       WHERE projeto_id = ? AND (ativo IS NULL OR ativo = true)
+       ORDER BY versao DESC LIMIT 1`,
       [projetoId]
     )
     if (!row) return undefined
@@ -59,47 +104,56 @@ export const CronogramaRepository = {
       ? await UsuariosRepository.findNomesPorIds([row.aprovado_por])
       : new Map<number, { nome: string; cargo: string | null }>()
     return {
-      ...row,
+      ...normCronograma(row),
       aprovado_nome: row.aprovado_por != null ? nomes.get(row.aprovado_por)?.nome ?? null : null,
     }
   },
 
-  findById(id: number): Cronograma | undefined {
-    return db.queryOne<Cronograma>(
-      'SELECT * FROM cronogramas WHERE id = ? AND (ativo IS NULL OR ativo = 1)',
+  // Sem callers hoje (`grep -rn "CronogramaRepository.findById("` não encontrou uso, substituído
+  // por findByIdAndProjetoId) — convertido por consistência, com menos rigor de teste.
+  async findById(id: number): Promise<Cronograma | undefined> {
+    const row = await asyncDb.queryOne<Cronograma>(
+      `SELECT * FROM ${T_CRONOGRAMAS} WHERE id = ? AND (ativo IS NULL OR ativo = true)`,
       [id]
     )
+    return row ? normCronograma(row) : undefined
   },
 
-  findAllByProjectId(projetoId: number): Cronograma[] {
-    return db.queryMany<Cronograma>(
-      'SELECT * FROM cronogramas WHERE projeto_id = ? AND (ativo IS NULL OR ativo = 1) ORDER BY versao DESC',
+  // Sem callers hoje (substituído por findAllVersoes) — menos rigor.
+  async findAllByProjectId(projetoId: number): Promise<Cronograma[]> {
+    const rows = await asyncDb.queryMany<Cronograma>(
+      `SELECT * FROM ${T_CRONOGRAMAS} WHERE projeto_id = ? AND (ativo IS NULL OR ativo = true) ORDER BY versao DESC`,
       [projetoId]
     )
+    return rows.map(normCronograma)
   },
 
-  create(dados: Partial<Cronograma>): number | bigint {
-    const result = db.execute(
-      `INSERT INTO cronogramas (projeto_id, versao, label, status, is_baseline, ativo)
-       VALUES (?,?,?,?,?,1)`,
+  // Sem callers hoje (substituído por insertCronograma) — menos rigor.
+  async create(dados: Partial<Cronograma>): Promise<number | null> {
+    const result = await asyncDb.execute(
+      `INSERT INTO ${T_CRONOGRAMAS} (projeto_id, versao, label, status, is_baseline, ativo, criado_por)
+       VALUES (?,?,?,?,?,true,?)
+       RETURNING id`,
       [
         dados.projeto_id, dados.versao ?? 1, dados.label ?? null,
-        dados.status ?? 'RASCUNHO', dados.is_baseline ?? 0,
+        dados.status ?? 'RASCUNHO', !!dados.is_baseline, dados.criado_por ?? null,
       ]
     )
-    return result.lastInsertRowid
+    return result.insertedId
   },
 
-  approve(id: number, aprovadoPor: number): void {
-    db.execute(
-      "UPDATE cronogramas SET status = 'APROVADO', aprovado_por = ?, aprovado_em = CURRENT_TIMESTAMP WHERE id = ?",
+  // Sem callers hoje (substituído por updateStatusAprovado) — menos rigor.
+  async approve(id: number, aprovadoPor: number): Promise<void> {
+    await asyncDb.execute(
+      `UPDATE ${T_CRONOGRAMAS} SET status = 'APROVADO', aprovado_por = ?, aprovado_em = CURRENT_TIMESTAMP WHERE id = ?`,
       [aprovadoPor, id]
     )
   },
 
-  nextVersao(projetoId: number): number {
-    const row = db.queryOne<{ versao: number }>(
-      'SELECT MAX(versao) AS versao FROM cronogramas WHERE projeto_id = ?',
+  // Sem callers hoje (substituído por maxVersao) — menos rigor.
+  async nextVersao(projetoId: number): Promise<number> {
+    const row = await asyncDb.queryOne<{ versao: number }>(
+      `SELECT MAX(versao) AS versao FROM ${T_CRONOGRAMAS} WHERE projeto_id = ?`,
       [projetoId]
     )
     return (row?.versao ?? 0) + 1
@@ -108,11 +162,10 @@ export const CronogramaRepository = {
   // ── Tarefas ────────────────────────────────────────────────────────────────
 
   async findTasks(cronogramaId: number): Promise<(CronogramaTarefa & { responsavel_nome: string | null; executor_nome: string | null })[]> {
-    const rows = db.queryMany<CronogramaTarefa>(
-      `SELECT t.*
-       FROM cronograma_tarefas t
-       WHERE t.cronograma_id = ? AND (t.ativo IS NULL OR t.ativo = 1)
-       ORDER BY t.ordem, t.id`,
+    const rows = await asyncDb.queryMany<CronogramaTarefa>(
+      `SELECT * FROM ${T_CRONOGRAMA_TAREFAS}
+       WHERE cronograma_id = ? AND (ativo IS NULL OR ativo = true)
+       ORDER BY ordem, id`,
       [cronogramaId]
     )
     const ids = [...new Set(
@@ -120,20 +173,23 @@ export const CronogramaRepository = {
     )]
     const nomes = await UsuariosRepository.findNomesPorIds(ids)
     return rows.map(t => ({
-      ...t,
+      ...normTarefa(t),
       responsavel_nome: (t.responsavel_id != null ? nomes.get(t.responsavel_id)?.nome : undefined) ?? t.responsavel_nome_ext ?? null,
       executor_nome: (t.executor_id != null ? nomes.get(t.executor_id)?.nome : undefined) ?? t.executor_nome_ext ?? null,
     }))
   },
 
-  findTaskById(id: number): CronogramaTarefa | undefined {
-    return db.queryOne<CronogramaTarefa>(
-      'SELECT * FROM cronograma_tarefas WHERE id = ? AND (ativo IS NULL OR ativo = 1)',
+  // Sem callers hoje (substituído por findTarefaByIdAndCronograma) — menos rigor.
+  async findTaskById(id: number): Promise<CronogramaTarefa | undefined> {
+    const row = await asyncDb.queryOne<CronogramaTarefa>(
+      `SELECT * FROM ${T_CRONOGRAMA_TAREFAS} WHERE id = ? AND (ativo IS NULL OR ativo = true)`,
       [id]
     )
+    return row ? normTarefa(row) : undefined
   },
 
-  updateTask(id: number, dados: Partial<CronogramaTarefa>): void {
+  // Sem callers hoje (substituído por updateTarefaCompleta/updateTarefaBasico) — menos rigor.
+  async updateTask(id: number, dados: Partial<CronogramaTarefa>): Promise<void> {
     const sets: string[] = []
     const params: unknown[] = []
     const campos = [
@@ -149,13 +205,14 @@ export const CronogramaRepository = {
     if (!sets.length) return
     sets.push('updated_at = CURRENT_TIMESTAMP')
     params.push(id)
-    db.execute(`UPDATE cronograma_tarefas SET ${sets.join(', ')} WHERE id = ?`, params)
+    await asyncDb.execute(`UPDATE ${T_CRONOGRAMA_TAREFAS} SET ${sets.join(', ')} WHERE id = ?`, params)
   },
 
-  countTasksByStatus(cronogramaId: number): Record<string, number> {
-    const rows = db.queryMany<{ status: string; total: number }>(
-      `SELECT status, COUNT(*) AS total FROM cronograma_tarefas
-       WHERE cronograma_id = ? AND (ativo IS NULL OR ativo = 1)
+  // Sem callers hoje — menos rigor.
+  async countTasksByStatus(cronogramaId: number): Promise<Record<string, number>> {
+    const rows = await asyncDb.queryMany<{ status: string; total: number }>(
+      `SELECT status, COUNT(*) AS total FROM ${T_CRONOGRAMA_TAREFAS}
+       WHERE cronograma_id = ? AND (ativo IS NULL OR ativo = true)
        GROUP BY status`,
       [cronogramaId]
     )
@@ -164,26 +221,26 @@ export const CronogramaRepository = {
 
   // ── New methods ────────────────────────────────────────────────────────────
 
-  findAllVersoes(projetoId: number): Array<{ id: number; versao: number; label: string; status: string; is_baseline: number; arquivado: number; created_at: string }> {
-    return db.queryMany(
+  async findAllVersoes(projetoId: number): Promise<Array<{ id: number; versao: number; label: string; status: string; is_baseline: number | null; arquivado: number | null; created_at: string }>> {
+    const rows = await asyncDb.queryMany<{ id: number; versao: number; label: string; status: string; is_baseline: unknown; arquivado: unknown; created_at: string }>(
       `SELECT id, versao, label, status, is_baseline, arquivado, created_at
-       FROM cronogramas WHERE projeto_id = ? ORDER BY versao DESC`,
+       FROM ${T_CRONOGRAMAS} WHERE projeto_id = ? ORDER BY versao DESC`,
       [projetoId]
     )
+    return rows.map(r => ({ ...r, is_baseline: toInt01(r.is_baseline) ?? null, arquivado: toInt01(r.arquivado) ?? null }))
   },
 
   /** Arquiva uma versão do cronograma — só tira da lista padrão, não apaga nada. */
-  arquivarVersao(cronogramaId: number, usuarioId: number): void {
-    db.execute(
-      `UPDATE cronogramas SET arquivado = 1, arquivado_por = ?, arquivado_em = datetime('now') WHERE id = ?`,
+  async arquivarVersao(cronogramaId: number, usuarioId: number): Promise<void> {
+    await asyncDb.execute(
+      `UPDATE ${T_CRONOGRAMAS} SET arquivado = true, arquivado_por = ?, arquivado_em = CURRENT_TIMESTAMP WHERE id = ?`,
       [usuarioId, cronogramaId]
     )
   },
 
   async findByIdAndProjetoId(id: number, projetoId: number): Promise<(Cronograma & { aprovado_nome: string | null }) | undefined> {
-    const row = db.queryOne<Cronograma>(
-      `SELECT c.* FROM cronogramas c
-       WHERE c.id = ? AND c.projeto_id = ?`,
+    const row = await asyncDb.queryOne<Cronograma>(
+      `SELECT * FROM ${T_CRONOGRAMAS} WHERE id = ? AND projeto_id = ?`,
       [id, projetoId]
     )
     if (!row) return undefined
@@ -191,15 +248,15 @@ export const CronogramaRepository = {
       ? await UsuariosRepository.findNomesPorIds([row.aprovado_por])
       : new Map<number, { nome: string; cargo: string | null }>()
     return {
-      ...row,
+      ...normCronograma(row),
       aprovado_nome: row.aprovado_por != null ? nomes.get(row.aprovado_por)?.nome ?? null : null,
     }
   },
 
-  findAtivoSimples(projetoId: number): { id: number; versao: number } | undefined {
-    return db.queryOne<{ id: number; versao: number }>(
-      `SELECT id, versao FROM cronogramas
-       WHERE projeto_id = ? AND (ativo = 1 OR ativo IS NULL)
+  async findAtivoSimples(projetoId: number): Promise<{ id: number; versao: number } | undefined> {
+    return asyncDb.queryOne<{ id: number; versao: number }>(
+      `SELECT id, versao FROM ${T_CRONOGRAMAS}
+       WHERE projeto_id = ? AND (ativo = true OR ativo IS NULL)
        ORDER BY versao DESC LIMIT 1`,
       [projetoId]
     )
@@ -211,39 +268,39 @@ export const CronogramaRepository = {
    * arquivadas. Fonte única para "qual cronograma alimenta a Timeline/dashboard/
    * Comitê" — nunca um RASCUNHO/PENDENTE_APROVACAO nem uma versão arquivada.
    */
-  findCronogramaVigente(projetoId: number): { id: number; versao: number } | undefined {
-    return db.queryOne<{ id: number; versao: number }>(
-      `SELECT id, versao FROM cronogramas
+  async findCronogramaVigente(projetoId: number): Promise<{ id: number; versao: number } | undefined> {
+    return asyncDb.queryOne<{ id: number; versao: number }>(
+      `SELECT id, versao FROM ${T_CRONOGRAMAS}
        WHERE projeto_id = ?
-         AND (ativo IS NULL OR ativo = 1)
-         AND (arquivado IS NULL OR arquivado = 0)
+         AND (ativo IS NULL OR ativo = true)
+         AND (arquivado IS NULL OR arquivado = false)
          AND status IN ('APROVADO', 'EM_EXECUCAO', 'PRONTO_PARA_ENCERRAMENTO', 'ENCERRADO')
        ORDER BY versao DESC LIMIT 1`,
       [projetoId]
     )
   },
 
-  maxVersao(projetoId: number): number {
-    const row = db.queryOne<{ max_v: number | null }>(
-      'SELECT MAX(versao) as max_v FROM cronogramas WHERE projeto_id = ?',
+  async maxVersao(projetoId: number): Promise<number> {
+    const row = await asyncDb.queryOne<{ max_v: number | null }>(
+      `SELECT MAX(versao) as max_v FROM ${T_CRONOGRAMAS} WHERE projeto_id = ?`,
       [projetoId]
     )
     return row?.max_v ?? 0
   },
 
-  updateStatus(id: number, status: string): void {
-    db.execute(`UPDATE cronogramas SET status = ? WHERE id = ?`, [status, id])
+  async updateStatus(id: number, status: string): Promise<void> {
+    await asyncDb.execute(`UPDATE ${T_CRONOGRAMAS} SET status = ? WHERE id = ?`, [status, id])
   },
 
-  updateStatusAprovado(id: number, aprovadoPor: number): void {
-    db.execute(
-      `UPDATE cronogramas SET status = 'APROVADO', is_baseline = 1,
-       aprovado_por = ?, aprovado_em = datetime('now') WHERE id = ?`,
+  async updateStatusAprovado(id: number, aprovadoPor: number): Promise<void> {
+    await asyncDb.execute(
+      `UPDATE ${T_CRONOGRAMAS} SET status = 'APROVADO', is_baseline = true,
+       aprovado_por = ?, aprovado_em = CURRENT_TIMESTAMP WHERE id = ?`,
       [aprovadoPor, id]
     )
   },
 
-  insertCronograma(params: {
+  async insertCronograma(params: {
     projeto_id: number
     versao: number
     label: string
@@ -251,11 +308,12 @@ export const CronogramaRepository = {
     fonte_importacao?: string
     arquivo_origem?: string | null
     criado_por: number
-  }): number | bigint {
-    const result = db.execute(
-      `INSERT INTO cronogramas
+  }): Promise<number | null> {
+    const result = await asyncDb.execute(
+      `INSERT INTO ${T_CRONOGRAMAS}
          (projeto_id, versao, label, modo, fonte_importacao, arquivo_origem, criado_por, status, ativo)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'RASCUNHO', 1)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'RASCUNHO', true)
+       RETURNING id`,
       [
         params.projeto_id, params.versao, params.label,
         params.modo ?? 'CENTRALIZADO',
@@ -264,12 +322,12 @@ export const CronogramaRepository = {
         params.criado_por,
       ]
     )
-    return result.lastInsertRowid
+    return result.insertedId
   },
 
-  updateLabelFonte(id: number, label: string, fonte: string, arquivo: string | null): void {
-    db.execute(
-      `UPDATE cronogramas SET label = ?, fonte_importacao = ?, arquivo_origem = ? WHERE id = ?`,
+  async updateLabelFonte(id: number, label: string, fonte: string, arquivo: string | null): Promise<void> {
+    await asyncDb.execute(
+      `UPDATE ${T_CRONOGRAMAS} SET label = ?, fonte_importacao = ?, arquivo_origem = ? WHERE id = ?`,
       [label, fonte, arquivo, id]
     )
   },
@@ -284,26 +342,30 @@ export const CronogramaRepository = {
    * de volta como ativas — causando tarefas/fases duplicadas na nova versão,
    * e esse efeito compõe a cada nova versão criada a partir da anterior.
    */
-  findTarefasOrdered(cronogramaId: number): Record<string, unknown>[] {
-    return db.queryMany<Record<string, unknown>>(
-      `SELECT * FROM cronograma_tarefas WHERE cronograma_id = ? AND (ativo IS NULL OR ativo = 1) ORDER BY ordem`,
+  async findTarefasOrdered(cronogramaId: number): Promise<Record<string, unknown>[]> {
+    const rows = await asyncDb.queryMany<Record<string, unknown>>(
+      `SELECT * FROM ${T_CRONOGRAMA_TAREFAS} WHERE cronograma_id = ? AND (ativo IS NULL OR ativo = true) ORDER BY ordem`,
       [cronogramaId]
     )
+    return rows.map(r => normTarefa(r as unknown as CronogramaTarefa)) as unknown as Record<string, unknown>[]
   },
 
   async findTarefasComNomes(cronogramaId: number): Promise<Record<string, unknown>[]> {
-    const rows = db.queryMany<Record<string, unknown> & {
+    const rows = await asyncDb.queryMany<{
+      codigo: string | null; nivel: string; nome: string; descricao: string | null; tipo: string | null; criticidade: string | null
       responsavel_id: number | null; responsavel_nome_ext: string | null
       executor_id: number | null; executor_nome_ext: string | null
+      data_inicio: string | null; data_inicio_baseline: string | null; data_fim: string | null; data_fim_baseline: string | null
+      percentual: number | null; status: string | null; observacoes: string | null; tipo_macro: string | null
     }>(
-      `SELECT ct.codigo, ct.nivel, ct.nome, ct.descricao, ct.tipo, ct.criticidade,
-              ct.responsavel_id, ct.responsavel_nome_ext,
-              ct.executor_id, ct.executor_nome_ext,
-              ct.data_inicio, ct.data_inicio_baseline, ct.data_fim, ct.data_fim_baseline,
-              ct.percentual, ct.status, ct.observacoes, ct.tipo_macro
-       FROM cronograma_tarefas ct
-       WHERE ct.cronograma_id = ? AND (ct.ativo IS NULL OR ct.ativo = 1)
-       ORDER BY ct.ordem`,
+      `SELECT codigo, nivel, nome, descricao, tipo, criticidade,
+              responsavel_id, responsavel_nome_ext,
+              executor_id, executor_nome_ext,
+              data_inicio, data_inicio_baseline, data_fim, data_fim_baseline,
+              percentual, status, observacoes, tipo_macro
+       FROM ${T_CRONOGRAMA_TAREFAS}
+       WHERE cronograma_id = ? AND (ativo IS NULL OR ativo = true)
+       ORDER BY ordem`,
       [cronogramaId]
     )
     const ids = [...new Set(
@@ -319,39 +381,41 @@ export const CronogramaRepository = {
     }))
   },
 
-  findTarefasFasesTarefas(cronogramaId: number): Array<{ id: number; nivel: string; nome: string; descricao: string | null; ordem: number }> {
-    return db.queryMany(
+  async findTarefasFasesTarefas(cronogramaId: number): Promise<Array<{ id: number; nivel: string; nome: string; descricao: string | null; ordem: number }>> {
+    return asyncDb.queryMany(
       `SELECT id, nivel, nome, descricao, ordem
-       FROM cronograma_tarefas
-       WHERE cronograma_id = ? AND nivel IN ('FASE', 'TAREFA') AND (ativo IS NULL OR ativo = 1)
+       FROM ${T_CRONOGRAMA_TAREFAS}
+       WHERE cronograma_id = ? AND nivel IN ('FASE', 'TAREFA') AND (ativo IS NULL OR ativo = true)
        ORDER BY ordem`,
       [cronogramaId]
     )
   },
 
-  findTarefaByIdAndCronograma(id: number, cronogramaId: number): Record<string, unknown> | undefined {
-    return db.queryOne<Record<string, unknown>>(
-      `SELECT * FROM cronograma_tarefas WHERE id = ? AND cronograma_id = ?`,
+  async findTarefaByIdAndCronograma(id: number, cronogramaId: number): Promise<Record<string, unknown> | undefined> {
+    const row = await asyncDb.queryOne<CronogramaTarefa>(
+      `SELECT * FROM ${T_CRONOGRAMA_TAREFAS} WHERE id = ? AND cronograma_id = ?`,
       [id, cronogramaId]
     )
+    return row ? (normTarefa(row) as unknown as Record<string, unknown>) : undefined
   },
 
-  findTarefaComNivel(id: number, nivel: string, cronogramaId: number): Record<string, unknown> | undefined {
-    return db.queryOne<Record<string, unknown>>(
-      `SELECT * FROM cronograma_tarefas WHERE id = ? AND nivel = ? AND cronograma_id = ?`,
+  async findTarefaComNivel(id: number, nivel: string, cronogramaId: number): Promise<Record<string, unknown> | undefined> {
+    const row = await asyncDb.queryOne<CronogramaTarefa>(
+      `SELECT * FROM ${T_CRONOGRAMA_TAREFAS} WHERE id = ? AND nivel = ? AND cronograma_id = ?`,
       [id, nivel, cronogramaId]
     )
+    return row ? (normTarefa(row) as unknown as Record<string, unknown>) : undefined
   },
 
-  findIdsAtivos(cronogramaId: number): number[] {
-    const rows = db.queryMany<{ id: number }>(
-      `SELECT id FROM cronograma_tarefas WHERE cronograma_id = ? AND (ativo IS NULL OR ativo = 1)`,
+  async findIdsAtivos(cronogramaId: number): Promise<number[]> {
+    const rows = await asyncDb.queryMany<{ id: number }>(
+      `SELECT id FROM ${T_CRONOGRAMA_TAREFAS} WHERE cronograma_id = ? AND (ativo IS NULL OR ativo = true)`,
       [cronogramaId]
     )
     return rows.map(r => r.id)
   },
 
-  insertTarefa(params: {
+  async insertTarefa(params: {
     cronograma_id: number
     parent_id?: number | null
     codigo?: string | null
@@ -382,15 +446,16 @@ export const CronogramaRepository = {
     criado_por?: number | null
     alterado_por?: number | null
     natureza_tarefa?: string | null
-  }): number | bigint {
-    const result = db.execute(
-      `INSERT INTO cronograma_tarefas
+  }): Promise<number | null> {
+    const result = await asyncDb.execute(
+      `INSERT INTO ${T_CRONOGRAMA_TAREFAS}
          (cronograma_id, parent_id, codigo, nome, descricao, nivel, tipo, criticidade,
           data_inicio, data_inicio_baseline, data_fim, data_fim_baseline, duracao_dias,
           responsavel_id, responsavel_nome_ext, executor_id, executor_nome_ext,
           area_id, peso, ordem, percentual, status, prazo_status, data_conclusao,
           observacoes, tipo_macro, ativo, criado_por, alterado_por, alterado_em, natureza_tarefa)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+       RETURNING id`,
       [
         params.cronograma_id,
         params.parent_id ?? null,
@@ -418,16 +483,16 @@ export const CronogramaRepository = {
         params.data_conclusao ?? null,
         params.observacoes ?? null,
         params.tipo_macro ?? null,
-        params.ativo ?? 1,
+        (params.ativo ?? 1) !== 0,
         params.criado_por ?? null,
         params.alterado_por ?? null,
         params.natureza_tarefa ?? 'NORMAL',
       ]
     )
-    return result.lastInsertRowid
+    return result.insertedId
   },
 
-  updateTarefaCompleta(id: number, cronogramaId: number, params: {
+  async updateTarefaCompleta(id: number, cronogramaId: number, params: {
     nome: string; nivel: string; codigo: string; ordem: number; parent_id: number | null
     responsavel_id: number | null; responsavel_nome_ext: string | null
     executor_id: number | null; executor_nome_ext: string | null
@@ -435,17 +500,17 @@ export const CronogramaRepository = {
     data_fim: string | null; data_fim_baseline?: string | null; duracao_dias: number | null
     tipo: string; criticidade: string; observacoes: string | null; descricao: string | null
     tipo_macro: string | null; alterado_por: number
-  }): void {
-    db.execute(
-      `UPDATE cronograma_tarefas
+  }): Promise<void> {
+    await asyncDb.execute(
+      `UPDATE ${T_CRONOGRAMA_TAREFAS}
        SET nome = ?, nivel = ?, codigo = ?, ordem = ?, parent_id = ?,
            responsavel_id = ?, responsavel_nome_ext = ?,
            executor_id = ?,   executor_nome_ext = ?,
            data_inicio = ?, data_inicio_baseline = ?, data_fim = ?, data_fim_baseline = ?, duracao_dias = ?,
            tipo = ?, criticidade = ?, observacoes = ?, descricao = ?,
            tipo_macro = ?,
-           ativo = 1,
-           alterado_por = ?, alterado_em = datetime('now')
+           ativo = true,
+           alterado_por = ?, alterado_em = CURRENT_TIMESTAMP
        WHERE id = ? AND cronograma_id = ?`,
       [
         params.nome, params.nivel, params.codigo, params.ordem, params.parent_id,
@@ -459,86 +524,85 @@ export const CronogramaRepository = {
     )
   },
 
-  softDeleteTarefas(cronogramaId: number): void {
-    db.execute(`UPDATE cronograma_tarefas SET ativo = 0 WHERE cronograma_id = ?`, [cronogramaId])
+  async softDeleteTarefas(cronogramaId: number): Promise<void> {
+    await asyncDb.execute(`UPDATE ${T_CRONOGRAMA_TAREFAS} SET ativo = false WHERE cronograma_id = ?`, [cronogramaId])
   },
 
-  softDeleteTarefa(id: number, userId: number): void {
-    db.execute(
-      `UPDATE cronograma_tarefas SET ativo = 0, alterado_por = ?, alterado_em = datetime('now') WHERE id = ?`,
+  async softDeleteTarefa(id: number, userId: number): Promise<void> {
+    await asyncDb.execute(
+      `UPDATE ${T_CRONOGRAMA_TAREFAS} SET ativo = false, alterado_por = ?, alterado_em = CURRENT_TIMESTAMP WHERE id = ?`,
       [userId, id]
     )
   },
 
-  concluirTarefa(id: number, prazoStatus: string, userId: number): void {
-    db.execute(
-      `UPDATE cronograma_tarefas
-       SET data_conclusao = datetime('now'),
+  async concluirTarefa(id: number, prazoStatus: string, userId: number): Promise<void> {
+    await asyncDb.execute(
+      `UPDATE ${T_CRONOGRAMA_TAREFAS}
+       SET data_conclusao = CURRENT_TIMESTAMP,
            concluido_por  = ?,
            percentual     = 100,
            status         = 'CONCLUIDA',
            prazo_status   = ?,
            alterado_por   = ?,
-           alterado_em    = datetime('now')
+           alterado_em    = CURRENT_TIMESTAMP
        WHERE id = ?`,
       [userId, prazoStatus, userId, id]
     )
   },
 
-  atualizarPercentualTarefa(id: number, percentual: number, userId: number): void {
-    db.execute(
-      `UPDATE cronograma_tarefas
+  async atualizarPercentualTarefa(id: number, percentual: number, userId: number): Promise<void> {
+    await asyncDb.execute(
+      `UPDATE ${T_CRONOGRAMA_TAREFAS}
        SET percentual   = ?,
            alterado_por = ?,
-           alterado_em  = datetime('now')
+           alterado_em  = CURRENT_TIMESTAMP
        WHERE id = ?`,
       [percentual, userId, id]
     )
   },
 
-  countTarefas(cronogramaId: number): number {
-    const row = db.queryOne<{ n: number }>(
-      `SELECT COUNT(*) as n FROM cronograma_tarefas WHERE cronograma_id = ?`,
+  async countTarefas(cronogramaId: number): Promise<number> {
+    const row = await asyncDb.queryOne<{ n: number }>(
+      `SELECT COUNT(*) as n FROM ${T_CRONOGRAMA_TAREFAS} WHERE cronograma_id = ?`,
       [cronogramaId]
     )
     return row?.n ?? 0
   },
 
-  countSubtarefas(cronogramaId: number, parentId: number, concluidas: boolean): number {
+  async countSubtarefas(cronogramaId: number, parentId: number, concluidas: boolean): Promise<number> {
     const extra = concluidas ? 'AND data_conclusao IS NOT NULL' : ''
-    const row = db.queryOne<{ n: number }>(
-      `SELECT COUNT(*) AS n FROM cronograma_tarefas
+    const row = await asyncDb.queryOne<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM ${T_CRONOGRAMA_TAREFAS}
        WHERE cronograma_id = ? AND parent_id = ? AND nivel = 'SUBTAREFA'
-         AND (ativo IS NULL OR ativo = 1) ${extra}`,
+         AND (ativo IS NULL OR ativo = true) ${extra}`,
       [cronogramaId, parentId]
     )
     return row?.n ?? 0
   },
 
-  countTarefasFase(cronogramaId: number, parentId: number, concluidas: boolean): number {
+  async countTarefasFase(cronogramaId: number, parentId: number, concluidas: boolean): Promise<number> {
     const extra = concluidas ? 'AND data_conclusao IS NOT NULL' : ''
-    const row = db.queryOne<{ n: number }>(
-      `SELECT COUNT(*) AS n FROM cronograma_tarefas
+    const row = await asyncDb.queryOne<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM ${T_CRONOGRAMA_TAREFAS}
        WHERE cronograma_id = ? AND parent_id = ? AND nivel = 'TAREFA'
-         AND (ativo IS NULL OR ativo = 1) ${extra}`,
+         AND (ativo IS NULL OR ativo = true) ${extra}`,
       [cronogramaId, parentId]
     )
     return row?.n ?? 0
   },
 
-  countTarefasTotais(cronogramaId: number, concluidas = false): number {
+  async countTarefasTotais(cronogramaId: number, concluidas = false): Promise<number> {
     const extra = concluidas ? 'AND data_conclusao IS NOT NULL' : ''
-    const row = db.queryOne<{ n: number }>(
-      `SELECT COUNT(*) AS n FROM cronograma_tarefas
-       WHERE cronograma_id = ? AND nivel = 'TAREFA' AND (ativo IS NULL OR ativo = 1) ${extra}`,
+    const row = await asyncDb.queryOne<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM ${T_CRONOGRAMA_TAREFAS} WHERE cronograma_id = ? AND nivel = 'TAREFA' AND (ativo IS NULL OR ativo = true) ${extra}`,
       [cronogramaId]
     )
     return row?.n ?? 0
   },
 
-  maxOrdem(cronogramaId: number): number {
-    const row = db.queryOne<{ m: number | null }>(
-      `SELECT MAX(ordem) as m FROM cronograma_tarefas WHERE cronograma_id = ?`,
+  async maxOrdem(cronogramaId: number): Promise<number> {
+    const row = await asyncDb.queryOne<{ m: number | null }>(
+      `SELECT MAX(ordem) as m FROM ${T_CRONOGRAMA_TAREFAS} WHERE cronograma_id = ?`,
       [cronogramaId]
     )
     return row?.m ?? 0
@@ -546,25 +610,25 @@ export const CronogramaRepository = {
 
   // ── Responsáveis ──────────────────────────────────────────────────────────
 
-  insertResponsavel(tarefaId: number, uid: number | null, nomeExt: string | null): void {
-    db.execute(
-      `INSERT INTO cronograma_responsaveis (cronograma_tarefa_id, usuario_id, usuario_nome_ext) VALUES (?, ?, ?)`,
+  async insertResponsavel(tarefaId: number, uid: number | null, nomeExt: string | null): Promise<void> {
+    await asyncDb.execute(
+      `INSERT INTO ${T_CRONOGRAMA_RESPONSAVEIS} (cronograma_tarefa_id, usuario_id, usuario_nome_ext) VALUES (?, ?, ?)`,
       [tarefaId, uid, nomeExt]
     )
   },
 
-  deleteResponsaveis(tarefaId: number): void {
-    db.execute(`DELETE FROM cronograma_responsaveis WHERE cronograma_tarefa_id = ?`, [tarefaId])
+  async deleteResponsaveis(tarefaId: number): Promise<void> {
+    await asyncDb.execute(`DELETE FROM ${T_CRONOGRAMA_RESPONSAVEIS} WHERE cronograma_tarefa_id = ?`, [tarefaId])
   },
 
   async findResponsaveisForCronograma(cronogramaId: number): Promise<Array<{ cronograma_tarefa_id: number; usuario_id: number | null; nome: string }>> {
-    const rows = db.queryMany<{ cronograma_tarefa_id: number; usuario_id: number | null; usuario_nome_ext: string | null }>(
-      `SELECT cr.cronograma_tarefa_id, cr.usuario_id, cr.usuario_nome_ext
-       FROM cronograma_responsaveis cr
-       WHERE cr.cronograma_tarefa_id IN (
-         SELECT id FROM cronograma_tarefas WHERE cronograma_id = ? AND (ativo IS NULL OR ativo = 1)
-       )`,
-      [cronogramaId]
+    const tarefaIds = await CronogramaRepository.findIdsAtivos(cronogramaId)
+    if (tarefaIds.length === 0) return []
+    const rows = await asyncDb.queryMany<{ cronograma_tarefa_id: number; usuario_id: number | null; usuario_nome_ext: string | null }>(
+      `SELECT cronograma_tarefa_id, usuario_id, usuario_nome_ext
+       FROM ${T_CRONOGRAMA_RESPONSAVEIS}
+       WHERE cronograma_tarefa_id = ANY(?)`,
+      [tarefaIds]
     )
     const ids = [...new Set(rows.map(r => r.usuario_id).filter((v): v is number => v != null))]
     const nomes = await UsuariosRepository.findNomesPorIds(ids)
@@ -582,13 +646,13 @@ export const CronogramaRepository = {
 
   async findUsuariosAtivos(): Promise<{ id: number; nome: string }[]> {
     return asyncDb.queryMany<{ id: number; nome: string }>(
-      `SELECT id, nome FROM "AI"."TI_PMO_USUARIOS" WHERE ativo = true ORDER BY nome`
+      `SELECT id, nome FROM ${T_USUARIOS} WHERE ativo = true ORDER BY nome`
     )
   },
 
   async findNomesUsuariosAtivos(): Promise<{ nome: string }[]> {
     return asyncDb.queryMany<{ nome: string }>(
-      `SELECT nome FROM "AI"."TI_PMO_USUARIOS" WHERE ativo = true ORDER BY nome`
+      `SELECT nome FROM ${T_USUARIOS} WHERE ativo = true ORDER BY nome`
     )
   },
 
@@ -636,8 +700,8 @@ export const CronogramaRepository = {
 
   // ── Distribuição macro-fases ──────────────────────────────────────────────
 
-  findDistribuicaoMacroFases(cronogramaId: number, today: string): DistribuicaoMacroFase[] {
-    return db.queryMany<DistribuicaoMacroFase>(
+  async findDistribuicaoMacroFases(cronogramaId: number, today: string): Promise<DistribuicaoMacroFase[]> {
+    return asyncDb.queryMany<DistribuicaoMacroFase>(
       `SELECT
          f.tipo_macro,
          COUNT(t.id)                                                AS total_tarefas,
@@ -645,14 +709,14 @@ export const CronogramaRepository = {
          SUM(CASE WHEN t.status NOT IN ('CONCLUIDO','CONCLUIDO_COM_ATRASO')
                    AND t.data_fim < ? THEN 1 ELSE 0 END)           AS atrasadas,
          ROUND(AVG(COALESCE(t.percentual, 0)), 1)                  AS percentual_medio
-       FROM cronograma_tarefas t
-       JOIN cronograma_tarefas f ON f.cronograma_id = t.cronograma_id
+       FROM ${T_CRONOGRAMA_TAREFAS} t
+       JOIN ${T_CRONOGRAMA_TAREFAS} f ON f.cronograma_id = t.cronograma_id
          AND f.nivel = 'FASE'
          AND t.parent_id = f.id
        WHERE t.cronograma_id = ?
          AND t.nivel = 'TAREFA'
-         AND (t.ativo IS NULL OR t.ativo = 1)
-         AND (f.ativo IS NULL OR f.ativo = 1)
+         AND (t.ativo IS NULL OR t.ativo = true)
+         AND (f.ativo IS NULL OR f.ativo = true)
        GROUP BY f.tipo_macro
        ORDER BY f.ordem`,
       [today, cronogramaId]
@@ -661,7 +725,7 @@ export const CronogramaRepository = {
 
   // ── Tarefa de Pagamento (parcelas) ────────────────────────────────────────
 
-  insertPagamentoHeader(params: {
+  async insertPagamentoHeader(params: {
     cronograma_tarefa_id: number
     beneficiario: string | null
     valor_total: number
@@ -669,11 +733,12 @@ export const CronogramaRepository = {
     periodicidade: string
     data_primeira_parcela: string
     criado_por: number | null
-  }): number | bigint {
-    const result = db.execute(
-      `INSERT INTO cronograma_tarefa_pagamento
+  }): Promise<number | null> {
+    const result = await asyncDb.execute(
+      `INSERT INTO ${T_CRONOGRAMA_TAREFA_PAGAMENTO}
          (cronograma_tarefa_id, beneficiario, valor_total, qtd_parcelas, periodicidade, data_primeira_parcela, criado_por)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       RETURNING id`,
       [
         params.cronograma_tarefa_id,
         params.beneficiario ?? null,
@@ -684,21 +749,22 @@ export const CronogramaRepository = {
         params.criado_por ?? null,
       ]
     )
-    return result.lastInsertRowid
+    return result.insertedId
   },
 
-  insertParcela(params: {
+  async insertParcela(params: {
     cronograma_tarefa_id: number
     numero: number
     valor: number
     data_vencimento: string
-  }): number | bigint {
-    const result = db.execute(
-      `INSERT INTO cronograma_tarefa_parcelas (cronograma_tarefa_id, numero, valor, data_vencimento)
-       VALUES (?, ?, ?, ?)`,
+  }): Promise<number | null> {
+    const result = await asyncDb.execute(
+      `INSERT INTO ${T_CRONOGRAMA_TAREFA_PARCELAS} (cronograma_tarefa_id, numero, valor, data_vencimento)
+       VALUES (?, ?, ?, ?)
+       RETURNING id`,
       [params.cronograma_tarefa_id, params.numero, params.valor, params.data_vencimento]
     )
-    return result.lastInsertRowid
+    return result.insertedId
   },
 
   /**
@@ -707,7 +773,7 @@ export const CronogramaRepository = {
    * Cronograma, para levar o histórico financeiro da tarefa de pagamento
    * para a nova versão sem recriar/resetar o que já foi pago.
    */
-  insertParcelaCompleta(params: {
+  async insertParcelaCompleta(params: {
     cronograma_tarefa_id: number
     numero: number
     valor: number
@@ -716,29 +782,29 @@ export const CronogramaRepository = {
     status: string
     data_pagamento: string | null
     pago_por: number | null
-  }): number | bigint {
-    const result = db.execute(
-      `INSERT INTO cronograma_tarefa_parcelas
+  }): Promise<number | null> {
+    const result = await asyncDb.execute(
+      `INSERT INTO ${T_CRONOGRAMA_TAREFA_PARCELAS}
          (cronograma_tarefa_id, numero, valor, data_vencimento, data_vencimento_baseline, status, data_pagamento, pago_por)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       RETURNING id`,
       [
         params.cronograma_tarefa_id, params.numero, params.valor, params.data_vencimento,
         params.data_vencimento_baseline, params.status, params.data_pagamento, params.pago_por,
       ]
     )
-    return result.lastInsertRowid
+    return result.insertedId
   },
 
-  findPagamentoHeaderByTarefaIds(tarefaIds: number[]): Array<{
+  async findPagamentoHeaderByTarefaIds(tarefaIds: number[]): Promise<Array<{
     id: number; cronograma_tarefa_id: number; beneficiario: string | null
     valor_total: number; qtd_parcelas: number; periodicidade: string
     data_primeira_parcela: string; financeiro_pagamento_id: number | null
-  }> {
+  }>> {
     if (tarefaIds.length === 0) return []
-    const placeholders = tarefaIds.map(() => '?').join(',')
-    return db.queryMany(
-      `SELECT * FROM cronograma_tarefa_pagamento WHERE cronograma_tarefa_id IN (${placeholders})`,
-      tarefaIds
+    return asyncDb.queryMany(
+      `SELECT * FROM ${T_CRONOGRAMA_TAREFA_PAGAMENTO} WHERE cronograma_tarefa_id = ANY(?)`,
+      [tarefaIds]
     )
   },
 
@@ -749,17 +815,15 @@ export const CronogramaRepository = {
     pago_por_nome: string | null
   }>> {
     if (tarefaIds.length === 0) return []
-    const placeholders = tarefaIds.map(() => '?').join(',')
-    const rows = db.queryMany<{
+    const rows = await asyncDb.queryMany<{
       id: number; cronograma_tarefa_id: number; numero: number; valor: number
       data_vencimento: string; data_vencimento_baseline: string | null
       status: string; data_pagamento: string | null; pago_por: number | null
     }>(
-      `SELECT p.*
-       FROM cronograma_tarefa_parcelas p
-       WHERE p.cronograma_tarefa_id IN (${placeholders})
-       ORDER BY p.numero ASC`,
-      tarefaIds
+      `SELECT * FROM ${T_CRONOGRAMA_TAREFA_PARCELAS}
+       WHERE cronograma_tarefa_id = ANY(?)
+       ORDER BY numero ASC`,
+      [tarefaIds]
     )
     const ids = [...new Set(rows.map(r => r.pago_por).filter((v): v is number => v != null))]
     const nomes = await UsuariosRepository.findNomesPorIds(ids)
@@ -769,26 +833,26 @@ export const CronogramaRepository = {
     }))
   },
 
-  findParcelaById(parcelaId: number): {
+  async findParcelaById(parcelaId: number): Promise<{
     id: number; cronograma_tarefa_id: number; numero: number; valor: number
     data_vencimento: string; data_vencimento_baseline: string | null; status: string
-  } | undefined {
-    return db.queryOne(`SELECT * FROM cronograma_tarefa_parcelas WHERE id = ?`, [parcelaId])
+  } | undefined> {
+    return asyncDb.queryOne(`SELECT * FROM ${T_CRONOGRAMA_TAREFA_PARCELAS} WHERE id = ?`, [parcelaId])
   },
 
-  marcarParcelaPaga(parcelaId: number, dataPagamento: string, pagoPor: number): void {
-    db.execute(
-      `UPDATE cronograma_tarefa_parcelas
-       SET status = 'PAGO', data_pagamento = ?, pago_por = ?, updated_at = datetime('now')
+  async marcarParcelaPaga(parcelaId: number, dataPagamento: string, pagoPor: number): Promise<void> {
+    await asyncDb.execute(
+      `UPDATE ${T_CRONOGRAMA_TAREFA_PARCELAS}
+       SET status = 'PAGO', data_pagamento = ?, pago_por = ?, updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
       [dataPagamento, pagoPor, parcelaId]
     )
   },
 
-  reprogramarParcela(parcelaId: number, novaData: string, baselineAtual: string | null, dataAtual: string): void {
-    db.execute(
-      `UPDATE cronograma_tarefa_parcelas
-       SET data_vencimento = ?, data_vencimento_baseline = COALESCE(?, ?), updated_at = datetime('now')
+  async reprogramarParcela(parcelaId: number, novaData: string, baselineAtual: string | null, dataAtual: string): Promise<void> {
+    await asyncDb.execute(
+      `UPDATE ${T_CRONOGRAMA_TAREFA_PARCELAS}
+       SET data_vencimento = ?, data_vencimento_baseline = COALESCE(?, ?), updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
       [novaData, baselineAtual, dataAtual, parcelaId]
     )
@@ -799,9 +863,9 @@ export const CronogramaRepository = {
    * data_vencimento_baseline — é a correção de um dado cadastrado errado, não a preservação
    * de uma linha de base para uma mudança planejada.
    */
-  corrigirDataVencimentoParcela(parcelaId: number, novaData: string): void {
-    db.execute(
-      `UPDATE cronograma_tarefa_parcelas SET data_vencimento = ?, updated_at = datetime('now') WHERE id = ?`,
+  async corrigirDataVencimentoParcela(parcelaId: number, novaData: string): Promise<void> {
+    await asyncDb.execute(
+      `UPDATE ${T_CRONOGRAMA_TAREFA_PARCELAS} SET data_vencimento = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
       [novaData, parcelaId]
     )
   },
@@ -810,22 +874,22 @@ export const CronogramaRepository = {
    * Corrige a DATA DO PAGAMENTO REALIZADO de uma parcela já paga (independente da data de
    * vencimento). Não toca em vencimento/valor/status/pago_por — só data_pagamento.
    */
-  corrigirDataPagamentoParcela(parcelaId: number, novaDataPagamento: string): void {
-    db.execute(
-      `UPDATE cronograma_tarefa_parcelas SET data_pagamento = ?, updated_at = datetime('now') WHERE id = ?`,
+  async corrigirDataPagamentoParcela(parcelaId: number, novaDataPagamento: string): Promise<void> {
+    await asyncDb.execute(
+      `UPDATE ${T_CRONOGRAMA_TAREFA_PARCELAS} SET data_pagamento = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
       [novaDataPagamento, parcelaId]
     )
   },
 
-  updatePagamentoHeader(tarefaId: number, params: {
+  async updatePagamentoHeader(tarefaId: number, params: {
     beneficiario: string | null
     valor_total: number
     qtd_parcelas: number
     periodicidade: string
     data_primeira_parcela: string
-  }): void {
-    db.execute(
-      `UPDATE cronograma_tarefa_pagamento
+  }): Promise<void> {
+    await asyncDb.execute(
+      `UPDATE ${T_CRONOGRAMA_TAREFA_PAGAMENTO}
        SET beneficiario = ?, valor_total = ?, qtd_parcelas = ?, periodicidade = ?, data_primeira_parcela = ?
        WHERE cronograma_tarefa_id = ?`,
       [
@@ -835,22 +899,22 @@ export const CronogramaRepository = {
     )
   },
 
-  deleteParcelasPendentes(tarefaId: number): void {
-    db.execute(
-      `DELETE FROM cronograma_tarefa_parcelas WHERE cronograma_tarefa_id = ? AND status = 'PENDENTE'`,
+  async deleteParcelasPendentes(tarefaId: number): Promise<void> {
+    await asyncDb.execute(
+      `DELETE FROM ${T_CRONOGRAMA_TAREFA_PARCELAS} WHERE cronograma_tarefa_id = ? AND status = 'PENDENTE'`,
       [tarefaId]
     )
   },
 
-  updateTarefaBasico(id: number, cronogramaId: number, params: {
+  async updateTarefaBasico(id: number, cronogramaId: number, params: {
     nome: string
     observacoes: string | null
     responsavel_id: number | null
     alterado_por: number
-  }): void {
-    db.execute(
-      `UPDATE cronograma_tarefas
-       SET nome = ?, observacoes = ?, responsavel_id = ?, alterado_por = ?, alterado_em = datetime('now')
+  }): Promise<void> {
+    await asyncDb.execute(
+      `UPDATE ${T_CRONOGRAMA_TAREFAS}
+       SET nome = ?, observacoes = ?, responsavel_id = ?, alterado_por = ?, alterado_em = CURRENT_TIMESTAMP
        WHERE id = ? AND cronograma_id = ?`,
       [params.nome, params.observacoes, params.responsavel_id, params.alterado_por, id, cronogramaId]
     )
@@ -858,31 +922,31 @@ export const CronogramaRepository = {
 
   // ── Mover tarefa entre fases ──────────────────────────────────────────────
 
-  findTarefasAtivasOrdenadas(cronogramaId: number): Array<{ id: number; nivel: string; parent_id: number | null; ordem: number }> {
-    return db.queryMany(
-      `SELECT id, nivel, parent_id, ordem FROM cronograma_tarefas
-       WHERE cronograma_id = ? AND (ativo IS NULL OR ativo = 1)
+  async findTarefasAtivasOrdenadas(cronogramaId: number): Promise<Array<{ id: number; nivel: string; parent_id: number | null; ordem: number }>> {
+    return asyncDb.queryMany(
+      `SELECT id, nivel, parent_id, ordem FROM ${T_CRONOGRAMA_TAREFAS}
+       WHERE cronograma_id = ? AND (ativo IS NULL OR ativo = true)
        ORDER BY ordem, id`,
       [cronogramaId]
     )
   },
 
-  updatePosicaoTarefa(id: number, cronogramaId: number, params: {
+  async updatePosicaoTarefa(id: number, cronogramaId: number, params: {
     parent_id: number | null; ordem: number; codigo: string; alterado_por: number
-  }): void {
-    db.execute(
-      `UPDATE cronograma_tarefas
-       SET parent_id = ?, ordem = ?, codigo = ?, alterado_por = ?, alterado_em = datetime('now')
+  }): Promise<void> {
+    await asyncDb.execute(
+      `UPDATE ${T_CRONOGRAMA_TAREFAS}
+       SET parent_id = ?, ordem = ?, codigo = ?, alterado_por = ?, alterado_em = CURRENT_TIMESTAMP
        WHERE id = ? AND cronograma_id = ?`,
       [params.parent_id, params.ordem, params.codigo, params.alterado_por, id, cronogramaId]
     )
   },
 
-  updateOrdemCodigo(id: number, ordem: number, codigo: string): void {
-    db.execute(`UPDATE cronograma_tarefas SET ordem = ?, codigo = ? WHERE id = ?`, [ordem, codigo, id])
+  async updateOrdemCodigo(id: number, ordem: number, codigo: string): Promise<void> {
+    await asyncDb.execute(`UPDATE ${T_CRONOGRAMA_TAREFAS} SET ordem = ?, codigo = ? WHERE id = ?`, [ordem, codigo, id])
   },
 
-  insertParcelaHistorico(params: {
+  async insertParcelaHistorico(params: {
     parcela_id: number
     cronograma_tarefa_id: number
     projeto_id: number
@@ -892,9 +956,9 @@ export const CronogramaRepository = {
     justificativa: string | null
     usuario_id: number | null
     usuario_nome: string | null
-  }): void {
-    db.execute(
-      `INSERT INTO cronograma_tarefa_parcelas_historico
+  }): Promise<void> {
+    await asyncDb.execute(
+      `INSERT INTO ${T_CRONOGRAMA_TAREFA_PARCELAS_HISTORICO}
          (parcela_id, cronograma_tarefa_id, projeto_id, campo, valor_anterior, valor_novo, justificativa, usuario_id, usuario_nome)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
@@ -909,5 +973,104 @@ export const CronogramaRepository = {
         params.usuario_nome,
       ]
     )
+  },
+
+  // ── Suporte a merge em JS para queries que cruzam cronograma com tabelas
+  // ainda em SQLite (projetos, aprovacoes, diretorias) — ver lib/repositories/
+  // projetos.ts (findAllComplexo, fetchDashboard), lib/permissoes.ts, lib/meu-trabalho.ts.
+
+  /** Cronograma vigente (aprovado/em execução/etc., não arquivado) de cada projeto informado. */
+  async findVigentePorProjetos(ids: number[]): Promise<Array<{ id: number; projeto_id: number; versao: number; status: string }>> {
+    if (ids.length === 0) return []
+    return asyncDb.queryMany(
+      `SELECT DISTINCT ON (projeto_id) id, projeto_id, versao, status
+       FROM ${T_CRONOGRAMAS}
+       WHERE projeto_id = ANY(?)
+         AND (ativo IS NULL OR ativo = true)
+         AND (arquivado IS NULL OR arquivado = false)
+         AND status IN ('APROVADO', 'EM_EXECUCAO', 'PRONTO_PARA_ENCERRAMENTO', 'ENCERRADO')
+       ORDER BY projeto_id, versao DESC`,
+      [ids]
+    )
+  },
+
+  /**
+   * Todos os cronogramas com status='APROVADO' (ativo) dos projetos informados — não filtra
+   * por "vigente"/arquivado, réplica fiel do `EXISTS (... status='APROVADO')` que `has_cronograma`
+   * e `tarefas_atrasadas` já faziam em `findAllComplexo`/`fetchDashboard` antes desta fatia.
+   */
+  async findAprovadosPorProjetos(ids: number[]): Promise<Array<{ id: number; projeto_id: number }>> {
+    if (ids.length === 0) return []
+    return asyncDb.queryMany(
+      `SELECT id, projeto_id FROM ${T_CRONOGRAMAS}
+       WHERE projeto_id = ANY(?) AND (ativo IS NULL OR ativo = true) AND status = 'APROVADO'`,
+      [ids]
+    )
+  },
+
+  /** Quantidade de tarefas atrasadas (nível TAREFA, não concluída, data_fim no passado) por cronograma. */
+  async countTarefasAtrasadasPorCronogramas(cronogramaIds: number[]): Promise<Array<{ cronograma_id: number; total: number }>> {
+    if (cronogramaIds.length === 0) return []
+    return asyncDb.queryMany(
+      `SELECT cronograma_id, COUNT(*) AS total
+       FROM ${T_CRONOGRAMA_TAREFAS}
+       WHERE cronograma_id = ANY(?)
+         AND percentual < 100 AND data_fim IS NOT NULL AND data_fim < CURRENT_DATE
+       GROUP BY cronograma_id`,
+      [cronogramaIds]
+    )
+  },
+
+  /** Projeto_id distintos onde o usuário é responsável ou executor de alguma tarefa (qualquer cronograma). */
+  async findProjetoIdsParticipante(usuarioId: number): Promise<number[]> {
+    const rows = await asyncDb.queryMany<{ projeto_id: number }>(
+      `SELECT DISTINCT c.projeto_id
+       FROM ${T_CRONOGRAMA_TAREFAS} ct
+       JOIN ${T_CRONOGRAMAS} c ON c.id = ct.cronograma_id
+       WHERE ct.responsavel_id = ? OR ct.executor_id = ?`,
+      [usuarioId, usuarioId]
+    )
+    return rows.map(r => r.projeto_id)
+  },
+
+  /** Verifica se o usuário é responsável/executor de alguma tarefa do cronograma vigente de um projeto. */
+  async temParticipacaoNoProjeto(projetoId: number, usuarioId: number): Promise<boolean> {
+    const row = await asyncDb.queryOne<{ id: number }>(
+      `SELECT ct.id
+       FROM ${T_CRONOGRAMA_TAREFAS} ct
+       JOIN ${T_CRONOGRAMAS} c ON c.id = ct.cronograma_id
+       WHERE c.projeto_id = ? AND (ct.responsavel_id = ? OR ct.executor_id = ?)
+       LIMIT 1`,
+      [projetoId, usuarioId, usuarioId]
+    )
+    return !!row
+  },
+
+  /** Dado uma lista de ids de cronogramas, retorna os que estão com status='RASCUNHO'. */
+  async findRascunhoIds(ids: number[]): Promise<number[]> {
+    if (ids.length === 0) return []
+    const rows = await asyncDb.queryMany<{ id: number }>(
+      `SELECT id FROM ${T_CRONOGRAMAS} WHERE id = ANY(?) AND status = 'RASCUNHO'`,
+      [ids]
+    )
+    return rows.map(r => r.id)
+  },
+
+  /**
+   * Todos os cronogramas (todas as versões, todos os projetos) com total de
+   * tarefas e progresso médio agregados — usado pela página `/cronogramas`.
+   * `projetos` (SQLite) entra por lookup em lote no caller, não aqui.
+   */
+  async findAllComTotais(): Promise<Array<Cronograma & { total_tarefas: number; progresso_medio: number }>> {
+    const rows = await asyncDb.queryMany<Cronograma & { total_tarefas: number; progresso_medio: number }>(
+      `SELECT cr.*,
+              COUNT(t.id) AS total_tarefas,
+              COALESCE(AVG(t.percentual), 0) AS progresso_medio
+       FROM ${T_CRONOGRAMAS} cr
+       LEFT JOIN ${T_CRONOGRAMA_TAREFAS} t ON t.cronograma_id = cr.id
+       GROUP BY cr.id
+       ORDER BY cr.created_at DESC`
+    )
+    return rows.map(normCronograma)
   },
 }

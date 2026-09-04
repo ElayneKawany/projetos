@@ -22,7 +22,7 @@ export async function PATCH(
   const cronograma = await CronogramaRepository.findByIdAndProjetoId(cronograma_id, projeto_id)
   if (!cronograma) return NextResponse.json({ error: 'Cronograma não encontrado.' }, { status: 404 })
 
-  const parcela = CronogramaRepository.findParcelaById(parcela_id)
+  const parcela = await CronogramaRepository.findParcelaById(parcela_id)
   if (!parcela) return NextResponse.json({ error: 'Parcela não encontrada.' }, { status: 404 })
   if (parcela.status !== 'PAGO') {
     return NextResponse.json({ error: 'Só é possível corrigir a data de pagamento de uma parcela já paga.' }, { status: 400 })
@@ -39,9 +39,9 @@ export async function PATCH(
   const parcelaComPagamento = parcela as unknown as { data_pagamento: string | null }
   const dataAnterior = parcelaComPagamento.data_pagamento
 
-  CronogramaRepository.corrigirDataPagamentoParcela(parcela_id, nova_data_pagamento)
+  await CronogramaRepository.corrigirDataPagamentoParcela(parcela_id, nova_data_pagamento)
 
-  CronogramaRepository.insertParcelaHistorico({
+  await CronogramaRepository.insertParcelaHistorico({
     parcela_id,
     cronograma_tarefa_id: parcela.cronograma_tarefa_id,
     projeto_id,

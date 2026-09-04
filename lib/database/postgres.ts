@@ -20,6 +20,32 @@ import type { AsyncDatabaseClient, AsyncExecuteResult, DbParams } from './async-
 // migração: roi_medio por diretoria em fetchDashboard virava NaN).
 pgTypes.setTypeParser(pgTypes.builtins.NUMERIC, (v: string) => parseFloat(v))
 
+// node-postgres devolve DATE/TIMESTAMP/TIMESTAMPTZ como objeto Date do JS por
+// padrão — mas o SQLite sempre devolveu TEXT puro ('YYYY-MM-DD' ou 'YYYY-MM-DD
+// HH:MM:SS'), e o app inteiro (comparações de string, `.slice()`, concatenação
+// tipo `data_fim + 'T00:00:00'`, serialização pra JSON/inputs de formulário)
+// espera essa mesma string, não um Date. Sem isso, todo campo de data das
+// tabelas já migradas (usuarios.created_at, tap_versoes.aprovado_em, etc.)
+// silenciosamente vira Date — `JSON.stringify` até imprime algo parecido com
+// data, mas em formato diferente do que o SQLite produzia, e qualquer código
+// que fizer `new Date(campo + 'T00:00:00')` ou comparação de string quebra.
+// Devolver o texto bruto do Postgres (sem parsear) é o mais próximo do
+// comportamento anterior — bug real encontrado nesta fatia (cronograma), mas
+// que já afetava usuarios/tap_versoes/viabilidade desde suas próprias fatias.
+const identity = (v: string) => v
+pgTypes.setTypeParser(pgTypes.builtins.DATE, identity)
+pgTypes.setTypeParser(pgTypes.builtins.TIMESTAMP, identity)
+pgTypes.setTypeParser(pgTypes.builtins.TIMESTAMPTZ, identity)
+
+// node-postgres devolve BIGINT (inclusive o resultado de COUNT(*)) como string por
+// padrão — mesmo motivo do NUMERIC (evita perda de precisão arbitrária), mas o SQLite
+// sempre devolveu COUNT(*) como number, e o app inteiro faz `row.n > 0`, `total/qtd`,
+// etc. esperando number. A coerção automática de `>`/`/` do JS mascara isso na maioria
+// dos casos (`"5" > 0` e `"10"/"2"` funcionam), mas `===`, template literals e JSON pro
+// frontend não coagem — bug real encontrado nesta fatia (cronograma, que usa muito
+// `COUNT(*) as n`), mas já afetava todo `COUNT(*)` das fatias anteriores também.
+pgTypes.setTypeParser(pgTypes.builtins.INT8, (v: string) => parseInt(v, 10))
+
 let _pool: Pool | null = null
 
 function getPool(): Pool {

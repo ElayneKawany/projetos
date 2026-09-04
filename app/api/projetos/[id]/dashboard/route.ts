@@ -16,16 +16,17 @@ export async function GET(
   const db = getDb()
 
   // 1. Cronograma — ALL levels (FASE, TAREFA, SUBTAREFA)
-  const cronRow = CronogramaRepository.findCronogramaVigente(projeto_id)
+  const cronRow = await CronogramaRepository.findCronogramaVigente(projeto_id)
 
   let cronTotal = 0, cronConcluidas = 0, cronAtrasadas = 0
   if (cronRow) {
     const hoje = new Date().toISOString().slice(0, 10)
-    const tarefas = db.prepare(`
-      SELECT data_conclusao, data_fim, status
-      FROM cronograma_tarefas
-      WHERE cronograma_id = ? AND (ativo IS NULL OR ativo = 1)
-    `).all(cronRow.id) as { data_conclusao: string | null; data_fim: string | null; status: string }[]
+    const tarefas = await asyncDb.queryMany<{ data_conclusao: string | null; data_fim: string | null; status: string }>(
+      `SELECT data_conclusao, data_fim, status
+       FROM "AI"."TI_PMO_CRONOGRAMA_TAREFAS"
+       WHERE cronograma_id = ? AND (ativo IS NULL OR ativo = true)`,
+      [cronRow.id]
+    )
     cronTotal = tarefas.length
     cronConcluidas = tarefas.filter(t => t.data_conclusao || t.status === 'CONCLUIDA').length
     cronAtrasadas = tarefas.filter(t => !t.data_conclusao && t.status !== 'CONCLUIDA' && t.data_fim && t.data_fim < hoje).length

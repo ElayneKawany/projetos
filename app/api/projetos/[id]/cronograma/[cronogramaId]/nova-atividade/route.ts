@@ -54,11 +54,11 @@ export async function POST(
   }
 
   const executorId = body.executor_id ?? body.responsavel_id
-  const ordemMax = CronogramaRepository.maxOrdem(cronograma_id)
+  const ordemMax = await CronogramaRepository.maxOrdem(cronograma_id)
   const nivel = body.nivel === 'SUBTAREFA' ? 'SUBTAREFA' : 'TAREFA'
   const parentId = nivel === 'SUBTAREFA' ? (body.parent_id ?? null) : (body.macro_id ?? null)
 
-  const novaId = Number(CronogramaRepository.insertTarefa({
+  const novaId = Number(await CronogramaRepository.insertTarefa({
     cronograma_id,
     parent_id:    parentId,
     nivel,

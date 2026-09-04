@@ -173,7 +173,7 @@ export async function POST(
 
   const tap        = CronogramaRepository.findTapRecente(projeto_id) as TapCtx | undefined | null
   const viabilidade = await CronogramaRepository.findViabilidadeRecente(projeto_id) as ViabilidadeCtx | undefined | null
-  const tarefasExistentes = CronogramaRepository.findTarefasFasesTarefas(cronograma_id) as TarefaRow[]
+  const tarefasExistentes = await CronogramaRepository.findTarefasFasesTarefas(cronograma_id) as TarefaRow[]
 
   // Fase pai da tarefa informada
   let fasePai: string | null = null

@@ -26,7 +26,7 @@ export async function PATCH(
     Record<string, unknown> | undefined
   if (!cronograma) return NextResponse.json({ error: 'Cronograma não encontrado.' }, { status: 404 })
 
-  const maxVersao = CronogramaRepository.maxVersao(projeto_id)
+  const maxVersao = await CronogramaRepository.maxVersao(projeto_id)
   if (Number(cronograma.versao) === maxVersao) {
     return NextResponse.json({ error: 'Não é possível arquivar a versão atual.' }, { status: 400 })
   }
@@ -34,7 +34,7 @@ export async function PATCH(
     return NextResponse.json({ error: 'Esta versão já está arquivada.' }, { status: 400 })
   }
 
-  CronogramaRepository.arquivarVersao(cronograma_id, session.id)
+  await CronogramaRepository.arquivarVersao(cronograma_id, session.id)
 
   registrarEvento({
     projeto_id,

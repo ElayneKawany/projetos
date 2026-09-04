@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
 import { getDb } from '@/lib/db'
 import { registrarAuditoria } from '@/lib/db/auditoria'
+import { asyncDb } from '@/lib/database'
 
 export async function POST(
   request: NextRequest,
@@ -18,21 +19,27 @@ export async function POST(
 
   const db = getDb()
   const projeto = db.prepare(`
-    SELECT p.*, c.id as cronograma_id
+    SELECT p.*
     FROM projetos p
-    LEFT JOIN cronogramas c ON c.projeto_id = p.id AND c.ativo = 1
     WHERE p.id = ? AND p.ativo = 1
   `).get(projetoId) as Record<string, unknown> | undefined
 
   if (!projeto) return NextResponse.json({ error: 'Projeto não encontrado' }, { status: 404 })
   if (!projeto.projeto_migrado) return NextResponse.json({ error: 'Projeto não é uma migração' }, { status: 400 })
 
+  // cronogramas já migrada para Postgres — join cross-database não é mais possível,
+  // resolvido em consulta separada (só precisamos saber se existe um cronograma ativo).
+  const cronograma = await asyncDb.queryOne<{ id: number }>(
+    `SELECT id FROM "AI"."TI_PMO_CRONOGRAMAS" WHERE projeto_id = ? AND ativo = true`,
+    [projetoId]
+  )
+
   // Verificar todas as pendências
   const pendencias: string[] = []
   if (!projeto.gerente_id)         pendencias.push('Responsável não definido')
   if (!projeto.pmo_responsavel_id) pendencias.push('PMO não definido')
   if (!projeto.ponto_focal)        pendencias.push('Ponto Focal não definido')
-  if (!projeto.cronograma_id)      pendencias.push('Cronograma não cadastrado')
+  if (!cronograma)                 pendencias.push('Cronograma não cadastrado')
 
   if (pendencias.length > 0) {
     return NextResponse.json({

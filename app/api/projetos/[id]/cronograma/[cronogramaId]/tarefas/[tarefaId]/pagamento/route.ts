@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession, temPermissao } from '@/lib/auth'
+import { asyncDb } from '@/lib/database'
 import { CronogramaRepository } from '@/lib/repositories'
 import { registrarAuditoria } from '@/lib/db/auditoria'
 import { registrarEvento } from '@/lib/timeline'
 import { gerarParcelas, avancarData, type Periodicidade } from '@/lib/cronograma/parcelas'
-import getDb from '@/lib/db'
 
 const PERIODICIDADES_VALIDAS: Periodicidade[] = [
   'SEMANAL', 'QUINZENAL', 'MENSAL', 'BIMESTRAL', 'TRIMESTRAL', 'SEMESTRAL', 'ANUAL',
@@ -15,7 +15,7 @@ async function carregarTarefaPagamento(id: string, cronogramaId: string, tarefaI
   const cronograma_id = Number(cronogramaId)
   const tarefa_id     = Number(tarefaId)
   const cronograma = await CronogramaRepository.findByIdAndProjetoId(cronograma_id, projeto_id)
-  const tarefa = CronogramaRepository.findTarefaByIdAndCronograma(tarefa_id, cronograma_id) as Record<string, unknown> | undefined
+  const tarefa = await CronogramaRepository.findTarefaByIdAndCronograma(tarefa_id, cronograma_id) as Record<string, unknown> | undefined
   return { projeto_id, cronograma_id, tarefa_id, cronograma, tarefa }
 }
 
@@ -89,7 +89,7 @@ export async function PATCH(
     )
   }
 
-  const headerAntes = CronogramaRepository.findPagamentoHeaderByTarefaIds([tarefa_id])[0]
+  const headerAntes = (await CronogramaRepository.findPagamentoHeaderByTarefaIds([tarefa_id]))[0]
 
   const qtdPendentesNovas    = qtdParcelas - qtdPagas
   const valorRestanteCentavos = Math.round(valorTotal * 100) - somaPagasCentavos
@@ -100,16 +100,15 @@ export async function PATCH(
     ? gerarParcelas(valorRestante, qtdPendentesNovas, dataAncora, periodicidade)
     : []
 
-  const db = getDb()
-  db.transaction(() => {
-    CronogramaRepository.updateTarefaBasico(tarefa_id, cronograma_id, {
+  await asyncDb.transaction(async () => {
+    await CronogramaRepository.updateTarefaBasico(tarefa_id, cronograma_id, {
       nome:           body.nome.trim(),
       observacoes:    body.observacoes ?? null,
       responsavel_id: body.responsavel_id ?? null,
       alterado_por:   session.id,
     })
 
-    CronogramaRepository.updatePagamentoHeader(tarefa_id, {
+    await CronogramaRepository.updatePagamentoHeader(tarefa_id, {
       beneficiario:           body.beneficiario?.trim() || null,
       valor_total:            valorTotal,
       qtd_parcelas:           qtdParcelas,
@@ -117,17 +116,17 @@ export async function PATCH(
       data_primeira_parcela:  body.data_primeira_parcela,
     })
 
-    CronogramaRepository.deleteParcelasPendentes(tarefa_id)
+    await CronogramaRepository.deleteParcelasPendentes(tarefa_id)
 
     for (const p of novasParcelas) {
-      CronogramaRepository.insertParcela({
+      await CronogramaRepository.insertParcela({
         cronograma_tarefa_id: tarefa_id,
         numero:               qtdPagas + p.numero,
         valor:                p.valor,
         data_vencimento:      p.data_vencimento,
       })
     }
-  })()
+  })
 
   registrarEvento({
     projeto_id,
@@ -181,7 +180,7 @@ export async function DELETE(
     return NextResponse.json({ error: 'Esta ação só é válida para Tarefa de Pagamento.' }, { status: 400 })
   }
 
-  CronogramaRepository.softDeleteTarefa(tarefa_id, session.id)
+  await CronogramaRepository.softDeleteTarefa(tarefa_id, session.id)
 
   registrarEvento({
     projeto_id,

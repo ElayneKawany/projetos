@@ -62,83 +62,67 @@ export default async function ProjetoDetalhePage({
       }[]
     : []
 
-  const cronogramaData = db.prepare(
-    'SELECT * FROM cronogramas WHERE projeto_id = ? ORDER BY versao DESC LIMIT 1'
-  ).get(projeto.id) as { id: number } | undefined
+  // cronogramas/cronograma_tarefas/cronograma_tarefa_pagamento/cronograma_tarefa_parcelas
+  // já estão em Postgres (fatia 5) — busca via CronogramaRepository, que já resolve os
+  // merges de nome de usuário (e o normTarefa/normCronograma que preserva ativo/is_baseline
+  // como 0/1, não boolean, pro contrato existente com o frontend).
+  const cronogramaData = await CronogramaRepository.findLatestByProjectId(projeto.id) as { id: number } | undefined
 
   // Cronograma vigente — mesmo critério em toda a aplicação (CronogramaRepository.findCronogramaVigente):
   // ativo, não arquivado, status aprovado/em execução. Usado tanto para a data prevista quanto
   // para o intervalo real de Execução exibido na Timeline do projeto.
-  const cronAprovRow = CronogramaRepository.findCronogramaVigente(projeto.id)
+  const cronAprovRow = await CronogramaRepository.findCronogramaVigente(projeto.id)
   const cronogramaAprovadoData = cronAprovRow
-    ? (db.prepare(
-        `SELECT MAX(data_fim) AS data_fim_prev FROM cronograma_tarefas WHERE cronograma_id = ?`
-      ).get(cronAprovRow.id) as { data_fim_prev?: string | null } | undefined)
+    ? await asyncDb.queryOne<{ data_fim_prev?: string | null }>(
+        `SELECT MAX(data_fim) AS data_fim_prev FROM "AI"."TI_PMO_CRONOGRAMA_TAREFAS" WHERE cronograma_id = ?`,
+        [cronAprovRow.id]
+      )
     : undefined
 
   // Intervalo real de execução (início/fim) derivado do cronograma vigente — respeita hierarquia
   // FASE→TAREFA via calcIntervaloCronograma (mesmo cálculo usado na aba Cronograma).
   const tarefasParaIntervalo = cronAprovRow
-    ? (db.prepare(
-        `SELECT nivel, data_inicio, data_fim, data_conclusao, status, percentual, prazo_status
-         FROM cronograma_tarefas
-         WHERE cronograma_id = ? AND nivel IN ('FASE', 'TAREFA') AND (ativo IS NULL OR ativo = 1)
-         ORDER BY ordem`
-      ).all(cronAprovRow.id) as {
+    ? await asyncDb.queryMany<{
         nivel: string; data_inicio: string | null; data_fim: string | null
         data_conclusao: string | null; status: string | null
         percentual: number | null; prazo_status: string | null
-      }[])
+      }>(
+        `SELECT nivel, data_inicio, data_fim, data_conclusao, status, percentual, prazo_status
+         FROM "AI"."TI_PMO_CRONOGRAMA_TAREFAS"
+         WHERE cronograma_id = ? AND nivel IN ('FASE', 'TAREFA') AND (ativo IS NULL OR ativo = true)
+         ORDER BY ordem`,
+        [cronAprovRow.id]
+      )
     : []
   const execucaoRange = cronAprovRow ? calcIntervaloCronograma(tarefasParaIntervalo) : null
 
   // Tarefas pendentes no cronograma atual (para aviso no modal de conclusão)
-  const cronAtualId = (cronogramaData as { id?: number } | undefined)?.id
+  const cronAtualId = cronogramaData?.id
   let tarefasPendentes = 0
   if (cronAtualId) {
-    const { pendentes } = db.prepare(
-      `SELECT COUNT(*) AS pendentes FROM cronograma_tarefas
+    const row = await asyncDb.queryOne<{ pendentes: number }>(
+      `SELECT COUNT(*) AS pendentes FROM "AI"."TI_PMO_CRONOGRAMA_TAREFAS"
        WHERE cronograma_id = ? AND nivel = 'TAREFA' AND data_conclusao IS NULL
-         AND (ativo IS NULL OR ativo = 1)`
-    ).get(cronAtualId) as { pendentes: number }
-    tarefasPendentes = pendentes
+         AND (ativo IS NULL OR ativo = true)`,
+      [cronAtualId]
+    )
+    tarefasPendentes = row?.pendentes ?? 0
   }
 
-  const cronogramaTarefasRaw = cronogramaData
-    ? db.prepare(`SELECT * FROM cronograma_tarefas WHERE cronograma_id = ? ORDER BY ordem`)
-        .all(cronogramaData.id) as (Record<string, unknown> & { id: number; responsavel_id: number | null; executor_id: number | null })[]
-    : []
-  const cronNomeIds = [...new Set(
-    cronogramaTarefasRaw.flatMap(t => [t.responsavel_id, t.executor_id]).filter((v): v is number => v != null)
-  )]
-  const cronNomes = await UsuariosRepository.findNomesPorIds(cronNomeIds)
-  const cronogramaTarefas = cronogramaTarefasRaw.map(t => ({
-    ...t,
-    responsavel_nome: t.responsavel_id != null ? cronNomes.get(t.responsavel_id)?.nome ?? null : null,
-    executor_nome: t.executor_id != null ? cronNomes.get(t.executor_id)?.nome ?? null : null,
-  })) as (Record<string, unknown> & { id: number; natureza_tarefa?: string })[]
+  const cronogramaTarefas = (cronogramaData
+    ? await CronogramaRepository.findTasks(cronogramaData.id)
+    : []) as unknown as (Record<string, unknown> & { id: number; natureza_tarefa?: string; pagamento?: unknown })[]
 
   // Tarefa de Pagamento: anexa cabeçalho + parcelas nas tarefas com natureza_tarefa='PAGAMENTO'
   const tarefasPagamentoIds = cronogramaTarefas
     .filter(t => t.natureza_tarefa === 'PAGAMENTO')
     .map(t => t.id)
   if (tarefasPagamentoIds.length > 0) {
-    const placeholders = tarefasPagamentoIds.map(() => '?').join(',')
-    const headers = db.prepare(
-      `SELECT * FROM cronograma_tarefa_pagamento WHERE cronograma_tarefa_id IN (${placeholders})`
-    ).all(...tarefasPagamentoIds) as { cronograma_tarefa_id: number }[]
-    const parcelasRaw = db.prepare(
-      `SELECT * FROM cronograma_tarefa_parcelas
-       WHERE cronograma_tarefa_id IN (${placeholders})
-       ORDER BY numero ASC`
-    ).all(...tarefasPagamentoIds) as { cronograma_tarefa_id: number; pago_por: number | null }[]
-    const pagoPorIds = [...new Set(parcelasRaw.map(p => p.pago_por).filter((v): v is number => v != null))]
-    const pagoPorNomes = await UsuariosRepository.findNomesPorIds(pagoPorIds)
-    const parcelas = parcelasRaw.map(p => ({
-      ...p,
-      pago_por_nome: p.pago_por != null ? pagoPorNomes.get(p.pago_por)?.nome ?? null : null,
-    }))
-    for (const t of cronogramaTarefas as (Record<string, unknown> & { id: number; pagamento?: unknown })[]) {
+    const [headers, parcelas] = await Promise.all([
+      CronogramaRepository.findPagamentoHeaderByTarefaIds(tarefasPagamentoIds),
+      CronogramaRepository.findParcelasByTarefaIds(tarefasPagamentoIds),
+    ])
+    for (const t of cronogramaTarefas) {
       const header = headers.find(h => h.cronograma_tarefa_id === t.id)
       if (!header) continue
       t.pagamento = { ...header, parcelas: parcelas.filter(p => p.cronograma_tarefa_id === t.id) }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
-import { db } from '@/lib/database'
+import { asyncDb } from '@/lib/database'
 import { CronogramaRepository } from '@/lib/repositories'
 import { registrarAuditoria } from '@/lib/db/auditoria'
 import { apiLogger } from '@/lib/logger'
@@ -78,7 +78,7 @@ export async function GET(
     const { id } = await params
     const projetoId = Number(id)
 
-    const versoes = CronogramaRepository.findAllVersoes(projetoId)
+    const versoes = await CronogramaRepository.findAllVersoes(projetoId)
 
     const cronogramaIdParam = new URL(request.url).searchParams.get('cronogramaId')
     let cronograma
@@ -114,7 +114,7 @@ export async function GET(
       .filter(t => t.natureza_tarefa === 'PAGAMENTO')
       .map(t => t.id)
     if (tarefasPagamentoIds.length > 0) {
-      const headers  = CronogramaRepository.findPagamentoHeaderByTarefaIds(tarefasPagamentoIds)
+      const headers  = await CronogramaRepository.findPagamentoHeaderByTarefaIds(tarefasPagamentoIds)
       const parcelas = await CronogramaRepository.findParcelasByTarefaIds(tarefasPagamentoIds)
       for (const t of tarefasComResp) {
         const header = headers.find(h => h.cronograma_tarefa_id === t.id)
@@ -251,11 +251,11 @@ export async function POST(
     }
 
     // ── Versão alvo ───────────────────────────────────────────────────────────
-    const cronogramaAtual = CronogramaRepository.findAtivoSimples(projetoId)
+    const cronogramaAtual = await CronogramaRepository.findAtivoSimples(projetoId)
 
     const isSobrepor = acao === 'SUBSTITUIR' && !!cronogramaAtual
 
-    const maxVersao = CronogramaRepository.maxVersao(projetoId)
+    const maxVersao = await CronogramaRepository.maxVersao(projetoId)
 
     const nextVersao = isSobrepor ? (cronogramaAtual?.versao ?? maxVersao) : maxVersao + 1
     const labelFinal = label.trim() || `Versão ${nextVersao}`
@@ -306,20 +306,26 @@ export async function POST(
         : { versao: nextVersao, modo, tarefas: tarefas.length }
     )
 
-    // ── Transação atômica ─────────────────────────────────────────────────────
+    // ── Transação Postgres (cronogramas + cronograma_tarefas + cronograma_responsaveis
+    // já migraram juntas nesta fatia — cabem numa única transação Postgres via
+    // asyncDb.transaction). registrarEvento/registrarAuditoria continuam em SQLite e
+    // rodam DEPOIS que esta transação confirmar, fora dela — os dois bancos não podem
+    // participar da mesma transação, e o cronograma é o lado "primário": se o registro
+    // de evento/auditoria falhar depois, o erro sobe pro caller, mas o cronograma em si
+    // já está persistido corretamente.
     let cronogramaId  = 0
     let tarefasSalvas = 0
 
     try {
-      db.transaction(() => {
+      await asyncDb.transaction(async () => {
         if (isSobrepor && cronogramaAtual) {
           // Modo SUBSTITUIR: reutiliza o cronograma existente
           cronogramaId = cronogramaAtual.id
-          CronogramaRepository.softDeleteTarefas(cronogramaId)
-          CronogramaRepository.updateLabelFonte(cronogramaId, labelFinal, fonte, arquivo || null)
+          await CronogramaRepository.softDeleteTarefas(cronogramaId)
+          await CronogramaRepository.updateLabelFonte(cronogramaId, labelFinal, fonte, arquivo || null)
         } else {
           // Modo NOVA_VERSAO: cria novo registro de cronograma
-          cronogramaId = Number(CronogramaRepository.insertCronograma({
+          cronogramaId = Number(await CronogramaRepository.insertCronograma({
             projeto_id: projetoId,
             versao: nextVersao,
             label: labelFinal,
@@ -375,7 +381,7 @@ export async function POST(
             ? (tParsed.data_conclusao ?? dataFimPassada ?? nowISO)
             : null
 
-          const tarefaDbId = Number(CronogramaRepository.insertTarefa({
+          const tarefaDbId = Number(await CronogramaRepository.insertTarefa({
             cronograma_id:        cronogramaId,
             parent_id:            parentId,
             codigo:               wbsCodes[i],
@@ -421,41 +427,16 @@ export async function POST(
           }
           for (const nome of nomes) {
             const uid = resolveUserId(nome)
-            CronogramaRepository.insertResponsavel(tarefaDbId, uid, uid ? null : nome.trim())
+            await CronogramaRepository.insertResponsavel(tarefaDbId, uid, uid ? null : nome.trim())
           }
         }
 
         // Verificar COUNT dentro da transação — ROLLBACK se 0 (safety net)
-        const count = CronogramaRepository.countTarefas(cronogramaId)
+        const count = await CronogramaRepository.countTarefas(cronogramaId)
         if (count === 0 && tarefas.length > 0) {
           throw new Error(`Nenhuma tarefa foi persistida para o cronograma id=${cronogramaId}`)
         }
         tarefasSalvas = count
-
-        registrarEvento({
-          projeto_id:      projetoId,
-          modulo:          'CRONOGRAMA',
-          artefato:        'CRONOGRAMA',
-          evento:          eventoEvento,
-          titulo:          eventoTitulo,
-          descricao:       eventoDescricao,
-          origem:          eventoOrigem,
-          usuario_id:      session.id,
-          usuario_nome:    session.nome,
-          referencia_id:   cronogramaId,
-          referencia_tipo: 'cronograma',
-        })
-
-        registrarAuditoria({
-          usuario_id:   session.id,
-          usuario_nome: session.nome,
-          acao:         isExcel ? 'IMPORT' : 'CREATE',
-          entidade:     'cronogramas',
-          entidade_id:  cronogramaId,
-          projeto_id:   projetoId,
-          descricao:    auditoriaDescricao,
-          dados_depois: JSON.parse(auditoriaJson),
-        })
       })
     } catch (txErr: unknown) {
       return NextResponse.json(
@@ -467,6 +448,32 @@ export async function POST(
         { status: 500 }
       )
     }
+
+    // ── Efeitos colaterais em SQLite — só depois que o Postgres confirmou ──────
+    registrarEvento({
+      projeto_id:      projetoId,
+      modulo:          'CRONOGRAMA',
+      artefato:        'CRONOGRAMA',
+      evento:          eventoEvento,
+      titulo:          eventoTitulo,
+      descricao:       eventoDescricao,
+      origem:          eventoOrigem,
+      usuario_id:      session.id,
+      usuario_nome:    session.nome,
+      referencia_id:   cronogramaId,
+      referencia_tipo: 'cronograma',
+    })
+
+    registrarAuditoria({
+      usuario_id:   session.id,
+      usuario_nome: session.nome,
+      acao:         isExcel ? 'IMPORT' : 'CREATE',
+      entidade:     'cronogramas',
+      entidade_id:  cronogramaId,
+      projeto_id:   projetoId,
+      descricao:    auditoriaDescricao,
+      dados_depois: JSON.parse(auditoriaJson),
+    })
 
     return NextResponse.json({
       ok:           true,

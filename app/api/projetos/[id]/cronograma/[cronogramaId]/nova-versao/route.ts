@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession, temPermissao } from '@/lib/auth'
-import { db } from '@/lib/database'
+import { asyncDb } from '@/lib/database'
 import { CronogramaRepository } from '@/lib/repositories'
 import { registrarAuditoria } from '@/lib/db/auditoria'
 import { registrarEvento } from '@/lib/timeline'
@@ -33,25 +33,10 @@ export async function POST(
 
   const novaVersao = (cronograma.versao as number) + 1
 
-  // Pré-busca as parcelas das tarefas de PAGAMENTO fora da transação: a query
-  // agora envolve `usuarios` (Postgres, async) e o wrapper de transação do
-  // better-sqlite3 é síncrono — não pode conter um `await` no meio do callback.
-  const tarefasParaCopia = CronogramaRepository.findTarefasOrdered(cron_id)
-  const idsPagamento = tarefasParaCopia
-    .filter(t => String(t.natureza_tarefa) === 'PAGAMENTO')
-    .map(t => Number(t.id))
-  const parcelasPagamento = await CronogramaRepository.findParcelasByTarefaIds(idsPagamento)
-  const parcelasPorTarefaAntiga = new Map<number, typeof parcelasPagamento>()
-  for (const p of parcelasPagamento) {
-    const arr = parcelasPorTarefaAntiga.get(p.cronograma_tarefa_id) ?? []
-    arr.push(p)
-    parcelasPorTarefaAntiga.set(p.cronograma_tarefa_id, arr)
-  }
-
   let novoCronId: number
   try {
-    novoCronId = Number(db.transaction(() => {
-      const novoId = CronogramaRepository.insertCronograma({
+    novoCronId = Number(await asyncDb.transaction(async () => {
+      const novoId = await CronogramaRepository.insertCronograma({
         projeto_id,
         versao: novaVersao,
         label: `Versão ${novaVersao}`,
@@ -62,7 +47,22 @@ export async function POST(
 
       // Só tarefas ATIVAS — linhas desativadas pelo editor inline (substituídas
       // por uma versão mais nova da mesma linha) nunca devem ser copiadas.
-      const tarefas = CronogramaRepository.findTarefasOrdered(cron_id)
+      const tarefas = await CronogramaRepository.findTarefasOrdered(cron_id)
+
+      // Parcelas das tarefas de PAGAMENTO, buscadas em lote uma vez (cronogramas,
+      // cronograma_tarefas e cronograma_tarefa_parcelas já estão todos em Postgres
+      // nesta fatia, então cabem na mesma transação — sem o workaround de pré-busca
+      // fora da transação que era necessário quando isso ainda cruzava SQLite/Postgres).
+      const idsPagamento = tarefas
+        .filter(t => String(t.natureza_tarefa) === 'PAGAMENTO')
+        .map(t => Number(t.id))
+      const parcelasPagamento = await CronogramaRepository.findParcelasByTarefaIds(idsPagamento)
+      const parcelasPorTarefaAntiga = new Map<number, typeof parcelasPagamento>()
+      for (const p of parcelasPagamento) {
+        const arr = parcelasPorTarefaAntiga.get(p.cronograma_tarefa_id) ?? []
+        arr.push(p)
+        parcelasPorTarefaAntiga.set(p.cronograma_tarefa_id, arr)
+      }
 
       // Mapa ID antigo → ID novo, para religar parent_id (FASE/TAREFA/SUBTAREFA)
       // na nova versão em vez de deixar todo mundo órfão (parent_id nulo).
@@ -73,7 +73,7 @@ export async function POST(
         const parentAntigo = t.parent_id != null ? Number(t.parent_id) : null
         const novoParentId = parentAntigo != null ? mapaIds.get(parentAntigo) ?? null : null
 
-        const novaTarefaId = Number(CronogramaRepository.insertTarefa({
+        const novaTarefaId = Number(await CronogramaRepository.insertTarefa({
           cronograma_id: Number(novoId),
           parent_id:         novoParentId,
           codigo:            String(t.codigo ?? ''),
@@ -110,9 +110,9 @@ export async function POST(
         // pagamento preservados) para a nova versão — não recria pagamentos reais,
         // só religa o mesmo histórico financeiro à nova linha da tarefa.
         if (String(t.natureza_tarefa) === 'PAGAMENTO') {
-          const header = CronogramaRepository.findPagamentoHeaderByTarefaIds([idAntigo])[0]
+          const header = (await CronogramaRepository.findPagamentoHeaderByTarefaIds([idAntigo]))[0]
           if (header) {
-            CronogramaRepository.insertPagamentoHeader({
+            await CronogramaRepository.insertPagamentoHeader({
               cronograma_tarefa_id: novaTarefaId,
               beneficiario: header.beneficiario,
               valor_total: header.valor_total,
@@ -123,7 +123,7 @@ export async function POST(
             })
             const parcelas = parcelasPorTarefaAntiga.get(idAntigo) ?? []
             for (const p of parcelas) {
-              CronogramaRepository.insertParcelaCompleta({
+              await CronogramaRepository.insertParcelaCompleta({
                 cronograma_tarefa_id: novaTarefaId,
                 numero: p.numero,
                 valor: p.valor,
@@ -142,7 +142,13 @@ export async function POST(
     }))
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e)
-    if (msg.includes('UNIQUE constraint failed') || msg.includes('SQLITE_CONSTRAINT')) {
+    // Mensagem de violação de unique index muda de banco: SQLite dizia "UNIQUE
+    // constraint failed"/"SQLITE_CONSTRAINT"; Postgres diz "duplicate key value
+    // violates unique constraint" — cronogramas já migrou pra Postgres nesta fatia.
+    if (
+      msg.includes('UNIQUE constraint failed') || msg.includes('SQLITE_CONSTRAINT') ||
+      msg.includes('duplicate key value violates unique constraint')
+    ) {
       return NextResponse.json(
         { error: 'Uma nova versão já foi criada para este cronograma. Atualize a página.' },
         { status: 409 }

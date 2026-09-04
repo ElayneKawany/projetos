@@ -54,7 +54,7 @@ export async function buscarProjetos(filtros: {
   }
 
   if (filtros.perfil && filtros.usuario_id) {
-    const vis = getProjetoVisibility({ id: filtros.usuario_id, perfil: filtros.perfil })
+    const vis = await getProjetoVisibility({ id: filtros.usuario_id, perfil: filtros.perfil })
     if (vis.where !== '1=1') {
       conditions.push(`(${vis.where})`)
       Object.assign(params, vis.params)
@@ -317,7 +317,7 @@ export async function concluirProjeto(
   if (!projeto) throw new Error('Projeto não encontrado.')
   if (projeto.status !== 'EXECUCAO') throw new Error('Projeto deve estar em Execução para ser concluído.')
 
-  const cronograma = ProjetosRepository.findCronogramaLatest(projeto_id)
+  const cronograma = await ProjetosRepository.findCronogramaLatest(projeto_id)
 
   const CRONOGRAMA_STATUS_VALIDOS = ['APROVADO', 'EM_EXECUCAO', 'PRONTO_PARA_ENCERRAMENTO']
   if (!cronograma || !CRONOGRAMA_STATUS_VALIDOS.includes(cronograma.status)) {
@@ -343,8 +343,8 @@ export async function concluirProjeto(
     referencia_tipo: 'projetos',
   })
 
-  const totalTarefas = ProjetosRepository.countTarefasNivel(cronograma.id, 'TAREFA')
-  const concluidasTarefas = ProjetosRepository.countTarefasConcluidasNivel(cronograma.id, 'TAREFA')
+  const totalTarefas = await ProjetosRepository.countTarefasNivel(cronograma.id, 'TAREFA')
+  const concluidasTarefas = await ProjetosRepository.countTarefasConcluidasNivel(cronograma.id, 'TAREFA')
   const pendenteTarefas = totalTarefas - concluidasTarefas
 
   registrarAuditoria({
@@ -376,10 +376,10 @@ export async function concluirProjeto(
   const capexExec = ProjetosRepository.calcCapexExecutado(projeto_id)
   const opexExec = ProjetosRepository.calcOpexExecutado(projeto_id)
 
-  const cronAprov = ProjetosRepository.findCronogramaAprovado(projeto_id)
+  const cronAprov = await ProjetosRepository.findCronogramaAprovado(projeto_id)
   let dataFimPrevCron: string | null = null
   if (cronAprov) {
-    dataFimPrevCron = ProjetosRepository.findDataFimCronograma(cronAprov.id)
+    dataFimPrevCron = await ProjetosRepository.findDataFimCronograma(cronAprov.id)
   }
 
   let diasDesvio: number | null = null
@@ -416,9 +416,9 @@ export async function concluirProjeto(
     referencia_tipo: 'projeto_snapshot_final',
   })
 
-  const cronAtivo = ProjetosRepository.findCronogramaAtivo(projeto_id)
+  const cronAtivo = await ProjetosRepository.findCronogramaAtivo(projeto_id)
   if (cronAtivo) {
-    ProjetosRepository.updateCronogramaStatus(cronAtivo.id, 'ENCERRADO')
+    await ProjetosRepository.updateCronogramaStatus(cronAtivo.id, 'ENCERRADO')
 
     registrarEvento({
       projeto_id,

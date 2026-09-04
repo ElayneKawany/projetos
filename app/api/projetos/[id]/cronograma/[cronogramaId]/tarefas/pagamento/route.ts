@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
+import { asyncDb } from '@/lib/database'
 import { CronogramaRepository } from '@/lib/repositories'
 import { registrarAuditoria } from '@/lib/db/auditoria'
 import { registrarEvento } from '@/lib/timeline'
 import { gerarParcelas, type Periodicidade } from '@/lib/cronograma/parcelas'
-import getDb from '@/lib/db'
 
 const CRONOGRAMA_STATUS_ACEITOS = ['RASCUNHO', 'APROVADO', 'EM_EXECUCAO', 'PRONTO_PARA_ENCERRAMENTO']
 const PERIODICIDADES_VALIDAS: Periodicidade[] = [
@@ -66,10 +66,9 @@ export async function POST(
 
   const parcelasGeradas = gerarParcelas(valorTotal, qtdParcelas, body.data_primeira_parcela, periodicidade)
 
-  const db = getDb()
-  const tarefaId = db.transaction(() => {
-    const ordemMax = CronogramaRepository.maxOrdem(cronograma_id)
-    const novaId = Number(CronogramaRepository.insertTarefa({
+  const tarefaId = await asyncDb.transaction(async () => {
+    const ordemMax = await CronogramaRepository.maxOrdem(cronograma_id)
+    const novaId = Number(await CronogramaRepository.insertTarefa({
       cronograma_id,
       parent_id:      body.macro_id ?? null,
       nivel:          'TAREFA',
@@ -83,7 +82,7 @@ export async function POST(
       alterado_por:   session.id,
     }))
 
-    CronogramaRepository.insertPagamentoHeader({
+    await CronogramaRepository.insertPagamentoHeader({
       cronograma_tarefa_id:  novaId,
       beneficiario:          body.beneficiario?.trim() || null,
       valor_total:           valorTotal,
@@ -94,7 +93,7 @@ export async function POST(
     })
 
     for (const p of parcelasGeradas) {
-      CronogramaRepository.insertParcela({
+      await CronogramaRepository.insertParcela({
         cronograma_tarefa_id: novaId,
         numero:               p.numero,
         valor:                p.valor,
@@ -103,7 +102,7 @@ export async function POST(
     }
 
     return novaId
-  })()
+  })
 
   registrarEvento({
     projeto_id,

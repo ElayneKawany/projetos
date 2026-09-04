@@ -19,7 +19,7 @@ export async function PATCH(
   const cronograma = await CronogramaRepository.findByIdAndProjetoId(cronograma_id, projeto_id)
   if (!cronograma) return NextResponse.json({ error: 'Cronograma não encontrado.' }, { status: 404 })
 
-  const parcela = CronogramaRepository.findParcelaById(parcela_id)
+  const parcela = await CronogramaRepository.findParcelaById(parcela_id)
   if (!parcela) return NextResponse.json({ error: 'Parcela não encontrada.' }, { status: 404 })
   if (parcela.status === 'PAGO') {
     return NextResponse.json({ error: 'Parcela já paga não pode ser reprogramada.' }, { status: 400 })
@@ -40,12 +40,12 @@ export async function PATCH(
   const dataAnterior = parcela.data_vencimento
 
   if (isEdicao) {
-    CronogramaRepository.corrigirDataVencimentoParcela(parcela_id, nova_data_vencimento)
+    await CronogramaRepository.corrigirDataVencimentoParcela(parcela_id, nova_data_vencimento)
   } else {
-    CronogramaRepository.reprogramarParcela(parcela_id, nova_data_vencimento, parcela.data_vencimento_baseline, dataAnterior)
+    await CronogramaRepository.reprogramarParcela(parcela_id, nova_data_vencimento, parcela.data_vencimento_baseline, dataAnterior)
   }
 
-  CronogramaRepository.insertParcelaHistorico({
+  await CronogramaRepository.insertParcelaHistorico({
     parcela_id,
     cronograma_tarefa_id: parcela.cronograma_tarefa_id,
     projeto_id,

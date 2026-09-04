@@ -2,8 +2,8 @@ import { CronogramaRepository, type DistribuicaoMacroFase } from '@/lib/reposito
 
 export type { DistribuicaoMacroFase }
 
-export function buscarDistribuicaoMacroFases(projetoId: number): DistribuicaoMacroFase[] {
-  const cronograma = CronogramaRepository.findAtivoSimples(projetoId)
+export async function buscarDistribuicaoMacroFases(projetoId: number): Promise<DistribuicaoMacroFase[]> {
+  const cronograma = await CronogramaRepository.findAtivoSimples(projetoId)
   if (!cronograma) return []
   const today = new Date().toISOString().slice(0, 10)
   return CronogramaRepository.findDistribuicaoMacroFases(cronograma.id, today)

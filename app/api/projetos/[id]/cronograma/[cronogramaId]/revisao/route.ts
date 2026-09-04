@@ -40,10 +40,13 @@ export async function POST(
     return NextResponse.json({ error: 'Apenas etapas de aprovação podem solicitar revisão.' }, { status: 400 })
   }
 
+  // cronogramas já está em Postgres — o UPDATE de status roda fora desta transação
+  // SQLite, depois que ela confirmar (mesmo padrão de tap/viabilidade nas fatias
+  // anteriores): é só uma flag de status derivada, não o registro primário desta
+  // operação, então uma falha no Postgres depois não deve mascarar o rollback do
+  // workflow/aprovações/histórico/auditoria já confirmados em SQLite.
   db.transaction(() => {
     processarResposta({ workflow, acao: 'REJEITAR', observacao })
-
-    CronogramaRepository.updateStatus(Number(cronogramaId), 'RASCUNHO')
 
     ProjetosRepository.updateAprovacao({
       referencia_id: Number(cronogramaId),
@@ -74,6 +77,8 @@ export async function POST(
       dados_depois: { cronograma_status: 'RASCUNHO', observacao },
     })
   })
+
+  await CronogramaRepository.updateStatus(Number(cronogramaId), 'RASCUNHO')
 
   // Notificar PMOs
   const projeto = await ProjetosRepository.findById(Number(projetoId))

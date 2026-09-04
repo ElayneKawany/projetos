@@ -221,32 +221,38 @@ export default async function ComiteDetalhePage({ params }: { params: Promise<{ 
   // TAREFA rows are included so SlideExecucaoDetalhe can expand FASEs that have child tasks
   // Mesmo critério de "cronograma vigente" de CronogramaRepository.findCronogramaVigente:
   // ativo, não arquivado, status aprovado/em execução — nunca um RASCUNHO/PENDENTE_APROVACAO.
-  const macroTarefasExecucaoRaw = db.prepare(`
+  // cronogramas/cronograma_tarefas já estão em Postgres — resolve antes (SQLite) os
+  // projeto_id elegíveis (EXECUCAO/GOLIVE) e passa como lista de ids.
+  const projetosExecucaoIds = (db.prepare(
+    "SELECT id FROM projetos WHERE ativo = 1 AND status IN ('EXECUCAO', 'GOLIVE')"
+  ).all() as Array<{ id: number }>).map(p => p.id)
+
+  const macroTarefasExecucaoRaw = projetosExecucaoIds.length ? await asyncDb.queryMany<
+    Record<string, unknown> & { responsavel_id: number | null; responsavel_nome_ext: string | null }
+  >(`
     SELECT
       t.id, c.id AS cronograma_id, c.projeto_id, t.nome, t.nivel, t.codigo, t.percentual,
       t.data_inicio, t.data_inicio_baseline, t.data_fim, t.data_fim_baseline, t.data_conclusao,
       t.bloqueio, t.motivo_bloqueio, t.motivo_atraso, t.criticidade,
       t.observacoes, t.prazo_status, t.ordem, t.status,
       t.responsavel_id, t.responsavel_nome_ext
-    FROM cronograma_tarefas t
-    JOIN cronogramas c ON c.id = t.cronograma_id
-    WHERE (c.ativo IS NULL OR c.ativo = 1)
-      AND (c.arquivado IS NULL OR c.arquivado = 0)
+    FROM "AI"."TI_PMO_CRONOGRAMA_TAREFAS" t
+    JOIN "AI"."TI_PMO_CRONOGRAMAS" c ON c.id = t.cronograma_id
+    WHERE (c.ativo IS NULL OR c.ativo = true)
+      AND (c.arquivado IS NULL OR c.arquivado = false)
       AND c.status IN ('APROVADO', 'EM_EXECUCAO', 'PRONTO_PARA_ENCERRAMENTO', 'ENCERRADO')
       AND t.nivel IN ('FASE', 'TAREFA')
-      AND (t.ativo IS NULL OR t.ativo = 1)
+      AND (t.ativo IS NULL OR t.ativo = true)
       AND c.versao = (
-        SELECT MAX(c2.versao) FROM cronogramas c2
+        SELECT MAX(c2.versao) FROM "AI"."TI_PMO_CRONOGRAMAS" c2
         WHERE c2.projeto_id = c.projeto_id
-          AND (c2.ativo IS NULL OR c2.ativo = 1)
-          AND (c2.arquivado IS NULL OR c2.arquivado = 0)
+          AND (c2.ativo IS NULL OR c2.ativo = true)
+          AND (c2.arquivado IS NULL OR c2.arquivado = false)
           AND c2.status IN ('APROVADO', 'EM_EXECUCAO', 'PRONTO_PARA_ENCERRAMENTO', 'ENCERRADO')
       )
-      AND c.projeto_id IN (
-        SELECT id FROM projetos WHERE ativo = 1 AND status IN ('EXECUCAO', 'GOLIVE')
-      )
+      AND c.projeto_id = ANY(?)
     ORDER BY t.ordem, t.id
-  `).all() as (Record<string, unknown> & { responsavel_id: number | null; responsavel_nome_ext: string | null })[]
+  `, [projetosExecucaoIds]) : []
   const macroNomeIds = [...new Set(macroTarefasExecucaoRaw.map(t => t.responsavel_id).filter((v): v is number => v != null))]
   const macroNomes = await UsuariosRepository.findNomesPorIds(macroNomeIds)
   const macroTarefasExecucao = macroTarefasExecucaoRaw.map(t => ({
@@ -299,39 +305,65 @@ export default async function ComiteDetalhePage({ params }: { params: Promise<{ 
   )
   const tiNomesPorId = new Map(tiUsuariosFiltro.map(u => [u.id, u.nome]))
   const tiIdsFiltro = tiUsuariosFiltro.map(u => u.id)
-  const tiIdsPlaceholder = tiIdsFiltro.length ? tiIdsFiltro.map(() => '?').join(',') : '-1'
 
-  const tiTarefasCronogramaRaw = db.prepare(`
+  // cronogramas/cronograma_tarefas já estão em Postgres — a query roda lá, e
+  // projetos (SQLite) entra por lookup em lote a partir dos projeto_id retornados,
+  // descartando tarefas de projeto inativo (equivalente ao antigo `p.ativo = 1` no JOIN).
+  const tiTarefasCronogramaPg = await asyncDb.queryMany<{
+    id: number
+    nome: string
+    percentual: number | null
+    data_inicio: string | null
+    data_fim: string | null
+    data_conclusao: string | null
+    observacoes: string | null
+    prazo_status: string | null
+    responsavel_id: number | null
+    responsavel_nome_ext: string | null
+    cronograma_id: number
+    projeto_id: number
+  }>(`
     SELECT
       t.id, t.nome, t.percentual, t.data_inicio, t.data_fim, t.data_conclusao,
       t.observacoes, t.prazo_status, t.responsavel_id, t.responsavel_nome_ext,
-      p.codigo AS projeto_codigo, p.nome AS projeto_nome,
       c.id AS cronograma_id, c.projeto_id
-    FROM cronograma_tarefas t
-    JOIN cronogramas c ON c.id = t.cronograma_id
-    JOIN projetos p ON p.id = c.projeto_id
-    WHERE (t.ativo IS NULL OR t.ativo = 1)
-      AND (c.ativo IS NULL OR c.ativo = 1)
-      AND p.ativo = 1
+    FROM "AI"."TI_PMO_CRONOGRAMA_TAREFAS" t
+    JOIN "AI"."TI_PMO_CRONOGRAMAS" c ON c.id = t.cronograma_id
+    WHERE (t.ativo IS NULL OR t.ativo = true)
+      AND (c.ativo IS NULL OR c.ativo = true)
       AND t.percentual > 0 AND t.percentual < 100
       AND c.versao = (
-        SELECT MAX(c2.versao) FROM cronogramas c2
-        WHERE c2.projeto_id = c.projeto_id AND (c2.ativo IS NULL OR c2.ativo = 1)
+        SELECT MAX(c2.versao) FROM "AI"."TI_PMO_CRONOGRAMAS" c2
+        WHERE c2.projeto_id = c.projeto_id AND (c2.ativo IS NULL OR c2.ativo = true)
       )
       AND (
-        t.responsavel_id IN (${tiIdsPlaceholder})
+        t.responsavel_id = ANY(?)
         OR LOWER(COALESCE(t.responsavel_nome_ext, '')) LIKE '%michel%'
         OR LOWER(COALESCE(t.responsavel_nome_ext, '')) LIKE '%divonzi%'
         OR LOWER(COALESCE(t.responsavel_nome_ext, '')) LIKE '%plinio%'
         OR LOWER(COALESCE(t.responsavel_nome_ext, '')) LIKE '%plínio%'
       )
-    ORDER BY p.nome, t.data_inicio
-  `).all(...tiIdsFiltro) as (Record<string, unknown> & { responsavel_id: number | null; responsavel_nome_ext: string | null })[]
+  `, [tiIdsFiltro])
 
-  const tiTarefasCronograma = tiTarefasCronogramaRaw.map(t => ({
-    ...t,
-    analista: (t.responsavel_id != null ? tiNomesPorId.get(t.responsavel_id) : undefined) ?? t.responsavel_nome_ext,
-  }))
+  const tiProjetoIds = [...new Set(tiTarefasCronogramaPg.map(t => t.projeto_id))]
+  const tiProjetosInfo = tiProjetoIds.length
+    ? db.prepare(
+        `SELECT id, codigo AS projeto_codigo, nome AS projeto_nome
+         FROM projetos WHERE id IN (${tiProjetoIds.map(() => '?').join(',')}) AND ativo = 1`
+      ).all(...tiProjetoIds) as Array<{ id: number; projeto_codigo: string | null; projeto_nome: string }>
+    : []
+  const tiProjetoInfoMap = new Map(tiProjetosInfo.map(p => [p.id, p]))
+
+  const tiTarefasCronograma = tiTarefasCronogramaPg
+    .filter(t => tiProjetoInfoMap.has(t.projeto_id))
+    .map(t => ({
+      ...t,
+      ...tiProjetoInfoMap.get(t.projeto_id)!,
+      analista: (t.responsavel_id != null ? tiNomesPorId.get(t.responsavel_id) : undefined) ?? t.responsavel_nome_ext,
+    }))
+    .sort((a, b) => (a.projeto_nome === b.projeto_nome
+      ? String(a.data_inicio ?? '').localeCompare(String(b.data_inicio ?? ''))
+      : a.projeto_nome.localeCompare(b.projeto_nome)))
 
   // Previous comitês for history
   const historico = db.prepare(`

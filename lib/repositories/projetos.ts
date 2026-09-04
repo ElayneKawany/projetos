@@ -2,11 +2,14 @@ import { db, asyncDb } from '@/lib/database'
 import { TapRepository } from './tap'
 import { ViabilidadeRepository } from './viabilidade'
 import { UsuariosRepository } from './usuarios'
+import { CronogramaRepository } from './cronograma'
 import type { Projeto, StatusProjeto, Prioridade } from '@/types'
 
 // tap_versoes já está em Postgres — nome real da tabela (ver lib/db/drizzle/schema.postgres.ts).
 const T_TAP_VERSOES = '"AI"."TI_PMO_TAP_VERSOES"'
 const T_VIABILIDADE = '"AI"."TI_PMO_VIABILIDADE"'
+const T_CRONOGRAMAS = '"AI"."TI_PMO_CRONOGRAMAS"'
+const T_CRONOGRAMA_TAREFAS = '"AI"."TI_PMO_CRONOGRAMA_TAREFAS"'
 
 export interface ProjetoFiltros {
   status?: string
@@ -139,23 +142,14 @@ export const ProjetosRepository = {
     offset: number
   ): Promise<Projeto[]> {
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
-    const projetos = db.queryMany<Projeto & { tem_revisao_pendente: number }>(
+    const projetos = db.queryMany<Projeto & { tem_revisao_pendente: number; has_cronograma: number; tarefas_atrasadas: number }>(
       `SELECT p.*,
               d.nome   as diretoria_nome,
               a.nome   as area_nome,
               mp.nome  as motivo_pausa_nome,
-              CASE WHEN EXISTS (SELECT 1 FROM cronogramas c WHERE c.projeto_id = p.id AND c.ativo = 1 AND c.status = 'APROVADO') THEN 1 ELSE 0 END AS has_cronograma,
-              CASE WHEN EXISTS (
-                SELECT 1 FROM aprovacoes apr
-                WHERE apr.projeto_id = p.id AND apr.status = 'REJEITADO'
-                AND (
-                  apr.tipo = 'CRONOGRAMA' AND EXISTS (SELECT 1 FROM cronogramas cr WHERE cr.id = apr.referencia_id AND cr.status = 'RASCUNHO')
-                )
-              ) THEN 1 ELSE 0 END AS tem_revisao_pendente,
-              (SELECT COUNT(*) FROM cronograma_tarefas ct
-               JOIN cronogramas c ON ct.cronograma_id = c.id
-               WHERE c.projeto_id = p.id AND c.ativo = 1 AND c.status = 'APROVADO'
-               AND ct.percentual < 100 AND ct.data_fim IS NOT NULL AND ct.data_fim < date('now')) AS tarefas_atrasadas,
+              0 AS has_cronograma,
+              0 AS tem_revisao_pendente,
+              0 AS tarefas_atrasadas,
               ${DATA_FIM_EFETIVA_SQL}
        FROM projetos p
        LEFT JOIN diretorias d ON p.diretoria_id       = d.id
@@ -169,41 +163,60 @@ export const ProjetosRepository = {
       namedParams
     )
 
-    // Ramos TAP e VIABILIDADE do tem_revisao_pendente: as duas tabelas já estão em
-    // Postgres, não dá pra fazer EXISTS cruzando bancos em uma query só. Busca as
-    // aprovações REJEITADO desses 2 tipos destes projetos no SQLite (barato, mesma
-    // tabela da query acima), depois confere no Postgres quais dessas linhas ainda
-    // estão em RASCUNHO, e faz o OR em JS — nunca reduz um true já calculado pelo
-    // ramo de Cronograma acima.
+    // has_cronograma, tarefas_atrasadas e o ramo CRONOGRAMA/TAP/VIABILIDADE do
+    // tem_revisao_pendente: as 3 tabelas já estão em Postgres, não dá pra fazer
+    // EXISTS/JOIN cruzando bancos numa query só. Busca as aprovações REJEITADO
+    // desses 3 tipos no SQLite (barato, mesma tabela da query acima), os
+    // cronogramas com status='APROVADO' destes projetos, e confere no Postgres —
+    // faz o OR/soma em JS, nunca reduz um valor já calculado.
     if (projetos.length > 0) {
       const idsProjetos = projetos.map(p => p.id)
       const placeholders = idsProjetos.map(() => '?').join(',')
       const aprovacoesRejeitadas = db.queryMany<{ projeto_id: number; tipo: string; referencia_id: number }>(
         `SELECT projeto_id, tipo, referencia_id FROM aprovacoes
-         WHERE status = 'REJEITADO' AND tipo IN ('TAP', 'VIABILIDADE') AND projeto_id IN (${placeholders})`,
+         WHERE status = 'REJEITADO' AND tipo IN ('TAP', 'VIABILIDADE', 'CRONOGRAMA') AND projeto_id IN (${placeholders})`,
         idsProjetos
       )
       const aprovacoesTap = aprovacoesRejeitadas.filter(a => a.tipo === 'TAP')
       const aprovacoesVib = aprovacoesRejeitadas.filter(a => a.tipo === 'VIABILIDADE')
+      const aprovacoesCron = aprovacoesRejeitadas.filter(a => a.tipo === 'CRONOGRAMA')
 
       const usuarioIds = [...new Set(
         projetos.flatMap(p => [p.solicitante_id, p.gerente_id, p.pmo_responsavel_id])
           .filter((v): v is number => v != null)
       )]
 
-      const [rascunhoTapIds, rascunhoVibIds, nomes] = await Promise.all([
+      const [rascunhoTapIds, rascunhoVibIds, rascunhoCronIds, cronogramasAprovados, nomes] = await Promise.all([
         TapRepository.findRascunhoIds(aprovacoesTap.map(a => a.referencia_id)),
         ViabilidadeRepository.findRascunhoIds(aprovacoesVib.map(a => a.referencia_id)),
+        CronogramaRepository.findRascunhoIds(aprovacoesCron.map(a => a.referencia_id)),
+        CronogramaRepository.findAprovadosPorProjetos(idsProjetos),
         UsuariosRepository.findNomesPorIds(usuarioIds),
       ])
       const rascunhoTap = new Set(rascunhoTapIds)
       const rascunhoVib = new Set(rascunhoVibIds)
+      const rascunhoCron = new Set(rascunhoCronIds)
+
+      const projetosComCronogramaAprovado = new Set(cronogramasAprovados.map(c => c.projeto_id))
+      const tarefasAtrasadasPorCronograma = await CronogramaRepository.countTarefasAtrasadasPorCronogramas(
+        cronogramasAprovados.map(c => c.id)
+      )
+      const tarefasAtrasadasPorProjeto = new Map<number, number>()
+      const cronogramaParaProjeto = new Map(cronogramasAprovados.map(c => [c.id, c.projeto_id]))
+      for (const t of tarefasAtrasadasPorCronograma) {
+        const projetoId = cronogramaParaProjeto.get(t.cronograma_id)
+        if (projetoId == null) continue
+        tarefasAtrasadasPorProjeto.set(projetoId, (tarefasAtrasadasPorProjeto.get(projetoId) ?? 0) + t.total)
+      }
 
       const projetosComRevisao = new Set([
         ...aprovacoesTap.filter(a => rascunhoTap.has(a.referencia_id)).map(a => a.projeto_id),
         ...aprovacoesVib.filter(a => rascunhoVib.has(a.referencia_id)).map(a => a.projeto_id),
+        ...aprovacoesCron.filter(a => rascunhoCron.has(a.referencia_id)).map(a => a.projeto_id),
       ])
       for (const p of projetos) {
+        p.has_cronograma = projetosComCronogramaAprovado.has(p.id) ? 1 : 0
+        p.tarefas_atrasadas = tarefasAtrasadasPorProjeto.get(p.id) ?? 0
         if (projetosComRevisao.has(p.id)) p.tem_revisao_pendente = 1
         p.solicitante_nome = p.solicitante_id != null ? nomes.get(p.solicitante_id)?.nome : undefined
         p.gerente_nome = p.gerente_id != null ? nomes.get(p.gerente_id)?.nome : undefined
@@ -550,42 +563,39 @@ export const ProjetosRepository = {
     return nomes.get(id)?.nome
   },
 
-  findCronogramaLatest(projeto_id: number): { id: number; status: string } | undefined {
-    return db.queryOne<{ id: number; status: string }>(
-      'SELECT id, status FROM cronogramas WHERE projeto_id = ? ORDER BY versao DESC LIMIT 1',
+  async findCronogramaLatest(projeto_id: number): Promise<{ id: number; status: string } | undefined> {
+    return asyncDb.queryOne<{ id: number; status: string }>(
+      `SELECT id, status FROM ${T_CRONOGRAMAS} WHERE projeto_id = ? ORDER BY versao DESC LIMIT 1`,
       [projeto_id]
     )
   },
 
-  findCronogramaAprovado(projeto_id: number): { id: number } | undefined {
-    return db.queryOne<{ id: number }>(
-      `SELECT id FROM cronogramas WHERE projeto_id = ? AND status = 'APROVADO' AND (ativo IS NULL OR ativo = 1) ORDER BY versao DESC LIMIT 1`,
+  async findCronogramaAprovado(projeto_id: number): Promise<{ id: number } | undefined> {
+    return asyncDb.queryOne<{ id: number }>(
+      `SELECT id FROM ${T_CRONOGRAMAS} WHERE projeto_id = ? AND status = 'APROVADO' AND (ativo IS NULL OR ativo = true) ORDER BY versao DESC LIMIT 1`,
       [projeto_id]
     )
   },
 
-  findCronogramaAtivo(projeto_id: number): { id: number; versao: number } | undefined {
-    return db.queryOne<{ id: number; versao: number }>(
-      `SELECT id, versao FROM cronogramas WHERE projeto_id = ? AND (ativo IS NULL OR ativo = 1) ORDER BY versao DESC LIMIT 1`,
-      [projeto_id]
-    )
+  async findCronogramaAtivo(projeto_id: number): Promise<{ id: number; versao: number } | undefined> {
+    return CronogramaRepository.findAtivoSimples(projeto_id)
   },
 
-  updateCronogramaStatus(cronograma_id: number, status: string): void {
-    db.execute('UPDATE cronogramas SET status = ? WHERE id = ?', [status, cronograma_id])
+  async updateCronogramaStatus(cronograma_id: number, status: string): Promise<void> {
+    await CronogramaRepository.updateStatus(cronograma_id, status)
   },
 
-  countTarefasNivel(cronograma_id: number, nivel: string): number {
-    const row = db.queryOne<{ total: number }>(
-      `SELECT COUNT(*) AS total FROM cronograma_tarefas WHERE cronograma_id = ? AND nivel = ? AND (ativo IS NULL OR ativo = 1)`,
+  async countTarefasNivel(cronograma_id: number, nivel: string): Promise<number> {
+    const row = await asyncDb.queryOne<{ total: number }>(
+      `SELECT COUNT(*) AS total FROM ${T_CRONOGRAMA_TAREFAS} WHERE cronograma_id = ? AND nivel = ? AND (ativo IS NULL OR ativo = true)`,
       [cronograma_id, nivel]
     )
     return row?.total ?? 0
   },
 
-  countTarefasConcluidasNivel(cronograma_id: number, nivel: string): number {
-    const row = db.queryOne<{ total: number }>(
-      `SELECT COUNT(*) AS total FROM cronograma_tarefas WHERE cronograma_id = ? AND nivel = ? AND data_conclusao IS NOT NULL AND (ativo IS NULL OR ativo = 1)`,
+  async countTarefasConcluidasNivel(cronograma_id: number, nivel: string): Promise<number> {
+    const row = await asyncDb.queryOne<{ total: number }>(
+      `SELECT COUNT(*) AS total FROM ${T_CRONOGRAMA_TAREFAS} WHERE cronograma_id = ? AND nivel = ? AND data_conclusao IS NOT NULL AND (ativo IS NULL OR ativo = true)`,
       [cronograma_id, nivel]
     )
     return row?.total ?? 0
@@ -622,9 +632,9 @@ export const ProjetosRepository = {
     return row?.total ?? 0
   },
 
-  findDataFimCronograma(cronograma_id: number): string | null {
-    const row = db.queryOne<{ data_fim_prev: string | null }>(
-      'SELECT MAX(data_fim) AS data_fim_prev FROM cronograma_tarefas WHERE cronograma_id = ?',
+  async findDataFimCronograma(cronograma_id: number): Promise<string | null> {
+    const row = await asyncDb.queryOne<{ data_fim_prev: string | null }>(
+      `SELECT MAX(data_fim) AS data_fim_prev FROM ${T_CRONOGRAMA_TAREFAS} WHERE cronograma_id = ?`,
       [cronograma_id]
     )
     return row?.data_fim_prev ?? null
@@ -637,16 +647,21 @@ export const ProjetosRepository = {
    * Depois de travada, nenhuma nova versão ou reprogramação a altera —
    * é a referência de atraso do projeto para o resto da vida dele.
    */
-  capturarDataBaseEntrega(projetoId: number, cronogramaId: number): void {
+  async capturarDataBaseEntrega(projetoId: number, cronogramaId: number): Promise<void> {
+    // cronograma_tarefas já está em Postgres — lê de lá, escreve em projetos (SQLite).
+    // Mesmo padrão "lê de um banco, escreve no outro" já usado nesta migração; a
+    // guarda de idempotência (WHERE data_base_entrega IS NULL) continua igual.
+    const row = await asyncDb.queryOne<{ data_fim: string | null }>(
+      `SELECT MAX(data_fim) AS data_fim FROM ${T_CRONOGRAMA_TAREFAS}
+       WHERE cronograma_id = ? AND (ativo IS NULL OR ativo = true)`,
+      [cronogramaId]
+    )
     db.execute(
       `UPDATE projetos
-       SET data_base_entrega = (
-         SELECT MAX(data_fim) FROM cronograma_tarefas
-         WHERE cronograma_id = ? AND (ativo IS NULL OR ativo = 1)
-       ),
-       data_base_entrega_definida_em = datetime('now')
+       SET data_base_entrega = ?,
+           data_base_entrega_definida_em = datetime('now')
        WHERE id = ? AND data_base_entrega IS NULL`,
-      [cronogramaId, projetoId]
+      [row?.data_fim ?? null, projetoId]
     )
   },
 
@@ -713,35 +728,52 @@ AND p.status NOT IN ('ENCERRAMENTO','CANCELADO','SUSPENSO','GOLIVE','ROI','PROJE
     const projetosConcluidos = (db.queryOne<{ total: number }>(`SELECT COUNT(*) as total FROM projetos WHERE ativo=1 AND status IN ('PROJETO_CONCLUIDO','PAYBACK_ACOMPANHAMENTO','PAYBACK_ENCERRADO')`) as { total: number }).total
     const projetosEncerrados = (db.queryOne<{ total: number }>(`SELECT COUNT(*) as total FROM projetos WHERE ativo=1 AND status='PROJETO_ENCERRADO'`) as { total: number }).total
 
-    const statusCronRows = db.queryMany<{ sc: string; total: number }>(`
-      WITH ps AS (
-        SELECT p.id,
-          CASE
-            WHEN NOT EXISTS (SELECT 1 FROM cronogramas c WHERE c.projeto_id = p.id AND c.ativo = 1 AND c.status = 'APROVADO') THEN 'SEM_CRONOGRAMA'
-            WHEN ${DATA_FIM_EFETIVA_EXPR} IS NOT NULL AND ${DATA_FIM_EFETIVA_EXPR} < date('now') THEN 'ATRASADO'
-            WHEN (
-              EXISTS (
-                SELECT 1 FROM cronograma_tarefas ct
-                JOIN cronogramas c ON ct.cronograma_id = c.id
-                WHERE c.projeto_id = p.id AND c.ativo = 1 AND c.status = 'APROVADO'
-                AND ct.percentual < 100 AND ct.data_fim IS NOT NULL AND ct.data_fim < date('now')
-              )
-              OR (${DATA_FIM_EFETIVA_EXPR} IS NOT NULL AND CAST((julianday(${DATA_FIM_EFETIVA_EXPR}) - julianday('now')) AS INTEGER) <= 10)
-            ) THEN 'ATENCAO'
-            ELSE 'NO_PRAZO'
-          END AS sc
-        FROM projetos p
-        WHERE p.ativo = 1 AND p.status NOT IN ('CANCELADO','PROJETO_ENCERRADO','PAYBACK_ENCERRADO')
-      )
-      SELECT sc, COUNT(*) as total FROM ps GROUP BY sc
-    `)
+    // cronogramas/cronograma_tarefas já estão em Postgres — não dá pra fazer os EXISTS/JOIN
+    // originais em SQL puro. Busca uma vez só (pra todo projeto ativo) quais têm cronograma
+    // aprovado e quantas tarefas atrasadas cada um tem, reaproveitado tanto na classificação
+    // NO_PRAZO/ATENCAO/ATRASADO/SEM_CRONOGRAMA quanto no `sem_cronograma` por diretoria abaixo.
+    const projetoDiretoriaRows = db.queryMany<{ id: number; diretoria_id: number | null }>(
+      'SELECT id, diretoria_id FROM projetos WHERE ativo = 1'
+    )
+    const diretoriaPorProjeto = new Map(projetoDiretoriaRows.map(p => [p.id, p.diretoria_id]))
+    const idsProjetosAtivos = projetoDiretoriaRows.map(p => p.id)
+    const cronogramasAprovados = await CronogramaRepository.findAprovadosPorProjetos(idsProjetosAtivos)
+    const projetosComCronAprovado = new Set(cronogramasAprovados.map(c => c.projeto_id))
+    const tarefasAtrasadasPorCron = await CronogramaRepository.countTarefasAtrasadasPorCronogramas(
+      cronogramasAprovados.map(c => c.id)
+    )
+    const cronParaProjeto = new Map(cronogramasAprovados.map(c => [c.id, c.projeto_id]))
+    const projetosComTarefaAtrasada = new Set<number>()
+    for (const t of tarefasAtrasadasPorCron) {
+      if (t.total <= 0) continue
+      const pid = cronParaProjeto.get(t.cronograma_id)
+      if (pid != null) projetosComTarefaAtrasada.add(pid)
+    }
 
-    const getStatusCount = (sc: string) => statusCronRows.find(r => r.sc === sc)?.total ?? 0
+    // Mesma classificação de antes (SEM_CRONOGRAMA > ATRASADO > ATENCAO > NO_PRAZO, nessa
+    // ordem de prioridade), só que a parte de cronograma vem dos Sets acima em vez de SQL.
+    const projetosElegiveisStatus = db.queryMany<{ id: number; esta_atrasado: number; dentro_10_dias: number }>(`
+      SELECT p.id,
+        CASE WHEN ${DATA_FIM_EFETIVA_EXPR} IS NOT NULL AND ${DATA_FIM_EFETIVA_EXPR} < date('now') THEN 1 ELSE 0 END AS esta_atrasado,
+        CASE WHEN ${DATA_FIM_EFETIVA_EXPR} IS NOT NULL AND CAST((julianday(${DATA_FIM_EFETIVA_EXPR}) - julianday('now')) AS INTEGER) <= 10 THEN 1 ELSE 0 END AS dentro_10_dias
+      FROM projetos p
+      WHERE p.ativo = 1 AND p.status NOT IN ('CANCELADO','PROJETO_ENCERRADO','PAYBACK_ENCERRADO')
+    `)
+    const statusCounts: Record<string, number> = { SEM_CRONOGRAMA: 0, ATRASADO: 0, ATENCAO: 0, NO_PRAZO: 0 }
+    for (const p of projetosElegiveisStatus) {
+      let sc: string
+      if (!projetosComCronAprovado.has(p.id)) sc = 'SEM_CRONOGRAMA'
+      else if (p.esta_atrasado) sc = 'ATRASADO'
+      else if (projetosComTarefaAtrasada.has(p.id) || p.dentro_10_dias) sc = 'ATENCAO'
+      else sc = 'NO_PRAZO'
+      statusCounts[sc]++
+    }
+    const getStatusCount = (sc: string) => statusCounts[sc] ?? 0
 
     const porDiretoriaBase = db.queryMany<{
       diretoria_id: number; diretoria_nome: string; diretoria_sigla: string
       total: number; ativos: number; atrasados: number; pausados: number
-      concluidos: number; encerrados: number; investimento_previsto: number; sem_cronograma: number
+      concluidos: number; encerrados: number; investimento_previsto: number
     }>(`
       SELECT
         d.id   AS diretoria_id,
@@ -753,8 +785,7 @@ AND p.status NOT IN ('ENCERRAMENTO','CANCELADO','SUSPENSO','GOLIVE','ROI','PROJE
         SUM(CASE WHEN p.status = 'PAUSADO' THEN 1 ELSE 0 END) AS pausados,
         SUM(CASE WHEN p.status IN ('PROJETO_CONCLUIDO','PAYBACK_ACOMPANHAMENTO','PAYBACK_ENCERRADO') THEN 1 ELSE 0 END) AS concluidos,
         SUM(CASE WHEN p.status = 'PROJETO_ENCERRADO' THEN 1 ELSE 0 END) AS encerrados,
-        COALESCE(SUM(COALESCE(p.capex_aprovado,0) + COALESCE(p.opex_aprovado,0)), 0) AS investimento_previsto,
-        SUM(CASE WHEN NOT EXISTS (SELECT 1 FROM cronogramas c WHERE c.projeto_id = p.id AND c.status = 'APROVADO' AND (c.ativo IS NULL OR c.ativo = 1)) THEN 1 ELSE 0 END) AS sem_cronograma
+        COALESCE(SUM(COALESCE(p.capex_aprovado,0) + COALESCE(p.opex_aprovado,0)), 0) AS investimento_previsto
       FROM diretorias d
       LEFT JOIN projetos p ON p.diretoria_id = d.id AND p.ativo = 1
       WHERE d.ativo = 1
@@ -762,6 +793,11 @@ AND p.status NOT IN ('ENCERRAMENTO','CANCELADO','SUSPENSO','GOLIVE','ROI','PROJE
       HAVING COUNT(p.id) > 0
       ORDER BY total DESC
     `)
+    const semCronogramaPorDir = new Map<number, number>()
+    for (const p of projetoDiretoriaRows) {
+      if (p.diretoria_id == null || projetosComCronAprovado.has(p.id)) continue
+      semCronogramaPorDir.set(p.diretoria_id, (semCronogramaPorDir.get(p.diretoria_id) ?? 0) + 1)
+    }
 
     const apPorDir = db.queryMany<{ diretoria_id: number; total: number }>(`
       SELECT p.diretoria_id, COUNT(*) AS total
@@ -776,10 +812,6 @@ AND p.status NOT IN ('ENCERRAMENTO','CANCELADO','SUSPENSO','GOLIVE','ROI','PROJE
     // preserva o cálculo atual, que já mistura todas as versões por projeto),
     // junta com diretoria_id (SQLite) e recalcula a média por diretoria em JS.
     const tapRoiRows = await TapRepository.findRoiPrevistoTodos()
-    const projetoDiretoriaRows = db.queryMany<{ id: number; diretoria_id: number | null }>(
-      'SELECT id, diretoria_id FROM projetos WHERE ativo = 1'
-    )
-    const diretoriaPorProjeto = new Map(projetoDiretoriaRows.map(p => [p.id, p.diretoria_id]))
     const roiAcumPorDir = new Map<number, { soma: number; count: number }>()
     for (const row of tapRoiRows) {
       const dirId = diretoriaPorProjeto.get(row.projeto_id)
@@ -816,6 +848,7 @@ AND p.status NOT IN ('ENCERRAMENTO','CANCELADO','SUSPENSO','GOLIVE','ROI','PROJE
         .forEach(r => { statusCounts[r.status] = r.total })
       return {
         ...d,
+        sem_cronograma: semCronogramaPorDir.get(d.diretoria_id) ?? 0,
         aprovacoes_pendentes: apPorDir.find(r => r.diretoria_id === d.diretoria_id)?.total ?? 0,
         roi_medio: roiPorDir.find(r => r.diretoria_id === d.diretoria_id)?.roi_medio ?? null,
         investimento_realizado: invRealizadoPorDir.find(r => r.diretoria_id === d.diretoria_id)?.total ?? 0,

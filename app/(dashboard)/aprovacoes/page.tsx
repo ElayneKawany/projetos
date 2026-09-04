@@ -1,5 +1,6 @@
 import { getSession } from '@/lib/auth'
 import getDb from '@/lib/db'
+import { asyncDb } from '@/lib/database'
 import { TapRepository, ViabilidadeRepository } from '@/lib/repositories'
 import AprovacoesClient from './AprovacoesClient'
 
@@ -29,16 +30,24 @@ export default async function AprovacoesPage() {
     ORDER BY wa.id DESC
   `).all() as WorkflowRow[]
 
-  // tap_versoes e viabilidade já estão em Postgres — busca em lote pelos ids de
-  // referência exatos (não por projeto), uma vez, antes do loop por linha.
+  // tap_versoes, viabilidade e cronogramas já estão em Postgres — busca em lote
+  // pelos ids de referência exatos (não por projeto), uma vez, antes do loop por linha.
   const tapIds = rows.filter(r => r.tipo === 'TAP').map(r => r.referencia_id)
   const viabIds = rows.filter(r => r.tipo === 'VIABILIDADE').map(r => r.referencia_id)
-  const [taps, viabs] = await Promise.all([
+  const cronoIds = rows.filter(r => r.tipo === 'CRONOGRAMA').map(r => r.referencia_id)
+  const [taps, viabs, cronos] = await Promise.all([
     TapRepository.findByIds(tapIds),
     ViabilidadeRepository.findByIds(viabIds),
+    cronoIds.length
+      ? asyncDb.queryMany<{ id: number; versao: number; label: string | null }>(
+          `SELECT id, versao, label FROM "AI"."TI_PMO_CRONOGRAMAS" WHERE id = ANY(?)`,
+          [cronoIds]
+        )
+      : Promise.resolve([] as Array<{ id: number; versao: number; label: string | null }>),
   ])
   const tapPorId = new Map(taps.map(t => [t.id, t]))
   const viabPorId = new Map(viabs.map(v => [v.id, v]))
+  const cronoPorId = new Map(cronos.map(c => [c.id, c]))
 
   const workflows = rows.map(row => {
     const etapas = db.prepare(
@@ -57,7 +66,7 @@ export default async function AprovacoesPage() {
       versao = doc?.versao ?? '—'
       documentoLabel = `Estudo de Viabilidade V${versao}`
     } else if (row.tipo === 'CRONOGRAMA') {
-      const doc = db.prepare('SELECT versao, label FROM cronogramas WHERE id = ?').get(row.referencia_id) as { versao: number; label: string } | undefined
+      const doc = cronoPorId.get(row.referencia_id)
       versao = doc?.versao ?? '—'
       documentoLabel = doc?.label ?? `Cronograma V${versao}`
     }

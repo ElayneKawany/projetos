@@ -115,7 +115,7 @@ export async function DELETE(
   const atual = await UsuariosRepository.findRawById(userId)
   if (!atual) return NextResponse.json({ error: 'Usuário não encontrado.' }, { status: 404 })
 
-  if (UsuariosRepository.checkDependencias(userId)) {
+  if (await UsuariosRepository.checkDependencias(userId)) {
     return NextResponse.json({
       error: 'Este usuário possui vínculos com projetos ou registros do sistema e não pode ser excluído.',
       pode_inativar: true,

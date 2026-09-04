@@ -3,6 +3,9 @@ import { db, asyncDb } from '@/lib/database'
 // Tabela Postgres real (schema AI, prefixo TI_PMO_, ver lib/db/drizzle/schema.postgres.ts) —
 // precisa de aspas duplas por causa do case: sem isso o Postgres dobra pra minúsculo e não acha a tabela.
 const T_USUARIOS = '"AI"."TI_PMO_USUARIOS"'
+// cronograma_tarefas já migrada para Postgres (ver lib/repositories/cronograma.ts) —
+// usada só em checkDependencias() abaixo, as demais tabelas do método continuam em SQLite.
+const T_CRONOGRAMA_TAREFAS = '"AI"."TI_PMO_CRONOGRAMA_TAREFAS"'
 
 export interface Usuario {
   id: number
@@ -275,13 +278,11 @@ export const UsuariosRepository = {
     await asyncDb.execute(`UPDATE ${T_USUARIOS} SET ${sets.join(', ')} WHERE id = ?`, params)
   },
 
-  checkDependencias(userId: number): boolean {
+  async checkDependencias(userId: number): Promise<boolean> {
     const queries: Array<[string, unknown[]]> = [
       ['SELECT COUNT(*) AS c FROM projetos WHERE gerente_id = ? AND ativo = 1', [userId]],
       ['SELECT COUNT(*) AS c FROM projetos WHERE pmo_responsavel_id = ? AND ativo = 1', [userId]],
       ['SELECT COUNT(*) AS c FROM projetos WHERE solicitante_id = ? AND ativo = 1', [userId]],
-      ['SELECT COUNT(*) AS c FROM cronograma_tarefas WHERE responsavel_id = ? AND (ativo IS NULL OR ativo = 1)', [userId]],
-      ['SELECT COUNT(*) AS c FROM cronograma_tarefas WHERE executor_id = ? AND (ativo IS NULL OR ativo = 1)', [userId]],
       ['SELECT COUNT(*) AS c FROM projeto_status_historico WHERE usuario_id = ?', [userId]],
       ['SELECT COUNT(*) AS c FROM projeto_historico_alteracoes WHERE usuario_id = ?', [userId]],
       ['SELECT COUNT(*) AS c FROM workflow_aprovacao_participantes WHERE usuario_id = ?', [userId]],
@@ -289,6 +290,18 @@ export const UsuariosRepository = {
     for (const [sql, params] of queries) {
       try {
         const row = db.queryOne<{ c: number }>(sql, params)
+        if ((row?.c ?? 0) > 0) return true
+      } catch { /* tabela pode não existir */ }
+    }
+
+    // cronograma_tarefas já migrada para Postgres — consulta separada do loop acima.
+    const cronogramaQueries: Array<[string, unknown[]]> = [
+      [`SELECT COUNT(*) AS c FROM ${T_CRONOGRAMA_TAREFAS} WHERE responsavel_id = ? AND (ativo IS NULL OR ativo = true)`, [userId]],
+      [`SELECT COUNT(*) AS c FROM ${T_CRONOGRAMA_TAREFAS} WHERE executor_id = ? AND (ativo IS NULL OR ativo = true)`, [userId]],
+    ]
+    for (const [sql, params] of cronogramaQueries) {
+      try {
+        const row = await asyncDb.queryOne<{ c: number }>(sql, params)
         if ((row?.c ?? 0) > 0) return true
       } catch { /* tabela pode não existir */ }
     }

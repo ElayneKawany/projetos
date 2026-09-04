@@ -25,55 +25,73 @@ export default async function TIAgendaPage() {
   )
   const nomesPorId = new Map(usuariosFiltro.map(u => [u.id, u.nome]))
   const idsFiltro = usuariosFiltro.map(u => u.id)
-  const idsPlaceholder = idsFiltro.length ? idsFiltro.map(() => '?').join(',') : '-1'
 
-  const tarefasCronogramaRaw = db.prepare(`
+  // cronogramas/cronograma_tarefas já estão em Postgres — a query roda lá, e
+  // projetos/diretorias (SQLite) entram por lookup em lote a partir dos projeto_id
+  // retornados, descartando tarefas de projeto inativo (equivalente ao antigo
+  // `p.ativo = 1` no JOIN).
+  const tarefasCronogramaPg = await asyncDb.queryMany<{
+    id: number
+    nome: string
+    nivel: string
+    percentual: number | null
+    data_inicio: string | null
+    data_inicio_baseline: string | null
+    data_fim: string | null
+    data_fim_baseline: string | null
+    data_conclusao: string | null
+    responsavel_id: number | null
+    responsavel_nome_ext: string | null
+    observacoes: string | null
+    prazo_status: string | null
+    bloqueio: number | null
+    projeto_id: number
+  }>(`
     SELECT
-      t.id,
-      t.nome,
-      t.nivel,
-      t.percentual,
-      t.data_inicio,
-      t.data_inicio_baseline,
-      t.data_fim,
-      t.data_fim_baseline,
-      t.data_conclusao,
-      t.responsavel_id,
-      t.responsavel_nome_ext,
-      t.observacoes,
-      t.prazo_status,
-      t.bloqueio,
-      c.projeto_id,
-      p.codigo AS projeto_codigo,
-      p.nome AS projeto_nome,
-      p.status AS projeto_status,
-      d.nome AS diretoria
-    FROM cronograma_tarefas t
-    JOIN cronogramas c ON c.id = t.cronograma_id
-    JOIN projetos p ON p.id = c.projeto_id
-    LEFT JOIN diretorias d ON d.id = p.diretoria_id
-    WHERE (t.ativo IS NULL OR t.ativo = 1)
-      AND (c.ativo IS NULL OR c.ativo = 1)
-      AND p.ativo = 1
+      t.id, t.nome, t.nivel, t.percentual,
+      t.data_inicio, t.data_inicio_baseline, t.data_fim, t.data_fim_baseline, t.data_conclusao,
+      t.responsavel_id, t.responsavel_nome_ext, t.observacoes, t.prazo_status, t.bloqueio,
+      c.projeto_id
+    FROM "AI"."TI_PMO_CRONOGRAMA_TAREFAS" t
+    JOIN "AI"."TI_PMO_CRONOGRAMAS" c ON c.id = t.cronograma_id
+    WHERE (t.ativo IS NULL OR t.ativo = true)
+      AND (c.ativo IS NULL OR c.ativo = true)
       AND c.versao = (
-        SELECT MAX(c2.versao) FROM cronogramas c2
+        SELECT MAX(c2.versao) FROM "AI"."TI_PMO_CRONOGRAMAS" c2
         WHERE c2.projeto_id = c.projeto_id
-          AND (c2.ativo IS NULL OR c2.ativo = 1)
+          AND (c2.ativo IS NULL OR c2.ativo = true)
       )
       AND (
-        t.responsavel_id IN (${idsPlaceholder})
+        t.responsavel_id = ANY(?)
         OR LOWER(COALESCE(t.responsavel_nome_ext, '')) LIKE '%michel cardero%'
         OR LOWER(COALESCE(t.responsavel_nome_ext, '')) LIKE '%divonzi%'
         OR LOWER(COALESCE(t.responsavel_nome_ext, '')) LIKE '%plinio%'
         OR LOWER(COALESCE(t.responsavel_nome_ext, '')) LIKE '%plínio%'
       )
-    ORDER BY p.nome, t.data_inicio
-  `).all(...idsFiltro) as { id: number; responsavel_id: number | null; responsavel_nome_ext: string | null; [k: string]: unknown }[]
+  `, [idsFiltro])
 
-  const tarefasCronograma = tarefasCronogramaRaw.map(t => ({
-    ...t,
-    analista: (t.responsavel_id != null ? nomesPorId.get(t.responsavel_id) : undefined) ?? t.responsavel_nome_ext,
-  }))
+  const tCronoProjetoIds = [...new Set(tarefasCronogramaPg.map(t => t.projeto_id))]
+  const tCronoProjetosInfo = tCronoProjetoIds.length
+    ? db.prepare(`
+        SELECT p.id, p.codigo AS projeto_codigo, p.nome AS projeto_nome, p.status AS projeto_status,
+               d.nome AS diretoria
+        FROM projetos p
+        LEFT JOIN diretorias d ON d.id = p.diretoria_id
+        WHERE p.id IN (${tCronoProjetoIds.map(() => '?').join(',')}) AND p.ativo = 1
+      `).all(...tCronoProjetoIds) as Array<{ id: number; projeto_codigo: string; projeto_nome: string; projeto_status: string; diretoria: string | null }>
+    : []
+  const tCronoProjetoInfoMap = new Map(tCronoProjetosInfo.map(p => [p.id, p]))
+
+  const tarefasCronograma = tarefasCronogramaPg
+    .filter(t => tCronoProjetoInfoMap.has(t.projeto_id))
+    .map(t => ({
+      ...t,
+      ...tCronoProjetoInfoMap.get(t.projeto_id)!,
+      analista: (t.responsavel_id != null ? nomesPorId.get(t.responsavel_id) : undefined) ?? t.responsavel_nome_ext,
+    }))
+    .sort((a, b) => (a.projeto_nome === b.projeto_nome
+      ? String(a.data_inicio ?? '').localeCompare(String(b.data_inicio ?? ''))
+      : a.projeto_nome.localeCompare(b.projeto_nome)))
 
   // Dados dos usuários cadastrados: cargo, perfil, diretoria — para os filtros
   const usuariosRaw = await asyncDb.queryMany<{ nome: string; cargo: string | null; perfil_id: number; diretoria_id: number | null }>(

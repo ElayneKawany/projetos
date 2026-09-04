@@ -444,7 +444,13 @@ export const cronogramaTarefas = ai.table('TI_PMO_CRONOGRAMA_TAREFAS', {
   id: integer().primaryKey().generatedAlwaysAsIdentity(),
   cronogramaId: integer('cronograma_id').notNull(),
   parentId: integer('parent_id'),
-  nivel: integer().default(1),
+  // Coluna declarada `INTEGER` no SQLite (schema.sql original: 1=macro, 2=micro),
+  // mas o schema evoluiu via runMigrations() sem ALTER TYPE — SQLite tem type
+  // affinity, não tipagem estrita, então passou a guardar 'FASE'/'TAREFA'/
+  // 'SUBTAREFA' (texto) mesmo com a coluna ainda declarada INTEGER. drizzle-kit
+  // pull capturou o tipo declarado (integer), não o real; corrigido manualmente
+  // pra bater com o uso de fato em lib/repositories/cronograma.ts.
+  nivel: text().default('TAREFA'),
   ordem: integer().default(0),
   codigo: text(),
   nome: text().notNull(),

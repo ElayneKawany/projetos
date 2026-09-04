@@ -4,7 +4,9 @@ import { CronogramaRepository } from '@/lib/repositories'
 import { registrarAuditoria } from '@/lib/db/auditoria'
 import { registrarEvento } from '@/lib/timeline'
 import { registrarHistoricoAlteracao } from '@/lib/projetos'
-import { getDb } from '@/lib/db'
+import { asyncDb } from '@/lib/database'
+
+const T_CRONOGRAMA_TAREFAS = '"AI"."TI_PMO_CRONOGRAMA_TAREFAS"'
 
 export async function PATCH(
   request: NextRequest,
@@ -24,7 +26,7 @@ export async function PATCH(
   const cronograma = await CronogramaRepository.findByIdAndProjetoId(cronograma_id, projeto_id)
   if (!cronograma) return NextResponse.json({ error: 'Cronograma não encontrado.' }, { status: 404 })
 
-  const item = CronogramaRepository.findTarefaByIdAndCronograma(tarefa_id, cronograma_id)
+  const item = await CronogramaRepository.findTarefaByIdAndCronograma(tarefa_id, cronograma_id)
   if (!item) return NextResponse.json({ error: 'Tarefa não encontrada.' }, { status: 404 })
 
   const obs_anterior: string = (item.observacoes as string | null) ?? ''
@@ -33,10 +35,10 @@ export async function PATCH(
     return NextResponse.json({ ok: true, changed: false })
   }
 
-  const db = getDb()
-  db.prepare(
-    `UPDATE cronograma_tarefas SET observacoes = ?, alterado_por = ?, alterado_em = datetime('now','localtime') WHERE id = ?`
-  ).run(nova_observacao || null, session.id, tarefa_id)
+  await asyncDb.execute(
+    `UPDATE ${T_CRONOGRAMA_TAREFAS} SET observacoes = ?, alterado_por = ?, alterado_em = CURRENT_TIMESTAMP WHERE id = ?`,
+    [nova_observacao || null, session.id, tarefa_id]
+  )
 
   registrarHistoricoAlteracao({
     projeto_id,

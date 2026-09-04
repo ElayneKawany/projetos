@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
+import { asyncDb } from '@/lib/database'
 import { CronogramaRepository } from '@/lib/repositories'
 import { registrarAuditoria } from '@/lib/db/auditoria'
 import { registrarEvento } from '@/lib/timeline'
 import { calcularCodigosWBS } from '@/lib/cronograma/wbs'
-import getDb from '@/lib/db'
 
 // PATCH — move uma TAREFA (normal ou Tarefa de Pagamento) para outra FASE do mesmo
 // cronograma, sem duplicar o registro. Sem checagem de cronograma.status: mesma regra já
@@ -25,7 +25,7 @@ export async function PATCH(
   const cronograma = await CronogramaRepository.findByIdAndProjetoId(cronograma_id, projeto_id)
   if (!cronograma) return NextResponse.json({ error: 'Cronograma não encontrado.' }, { status: 404 })
 
-  const tarefa = CronogramaRepository.findTarefaByIdAndCronograma(tarefa_id, cronograma_id) as
+  const tarefa = await CronogramaRepository.findTarefaByIdAndCronograma(tarefa_id, cronograma_id) as
     Record<string, unknown> | undefined
   if (!tarefa || (tarefa.ativo != null && tarefa.ativo === 0)) {
     return NextResponse.json({ error: 'Tarefa não encontrada.' }, { status: 404 })
@@ -40,7 +40,7 @@ export async function PATCH(
     return NextResponse.json({ error: 'Informe a fase de destino (nova_fase_id).' }, { status: 400 })
   }
 
-  const novaFase = CronogramaRepository.findTarefaComNivel(novaFaseId, 'FASE', cronograma_id) as
+  const novaFase = await CronogramaRepository.findTarefaComNivel(novaFaseId, 'FASE', cronograma_id) as
     Record<string, unknown> | undefined
   if (!novaFase) {
     return NextResponse.json({ error: 'Fase de destino não encontrada neste cronograma.' }, { status: 404 })
@@ -50,11 +50,11 @@ export async function PATCH(
   }
 
   const faseAntiga = tarefa.parent_id != null
-    ? CronogramaRepository.findTarefaByIdAndCronograma(tarefa.parent_id as number, cronograma_id) as
+    ? await CronogramaRepository.findTarefaByIdAndCronograma(tarefa.parent_id as number, cronograma_id) as
         Record<string, unknown> | undefined
     : undefined
 
-  const lista = CronogramaRepository.findTarefasAtivasOrdenadas(cronograma_id)
+  const lista = await CronogramaRepository.findTarefasAtivasOrdenadas(cronograma_id)
 
   const tarefaIdx = lista.findIndex(t => t.id === tarefa_id)
   if (tarefaIdx === -1) {
@@ -83,20 +83,20 @@ export async function PATCH(
   const novaLista = [...restante.slice(0, insertIdx), ...bloco, ...restante.slice(insertIdx)]
   const codigos = calcularCodigosWBS(novaLista)
 
-  const db = getDb()
-  db.transaction(() => {
-    novaLista.forEach((item, idx) => {
+  await asyncDb.transaction(async () => {
+    for (let idx = 0; idx < novaLista.length; idx++) {
+      const item   = novaLista[idx]
       const ordem  = idx + 1
       const codigo = codigos[idx]
       if (item.id === tarefa_id) {
-        CronogramaRepository.updatePosicaoTarefa(item.id, cronograma_id, {
+        await CronogramaRepository.updatePosicaoTarefa(item.id, cronograma_id, {
           parent_id: novaFaseId, ordem, codigo, alterado_por: session.id,
         })
       } else {
-        CronogramaRepository.updateOrdemCodigo(item.id, ordem, codigo)
+        await CronogramaRepository.updateOrdemCodigo(item.id, ordem, codigo)
       }
-    })
-  })()
+    }
+  })
 
   registrarEvento({
     projeto_id,

@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
-import { getDb } from '@/lib/db'
+import { asyncDb } from '@/lib/database'
 import { CronogramaRepository } from '@/lib/repositories'
 import { registrarAuditoria } from '@/lib/db/auditoria'
 import { registrarEvento } from '@/lib/timeline'
+
+const T_CRONOGRAMA_TAREFAS = '"AI"."TI_PMO_CRONOGRAMA_TAREFAS"'
 
 export async function PATCH(
   request: NextRequest,
@@ -21,7 +23,7 @@ export async function PATCH(
   if (!cronograma)
     return NextResponse.json({ error: 'Cronograma não encontrado.' }, { status: 404 })
 
-  const tarefa = CronogramaRepository.findTarefaByIdAndCronograma(tarefa_id, cronograma_id) as
+  const tarefa = await CronogramaRepository.findTarefaByIdAndCronograma(tarefa_id, cronograma_id) as
     Record<string, unknown> | undefined
   if (!tarefa)
     return NextResponse.json({ error: 'Tarefa não encontrada.' }, { status: 404 })
@@ -50,14 +52,14 @@ export async function PATCH(
   const novoFim    = nova_data        ?? dataFimAtual
   const novoInicio = nova_data_inicio ?? dataInicioAtual
 
-  const db = getDb()
-  db.prepare(
-    `UPDATE cronograma_tarefas
+  await asyncDb.execute(
+    `UPDATE ${T_CRONOGRAMA_TAREFAS}
      SET data_inicio = ?, data_inicio_baseline = ?,
          data_fim = ?, data_fim_baseline = ?,
-         alterado_por = ?, alterado_em = datetime('now')
-     WHERE id = ? AND cronograma_id = ?`
-  ).run(novoInicio, novoBaselineInicio, novoFim, novoBaselineFim, session.id, tarefa_id, cronograma_id)
+         alterado_por = ?, alterado_em = CURRENT_TIMESTAMP
+     WHERE id = ? AND cronograma_id = ?`,
+    [novoInicio, novoBaselineInicio, novoFim, novoBaselineFim, session.id, tarefa_id, cronograma_id]
+  )
 
   const partesFim    = nova_data        ? `data_fim ${dataFimAtual ?? '—'} → ${nova_data}` : null
   const partesInicio = nova_data_inicio ? `data_inicio ${dataInicioAtual ?? '—'} → ${nova_data_inicio}` : null

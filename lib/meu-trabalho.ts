@@ -84,7 +84,12 @@ export interface DocumentoResumo {
  * @param usuarioId - ID do usuário logado
  * @param filtros   - opções de filtro (status, criticidade, atrasadas)
  */
-export function buscarMinhasTarefas(
+// Sem callers hoje (`grep -rn "buscarMinhasTarefas("` só encontra a própria definição
+// e `buscarMinhasPendencias`, também sem callers externos) — convertida por
+// consistência com o resto da fatia `cronograma`, com menos rigor de teste.
+// cronograma_tarefas/cronogramas já estão em Postgres; `projetos` (SQLite) entra
+// por lookup em lote a partir dos projeto_id retornados.
+export async function buscarMinhasTarefas(
   usuarioId: number,
   filtros?: {
     status?: string
@@ -92,35 +97,47 @@ export function buscarMinhasTarefas(
     apenasAtrasadas?: boolean
     limit?: number
   }
-): TarefaResumo[] {
+): Promise<TarefaResumo[]> {
   const db = getDb()
 
-  const wheres: string[] = [
-    '(ct.responsavel_id = @uid OR ct.executor_id = @uid)',
-    'ct.nivel = \'TAREFA\'',
+  const wheresPg: string[] = [
+    '(ct.responsavel_id = ? OR ct.executor_id = ?)',
+    "ct.nivel = 'TAREFA'",
   ]
-  const params: Record<string, unknown> = { uid: usuarioId }
+  const paramsPg: unknown[] = [usuarioId, usuarioId]
 
   if (filtros?.status) {
-    wheres.push('ct.status = @status')
-    params.status = filtros.status
+    wheresPg.push('ct.status = ?')
+    paramsPg.push(filtros.status)
   }
   if (filtros?.criticidade) {
-    wheres.push('ct.criticidade = @criticidade')
-    params.criticidade = filtros.criticidade
+    wheresPg.push('ct.criticidade = ?')
+    paramsPg.push(filtros.criticidade)
   }
   if (filtros?.apenasAtrasadas) {
-    wheres.push("ct.data_fim < date('now') AND (ct.status IS NULL OR ct.status NOT IN ('CONCLUIDA','CANCELADA'))")
+    wheresPg.push("ct.data_fim < CURRENT_DATE AND (ct.status IS NULL OR ct.status NOT IN ('CONCLUIDA','CANCELADA'))")
   }
 
-  const limit = filtros?.limit ? `LIMIT ${filtros.limit}` : ''
-
-  const rows = db.prepare(`
+  const rowsPg = await asyncDb.queryMany<{
+    tarefa_id: number
+    cronograma_id: number
+    projeto_id: number
+    codigo: string | null
+    nome: string
+    nivel: string
+    tipo: string | null
+    criticidade: string | null
+    data_inicio: string | null
+    data_fim: string | null
+    duracao_dias: number | null
+    percentual: number | null
+    status: string | null
+    papel: 'RESPONSAVEL' | 'EXECUTOR'
+  }>(`
     SELECT
       ct.id              AS tarefa_id,
       ct.cronograma_id,
-      p.id               AS projeto_id,
-      p.nome             AS projeto_nome,
+      cr.projeto_id,
       ct.codigo,
       ct.nome,
       ct.nivel,
@@ -131,16 +148,26 @@ export function buscarMinhasTarefas(
       ct.duracao_dias,
       ct.percentual,
       ct.status,
-      CASE WHEN ct.responsavel_id = @uid THEN 'RESPONSAVEL' ELSE 'EXECUTOR' END AS papel
-    FROM cronograma_tarefas ct
-    JOIN cronogramas cr ON cr.id = ct.cronograma_id
-    JOIN projetos p      ON p.id = cr.projeto_id
-    WHERE ${wheres.join(' AND ')}
+      CASE WHEN ct.responsavel_id = ? THEN 'RESPONSAVEL' ELSE 'EXECUTOR' END AS papel
+    FROM "AI"."TI_PMO_CRONOGRAMA_TAREFAS" ct
+    JOIN "AI"."TI_PMO_CRONOGRAMAS" cr ON cr.id = ct.cronograma_id
+    WHERE ${wheresPg.join(' AND ')}
     ORDER BY ct.data_fim ASC, ct.criticidade DESC
-    ${limit}
-  `).all(params) as TarefaResumo[]
+  `, [usuarioId, ...paramsPg])
 
-  return rows
+  const projetoIds = [...new Set(rowsPg.map(r => r.projeto_id))]
+  const projetosInfo = projetoIds.length
+    ? db.prepare(
+        `SELECT id, nome AS projeto_nome FROM projetos WHERE id IN (${projetoIds.map(() => '?').join(',')})`
+      ).all(...projetoIds) as Array<{ id: number; projeto_nome: string }>
+    : []
+  const projetoInfoMap = new Map(projetosInfo.map(p => [p.id, p.projeto_nome]))
+
+  const rows = rowsPg
+    .filter(r => projetoInfoMap.has(r.projeto_id))
+    .map(r => ({ ...r, projeto_nome: projetoInfoMap.get(r.projeto_id)! }))
+
+  return filtros?.limit ? rows.slice(0, filtros.limit) : rows
 }
 
 // ─── Aprovações ───────────────────────────────────────────────────────────────
@@ -188,11 +215,11 @@ export function buscarMinhasAprovacoes(usuarioId: number): AprovacaoPendente[] {
  *
  * @param usuarioId - ID do usuário logado
  */
-export function buscarMinhasPendencias(usuarioId: number): PendenciaResumo[] {
+export async function buscarMinhasPendencias(usuarioId: number): Promise<PendenciaResumo[]> {
   const pendencias: PendenciaResumo[] = []
 
   // 1. Tarefas atrasadas
-  const atrasadas = buscarMinhasTarefas(usuarioId, { apenasAtrasadas: true, limit: 50 })
+  const atrasadas = await buscarMinhasTarefas(usuarioId, { apenasAtrasadas: true, limit: 50 })
   for (const t of atrasadas) {
     pendencias.push({
       tipo:          'TAREFA_ATRASADA',
@@ -325,34 +352,47 @@ export async function buscarMeusDocumentos(
   })) as unknown as DocumentoResumo[]
   docs.push(...viabs)
 
-  // Cronogramas
-  const cronsRaw = db.prepare(`
-    SELECT
-      cr.id,
-      cr.projeto_id,
-      p.nome         AS projeto_nome,
-      'CRONOGRAMA'   AS tipo,
-      cr.versao,
-      cr.status,
-      cr.criado_por,
-      cr.created_at
-    FROM cronogramas cr
-    JOIN projetos p ON p.id = cr.projeto_id
-    WHERE cr.criado_por = @uid
-       OR EXISTS (
-         SELECT 1 FROM workflow_aprovacao wa
-         JOIN workflow_etapas we ON we.workflow_id = wa.id
-         WHERE wa.artefato_tipo = 'CRONOGRAMA' AND wa.artefato_id = cr.id
-           AND we.usuario_id = @uid
-       )
-    ORDER BY cr.created_at DESC
-    LIMIT @lim
-  `).all({ uid: usuarioId, lim: limit }) as Array<Omit<DocumentoResumo, 'criado_por_nome'> & { criado_por: number | null }>
+  // Cronogramas — já em Postgres. Mesmo padrão do bloco de Viabilidade acima:
+  // busca no SQLite os ids de cronograma onde o usuário participa do workflow,
+  // depois busca no Postgres por criado_por OU esses ids, e junta projeto_nome/
+  // criado_por_nome (SQLite) em JS.
+  const workflowCronIds = db.prepare(`
+    SELECT DISTINCT wa.artefato_id AS id
+    FROM workflow_aprovacao wa
+    JOIN workflow_etapas we ON we.workflow_id = wa.id
+    WHERE wa.artefato_tipo = 'CRONOGRAMA' AND we.usuario_id = ?
+  `).all(usuarioId) as { id: number }[]
+
+  const cronsRaw = await asyncDb.queryMany<{
+    id: number; projeto_id: number; versao: number; status: string
+    criado_por: number | null; created_at: string
+  }>(
+    `SELECT id, projeto_id, versao, status, criado_por, created_at
+     FROM "AI"."TI_PMO_CRONOGRAMAS"
+     WHERE criado_por = ? OR id = ANY(?)
+     ORDER BY created_at DESC
+     LIMIT ?`,
+    [usuarioId, workflowCronIds.map(c => c.id), limit]
+  )
+
+  const cronProjetoIds = [...new Set(cronsRaw.map(c => c.projeto_id))]
   const cronNomeIds = [...new Set(cronsRaw.map(c => c.criado_por).filter((v): v is number => v != null))]
+  const nomesProjetoCron = cronProjetoIds.length
+    ? new Map((db.prepare(
+        `SELECT id, nome FROM projetos WHERE id IN (${cronProjetoIds.map(() => '?').join(',')})`
+      ).all(...cronProjetoIds) as { id: number; nome: string }[]).map(p => [p.id, p.nome] as const))
+    : new Map<number, string>()
   const cronNomes = await UsuariosRepository.findNomesPorIds(cronNomeIds)
+
   const crons = cronsRaw.map(c => ({
-    ...c,
+    id: c.id,
+    projeto_id: c.projeto_id,
+    projeto_nome: nomesProjetoCron.get(c.projeto_id) ?? null,
+    tipo: 'CRONOGRAMA',
+    versao: c.versao,
+    status: c.status,
     criado_por_nome: c.criado_por != null ? cronNomes.get(c.criado_por)?.nome ?? null : null,
+    created_at: c.created_at,
   })) as unknown as DocumentoResumo[]
   docs.push(...crons)
 
@@ -389,9 +429,7 @@ export interface IndicadoresCronograma {
  * @param projetoId - ID do projeto
  */
 export async function indicadoresCronograma(projetoId: number): Promise<IndicadoresCronograma> {
-  const db = getDb()
-
-  const cron = CronogramaRepository.findCronogramaVigente(projetoId)
+  const cron = await CronogramaRepository.findCronogramaVigente(projetoId)
 
   if (!cron) {
     return {
@@ -400,17 +438,19 @@ export async function indicadoresCronograma(projetoId: number): Promise<Indicado
     }
   }
 
-  const tarefasRaw = db.prepare(`
-    SELECT * FROM cronograma_tarefas
-    WHERE cronograma_id = ? AND nivel = 'TAREFA' AND (ativo IS NULL OR ativo = 1)
-  `).all(cron.id) as Array<{
+  const tarefasRaw = await asyncDb.queryMany<{
     id: number
     responsavel_id: number | null
     status: string | null
     criticidade: string | null
     data_fim: string | null
     percentual: number | null
-  }>
+  }>(
+    `SELECT id, responsavel_id, status, criticidade, data_fim, percentual
+     FROM "AI"."TI_PMO_CRONOGRAMA_TAREFAS"
+     WHERE cronograma_id = ? AND nivel = 'TAREFA' AND (ativo IS NULL OR ativo = true)`,
+    [cron.id]
+  )
   const respIds = [...new Set(tarefasRaw.map(t => t.responsavel_id).filter((v): v is number => v != null))]
   const respNomes = await UsuariosRepository.findNomesPorIds(respIds)
   const tarefas = tarefasRaw.map(t => ({
@@ -508,85 +548,48 @@ async function buscarTarefasCronogramaJanela(
 ): Promise<ProximaTarefaItem[]> {
   const db = getDb()
 
-  const wheres: string[] = [
-    '(ct.ativo IS NULL OR ct.ativo = 1)',
-    'p.ativo = 1',
+  // cronogramas/cronograma_tarefas/cronograma_responsaveis já estão em Postgres —
+  // não dá mais pra fazer o JOIN direto com projetos/diretorias (SQLite) numa
+  // query só. Pro filtro de DIRETOR, resolve antes (SQLite) os projeto_id da
+  // própria diretoria e passa como lista de ids pro Postgres; os demais perfis
+  // filtram por usuario_id, que já é nativo da query em Postgres.
+  const wheresPg: string[] = [
+    '(ct.ativo IS NULL OR ct.ativo = true)',
     `(
       ct.nivel = 'SUBTAREFA'
       OR (ct.nivel = 'TAREFA' AND NOT EXISTS (
-            SELECT 1 FROM cronograma_tarefas sub
-            WHERE sub.parent_id = ct.id AND sub.nivel = 'SUBTAREFA' AND (sub.ativo IS NULL OR sub.ativo = 1)))
+            SELECT 1 FROM ${'"AI"."TI_PMO_CRONOGRAMA_TAREFAS"'} sub
+            WHERE sub.parent_id = ct.id AND sub.nivel = 'SUBTAREFA' AND (sub.ativo IS NULL OR sub.ativo = true)))
       OR (ct.nivel = 'FASE' AND NOT EXISTS (
-            SELECT 1 FROM cronograma_tarefas tar
-            WHERE tar.parent_id = ct.id AND tar.nivel = 'TAREFA' AND (tar.ativo IS NULL OR tar.ativo = 1)))
+            SELECT 1 FROM ${'"AI"."TI_PMO_CRONOGRAMA_TAREFAS"'} tar
+            WHERE tar.parent_id = ct.id AND tar.nivel = 'TAREFA' AND (tar.ativo IS NULL OR tar.ativo = true)))
     )`,
     "NOT (ct.data_conclusao IS NOT NULL OR ct.status = 'CONCLUIDA' OR ct.percentual >= 100)",
     'ct.data_fim IS NOT NULL',
-    `date(ct.data_fim) <= date('now', '+${janelaDiasCorridos} days')`,
+    `ct.data_fim <= (CURRENT_DATE + ${Number(janelaDiasCorridos)})`,
   ]
-  const params: Record<string, unknown> = {
-    statusAprovado0: CRONOGRAMA_STATUS_APROVADO[0],
-    statusAprovado1: CRONOGRAMA_STATUS_APROVADO[1],
-    statusAprovado2: CRONOGRAMA_STATUS_APROVADO[2],
-    statusAprovado3: CRONOGRAMA_STATUS_APROVADO[3],
-  }
+  const paramsPg: unknown[] = [...CRONOGRAMA_STATUS_APROVADO, ...CRONOGRAMA_STATUS_APROVADO]
 
   if (['ADMIN', 'PMO', 'CEO'].includes(session.perfil)) {
     // sem filtro adicional — vê tudo
   } else if (session.perfil === 'DIRETOR') {
-    wheres.push('p.diretoria_id = @diretoriaId')
-    params.diretoriaId = session.diretoria_id
+    const projetosDaDiretoria = db.prepare(
+      'SELECT id FROM projetos WHERE diretoria_id = ? AND ativo = 1'
+    ).all(session.diretoria_id) as Array<{ id: number }>
+    const ids = projetosDaDiretoria.map(p => p.id)
+    wheresPg.push(ids.length ? 'ca.projeto_id = ANY(?)' : '1=0')
+    if (ids.length) paramsPg.push(ids)
   } else {
-    wheres.push(`(
-      ct.responsavel_id = @uid OR ct.executor_id = @uid
-      OR EXISTS (SELECT 1 FROM cronograma_responsaveis cresp WHERE cresp.cronograma_tarefa_id = ct.id AND cresp.usuario_id = @uid)
+    wheresPg.push(`(
+      ct.responsavel_id = ? OR ct.executor_id = ?
+      OR EXISTS (SELECT 1 FROM ${'"AI"."TI_PMO_CRONOGRAMA_RESPONSAVEIS"'} cresp WHERE cresp.cronograma_tarefa_id = ct.id AND cresp.usuario_id = ?)
     )`)
-    params.uid = session.id
+    paramsPg.push(session.id, session.id, session.id)
   }
 
-  const rows = db.prepare(`
-    WITH cronograma_atual AS (
-      SELECT cr.id AS cronograma_id, cr.projeto_id
-      FROM cronogramas cr
-      WHERE (cr.ativo IS NULL OR cr.ativo = 1)
-        AND cr.status IN (@statusAprovado0, @statusAprovado1, @statusAprovado2, @statusAprovado3)
-        AND cr.versao = (
-          SELECT MAX(cr2.versao) FROM cronogramas cr2
-          WHERE cr2.projeto_id = cr.projeto_id
-            AND (cr2.ativo IS NULL OR cr2.ativo = 1)
-            AND cr2.status IN (@statusAprovado0, @statusAprovado1, @statusAprovado2, @statusAprovado3)
-        )
-    )
-    SELECT
-      ct.id            AS tarefa_id,
-      p.id             AS projeto_id,
-      p.codigo         AS projeto_codigo,
-      p.nome           AS projeto_nome,
-      d.nome           AS diretoria_nome,
-      ct.nivel,
-      ct.nome,
-      ct.responsavel_id,
-      ct.responsavel_nome_ext,
-      (SELECT cr2.usuario_id FROM cronograma_responsaveis cr2
-        WHERE cr2.cronograma_tarefa_id = ct.id ORDER BY cr2.id ASC LIMIT 1) AS fallback_usuario_id,
-      (SELECT cr2.usuario_nome_ext FROM cronograma_responsaveis cr2
-        WHERE cr2.cronograma_tarefa_id = ct.id ORDER BY cr2.id ASC LIMIT 1) AS fallback_usuario_nome_ext,
-      ct.data_inicio,
-      ct.data_fim,
-      ct.status,
-      ct.observacoes
-    FROM cronograma_tarefas ct
-    JOIN cronograma_atual ca ON ca.cronograma_id = ct.cronograma_id
-    JOIN projetos p          ON p.id = ca.projeto_id
-    LEFT JOIN diretorias d   ON d.id = p.diretoria_id
-    WHERE ${wheres.join(' AND ')}
-    ORDER BY ct.data_fim ASC
-  `).all(params) as Array<{
+  const rows = await asyncDb.queryMany<{
     tarefa_id: number
     projeto_id: number
-    projeto_codigo: string | null
-    projeto_nome: string
-    diretoria_nome: string | null
     nivel: string
     nome: string
     responsavel_id: number | null
@@ -597,20 +600,70 @@ async function buscarTarefasCronogramaJanela(
     data_fim: string
     status: string | null
     observacoes: string | null
-  }>
+  }>(
+    `WITH cronograma_atual AS (
+      SELECT cr.id AS cronograma_id, cr.projeto_id
+      FROM "AI"."TI_PMO_CRONOGRAMAS" cr
+      WHERE (cr.ativo IS NULL OR cr.ativo = true)
+        AND cr.status IN (?, ?, ?, ?)
+        AND cr.versao = (
+          SELECT MAX(cr2.versao) FROM "AI"."TI_PMO_CRONOGRAMAS" cr2
+          WHERE cr2.projeto_id = cr.projeto_id
+            AND (cr2.ativo IS NULL OR cr2.ativo = true)
+            AND cr2.status IN (?, ?, ?, ?)
+        )
+    )
+    SELECT
+      ct.id            AS tarefa_id,
+      ca.projeto_id,
+      ct.nivel,
+      ct.nome,
+      ct.responsavel_id,
+      ct.responsavel_nome_ext,
+      (SELECT cr2.usuario_id FROM "AI"."TI_PMO_CRONOGRAMA_RESPONSAVEIS" cr2
+        WHERE cr2.cronograma_tarefa_id = ct.id ORDER BY cr2.id ASC LIMIT 1) AS fallback_usuario_id,
+      (SELECT cr2.usuario_nome_ext FROM "AI"."TI_PMO_CRONOGRAMA_RESPONSAVEIS" cr2
+        WHERE cr2.cronograma_tarefa_id = ct.id ORDER BY cr2.id ASC LIMIT 1) AS fallback_usuario_nome_ext,
+      ct.data_inicio,
+      ct.data_fim,
+      ct.status,
+      ct.observacoes
+    FROM "AI"."TI_PMO_CRONOGRAMA_TAREFAS" ct
+    JOIN cronograma_atual ca ON ca.cronograma_id = ct.cronograma_id
+    WHERE ${wheresPg.join(' AND ')}
+    ORDER BY ct.data_fim ASC`,
+    paramsPg
+  )
+
+  // projetos/diretorias continuam em SQLite — busca em lote pelos projeto_id
+  // retornados do Postgres, filtrando os inativos (equivalente ao antigo `p.ativo=1`
+  // no JOIN) e mergeando codigo/nome/diretoria_nome em JS.
+  const projetoIds = [...new Set(rows.map(r => r.projeto_id))]
+  const projetosInfo = projetoIds.length
+    ? db.prepare(
+        `SELECT p.id, p.codigo AS projeto_codigo, p.nome AS projeto_nome, d.nome AS diretoria_nome
+         FROM projetos p
+         LEFT JOIN diretorias d ON d.id = p.diretoria_id
+         WHERE p.id IN (${projetoIds.map(() => '?').join(',')}) AND p.ativo = 1`
+      ).all(...projetoIds) as Array<{ id: number; projeto_codigo: string | null; projeto_nome: string; diretoria_nome: string | null }>
+    : []
+  const projetoInfoMap = new Map(projetosInfo.map(p => [p.id, p]))
+  const rowsComProjeto = rows
+    .filter(r => projetoInfoMap.has(r.projeto_id))
+    .map(r => ({ ...r, ...projetoInfoMap.get(r.projeto_id)! }))
 
   // usuarios já está em Postgres — resolve os nomes (responsável direto da tarefa
   // e o fallback via cronograma_responsaveis) em lote, na mesma ordem de prioridade
   // do COALESCE original: nome do responsável direto > nome_ext da tarefa > nome do
   // primeiro cronograma_responsaveis > nome_ext desse responsável.
   const nomeIds = [...new Set(
-    rows.flatMap(r => [r.responsavel_id, r.fallback_usuario_id]).filter((v): v is number => v != null)
+    rowsComProjeto.flatMap(r => [r.responsavel_id, r.fallback_usuario_id]).filter((v): v is number => v != null)
   )]
   const nomes = await UsuariosRepository.findNomesPorIds(nomeIds)
 
   const hoje = new Date().toISOString().slice(0, 10)
 
-  return rows.map(r => {
+  return rowsComProjeto.map(r => {
     const responsavel_nome =
       (r.responsavel_id != null ? nomes.get(r.responsavel_id)?.nome : undefined)
       ?? r.responsavel_nome_ext

@@ -16,7 +16,7 @@
 
 import getDb from './db'
 import type { Projeto } from '@/types'
-import { UsuariosRepository } from '@/lib/repositories'
+import { UsuariosRepository, CronogramaRepository } from '@/lib/repositories'
 
 // ─── Hierarquia de Perfis ─────────────────────────────────────────────────────
 
@@ -56,10 +56,10 @@ export function temNivelMinimo(perfil: string, nivelMinimo: number): boolean {
  * @param usuario - Dados básicos do usuário autenticado
  * @returns Fragmento WHERE e parâmetros prontos para uso em prepared statements
  */
-export function getProjetoVisibility(usuario: {
+export async function getProjetoVisibility(usuario: {
   id: number
   perfil: string
-}): { where: string; params: Record<string, unknown> } {
+}): Promise<{ where: string; params: Record<string, unknown> }> {
   const nivel = NIVEL_PERFIL[usuario.perfil] ?? 0
 
   // ADMIN, PMO, CEO — visibilidade total
@@ -75,14 +75,23 @@ export function getProjetoVisibility(usuario: {
     }
   }
 
+  // cronograma_tarefas/cronogramas já estão em Postgres — não dá pra fazer o EXISTS
+  // original em SQL puro contra projetos (SQLite). Resolve antes, no Postgres, em
+  // quais projetos o usuário participa via cronograma (responsável/executor de
+  // alguma tarefa), e inclui como lista de ids literal no WHERE — a participação
+  // via workflow (SQLite) continua via EXISTS normal.
+  const projetoIdsCronograma = await CronogramaRepository.findProjetoIdsParticipante(usuario.id)
+  const cronogramaParams: Record<string, unknown> = {}
+  const cronogramaIn = projetoIdsCronograma.length
+    ? `p.id IN (${projetoIdsCronograma.map((id, i) => {
+        cronogramaParams[`cronProj${i}`] = id
+        return `@cronProj${i}`
+      }).join(',')})`
+    : '1=0'
+
   // Subquery de participação — reutilizada por GESTOR e SOLICITANTE
   const participantWhere = `
-    EXISTS (
-      SELECT 1 FROM cronograma_tarefas ct
-      JOIN cronogramas c ON c.id = ct.cronograma_id
-      WHERE c.projeto_id = p.id
-        AND (ct.responsavel_id = @uid OR ct.executor_id = @uid)
-    ) OR EXISTS (
+    (${cronogramaIn}) OR EXISTS (
       SELECT 1 FROM workflow_etapas we
       JOIN workflow_aprovacao wa ON wa.id = we.workflow_id
       WHERE wa.projeto_id = p.id
@@ -92,14 +101,14 @@ export function getProjetoVisibility(usuario: {
   if (usuario.perfil === 'GESTOR') {
     return {
       where: `(p.gerente_id = @uid OR p.solicitante_id = @uid OR p.created_by = @uid OR ${participantWhere})`,
-      params: { uid: usuario.id },
+      params: { uid: usuario.id, ...cronogramaParams },
     }
   }
 
   // SOLICITANTE (e DIRETOR sem diretoria como fallback)
   return {
     where: `(p.solicitante_id = @uid OR p.created_by = @uid OR ${participantWhere})`,
-    params: { uid: usuario.id },
+    params: { uid: usuario.id, ...cronogramaParams },
   }
 }
 
@@ -130,7 +139,7 @@ export async function buscarProjetosVisiveis(
   }
 ): Promise<Projeto[]> {
   const db = getDb()
-  const vis = getProjetoVisibility(usuario)
+  const vis = await getProjetoVisibility(usuario)
   const conditions: string[] = ['p.ativo = 1', `(${vis.where})`]
   const params: Record<string, unknown> = { ...vis.params }
 
@@ -187,7 +196,9 @@ export async function buscarProjetosVisiveis(
  * @param usuario - Usuário a verificar
  * @param projeto - Projeto a verificar (precisa de id e campos de ownership)
  */
-export function podeVisualizarProjeto(
+// Sem callers hoje (`grep -rn "podeVisualizarProjeto("` só encontra a própria
+// definição) — convertida por consistência, com menos rigor de teste.
+export async function podeVisualizarProjeto(
   usuario: { id: number; perfil: string },
   projeto: {
     id: number
@@ -196,7 +207,7 @@ export function podeVisualizarProjeto(
     created_by?: number | null
     diretoria_id?: number | null
   }
-): boolean {
+): Promise<boolean> {
   const nivel = NIVEL_PERFIL[usuario.perfil] ?? 0
   if (nivel >= 70) return true // ADMIN, PMO, CEO
 
@@ -214,16 +225,10 @@ export function podeVisualizarProjeto(
     projeto.created_by    === usuario.id
   ) return true
 
+  // cronograma_tarefas/cronogramas já estão em Postgres.
+  if (await CronogramaRepository.temParticipacaoNoProjeto(projeto.id, usuario.id)) return true
+
   const db = getDb()
-
-  const cronPart = db.prepare(`
-    SELECT 1 FROM cronograma_tarefas ct
-    JOIN cronogramas c ON c.id = ct.cronograma_id
-    WHERE c.projeto_id = ? AND (ct.responsavel_id = ? OR ct.executor_id = ?)
-    LIMIT 1
-  `).get(projeto.id, usuario.id, usuario.id)
-  if (cronPart) return true
-
   const wfPart = db.prepare(`
     SELECT 1 FROM workflow_etapas we
     JOIN workflow_aprovacao wa ON wa.id = we.workflow_id
